@@ -12,7 +12,7 @@ android {
     defaultConfig {
         applicationId = if (project.hasProperty("nexoTransition")) "com.ejemplo.navegador" else "com.nexo.browser"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 54
         versionName = "0.29.1"
         // Solo la actualización de transición (paquete anterior) entrega sus datos a Nexo nuevo.
