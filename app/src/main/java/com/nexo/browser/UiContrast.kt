@@ -4,6 +4,11 @@ import kotlin.math.pow
 
 /** WCAG contrast for opaque RGB surfaces; independent of Android for regression tests. */
 object UiContrast {
+    fun ratio(first: Int, second: Int): Double {
+        val a = luminance(first)
+        val b = luminance(second)
+        return (maxOf(a, b) + 0.05) / (minOf(a, b) + 0.05)
+    }
     fun luminance(color: Int): Double {
         fun channel(shift: Int): Double {
             val value = ((color ushr shift) and 255) / 255.0

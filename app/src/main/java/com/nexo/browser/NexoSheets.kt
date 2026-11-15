@@ -17,6 +17,9 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 
 /** Acción de una hoja: icono, texto y si está activa (resaltada). */
 data class SheetAction(
@@ -49,7 +52,8 @@ object NexoSheets {
         val sheet = DragDismissLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
-                setColor(p.surface)
+                setColor(p.surfaceContainerHigh)
+                if (p.isAmoled) setStroke(dp(activity, 1f), p.outlineVariant)
                 cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
             }
             setPadding(0, dp(activity, 10f), 0, dp(activity, 16f))
@@ -81,18 +85,34 @@ object NexoSheets {
         sheet.onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }
 
         dialog.setContentView(sheet)
+        ViewCompat.setOnApplyWindowInsetsListener(sheet) { _, insets ->
+            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val bottom = maxOf(safe.bottom, insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+            sheet.setPadding(safe.left, dp(activity, 8f), safe.right, dp(activity, 16f) + bottom)
+            val available = activity.window.decorView.height - safe.top - bottom - dp(activity, 64f)
+            if (available > 0) scroll.limitHeight(available)
+            WindowInsetsCompat.CONSUMED
+        }
+        val sheetWidth = minOf(activity.resources.displayMetrics.widthPixels, dp(activity, UiLayout.SHEET_MAX_DP.toFloat()))
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setLayout(sheetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.BOTTOM)
-            setWindowAnimations(android.R.style.Animation_InputMethod)
+            WindowCompat.setDecorFitsSystemWindows(this, false)
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            setWindowAnimations(0)
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             setDimAmount(0.45f)
-            navigationBarColor = p.surface
+            navigationBarColor = Color.TRANSPARENT
+            WindowCompat.getInsetsController(this, decorView).apply {
+                isAppearanceLightStatusBars = !p.isDark
+                isAppearanceLightNavigationBars = !p.isDark
+            }
         }
         dialog.setCanceledOnTouchOutside(true)
         dialog.show()
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.window?.setLayout(sheetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
+        ViewCompat.requestApplyInsets(sheet)
         return dialog
     }
 
@@ -130,27 +150,20 @@ object NexoSheets {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(activity, 16f), 0, dp(activity, 16f), dp(activity, 12f))
             actions.forEachIndexed { index, action ->
-                val accent = when {
-                    index == 0 -> p.accent
-                    action.danger -> if (p.isDark) Color.rgb(251, 146, 60) else Color.rgb(194, 65, 12)
-                    p.isDark -> Color.rgb(185, 155, 255)
-                    else -> Color.rgb(116, 70, 221)
-                }
+                val accent = if (action.danger) p.danger else p.accent
                 val cell = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                     minimumHeight = dp(activity, 72f)
                     setPadding(dp(activity, 12f), dp(activity, 12f), dp(activity, 12f), dp(activity, 12f))
-                    background = ThemeManager.ripple(activity, GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(p.elevated, p.surface)).apply {
-                        cornerRadius = dp(activity, 16f).toFloat(); setStroke(dp(activity, 1f), p.outline)
-                    }, 16f)
+                    background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surfaceContainerHighest, 16f, p.outlineVariant), 16f)
                     isClickable = true; isFocusable = true; contentDescription = action.label
                     setOnClickListener { dismiss(); action.onClick() }
                     addView(ImageView(activity).apply {
                         setImageResource(action.icon)
-                        imageTintList = ColorStateList.valueOf(if (p.isDark) ColorUtilsCompat.withAlpha(Color.WHITE, 235) else accent)
+                        imageTintList = ColorStateList.valueOf(if (action.danger) p.error.onContainer else p.onAccentSoft)
                         setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 8f), dp(activity, 8f))
-                        background = ThemeManager.rounded(activity, ColorUtilsCompat.withAlpha(accent, 40), 12f)
+                        background = ThemeManager.rounded(activity, if (action.danger) p.error.container else p.accentSoft, 12f)
                     }, LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 36f)).apply { marginEnd = dp(activity, 9f) })
                     addView(LinearLayout(activity).apply {
                         orientation = LinearLayout.VERTICAL
@@ -185,10 +198,12 @@ object NexoSheets {
             setPadding(dp(activity, 12f), 0, dp(activity, 12f), 0)
         }
 
-        actions.chunked(columns).forEach { rowActions ->
+        val available = minOf(activity.resources.configuration.screenWidthDp, UiLayout.SHEET_MAX_DP) - 32
+        val count = minOf(columns, UiLayout.actionColumns(available.toFloat(), activity.resources.configuration.fontScale))
+        actions.chunked(count).forEach { rowActions ->
             val row = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
-                weightSum = columns.toFloat()
+                weightSum = count.toFloat()
             }
             rowActions.forEach { action ->
                 val tint = when {
@@ -205,6 +220,7 @@ object NexoSheets {
                     setPadding(dp(activity, 4f), dp(activity, 12f), dp(activity, 4f), dp(activity, 10f))
                     background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, if (action.active) p.accentSoft else p.surface, 16f, p.outline), 16f)
                     isClickable = true
+                    isFocusable = true
                     contentDescription = action.label
                     setOnClickListener {
                         dismiss()
@@ -252,9 +268,11 @@ object NexoSheets {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = dp(activity, 52f)
-                setPadding(dp(activity, 16f), 0, dp(activity, 16f), 0)
+                setPadding(dp(activity, 16f), dp(activity, 8f), dp(activity, 16f), dp(activity, 8f))
                 background = ThemeManager.ripple(activity, null, 16f)
                 isClickable = true
+                isFocusable = true
+                contentDescription = action.label
                 setOnClickListener {
                     dismiss()
                     action.onClick()
@@ -271,7 +289,7 @@ object NexoSheets {
                 text = action.label
                 textSize = 15f
                 setTextColor(color)
-                maxLines = 1
+                maxLines = 3
                 ellipsize = TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             root.addView(row)
@@ -287,16 +305,13 @@ object NexoSheets {
 }
 
 /** ScrollView con altura máxima: la hoja nunca tapa toda la pantalla. */
-private class MaxHeightScrollView(context: android.content.Context, private val maxHeight: Int) : ScrollView(context) {
+private class MaxHeightScrollView(context: android.content.Context, private var maxHeight: Int) : ScrollView(context) {
+    fun limitHeight(value: Int) {
+        if (value != maxHeight) { maxHeight = value; requestLayout() }
+    }
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val size = View.MeasureSpec.getSize(heightMeasureSpec)
         val limit = if (size > 0) minOf(size, maxHeight) else maxHeight
         super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(limit, View.MeasureSpec.AT_MOST))
     }
-}
-
-/** Utilidad mínima de color sin depender de androidx en este archivo. */
-private object ColorUtilsCompat {
-    fun withAlpha(color: Int, alpha: Int): Int =
-        (color and 0x00FFFFFF) or (alpha.coerceIn(0, 255) shl 24)
 }

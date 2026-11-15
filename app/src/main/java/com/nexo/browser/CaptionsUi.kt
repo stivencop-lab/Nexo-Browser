@@ -45,18 +45,19 @@ object CaptionsUi {
         button.background = ThemeManager.ripple(
             activity,
             GradientDrawable().apply {
-                setColor(if (active) p.accent else 0xE6111827.toInt())
+                setColor(if (active) p.accent else p.surfaceContainerHighest)
                 cornerRadius = 24f * density
-                setStroke(density.toInt().coerceAtLeast(1), if (active) p.accent else 0x33FFFFFF)
+                setStroke(density.toInt().coerceAtLeast(1), if (active) p.accent else p.outlineVariant)
             },
             24f,
-            0x40FFFFFF
+            androidx.core.graphics.ColorUtils.setAlphaComponent(if (active) p.onAccent else p.text, 26)
         )
         button.backgroundTintList = null
-        button.setTextColor(if (active) p.onAccent else Color.WHITE)
+        button.setTextColor(if (active) p.onAccent else p.text)
         button.stateListAnimator = null
-        button.elevation = 8f * density
-        button.contentDescription = if (active) "Desactivar subtítulos en vivo" else "Activar subtítulos en vivo"
+        button.elevation = 0f
+        button.contentDescription = if (button.id == R.id.miniPlayerButton) "Abrir mini reproductor"
+            else if (active) "Subtítulos activos. Abrir opciones" else "Activar subtítulos en vivo"
     }
 
     /**

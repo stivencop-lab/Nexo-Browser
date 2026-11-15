@@ -10,7 +10,8 @@
     <LinearLayout
         android:id="@+id/findBar"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="wrap_content"
+        android:minHeight="56dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="12dp"
@@ -20,7 +21,8 @@
         <EditText
             android:id="@+id/findInput"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
             android:layout_weight="1"
             android:hint="@string/find_in_page_hint"
             android:imeOptions="actionSearch"
@@ -44,24 +46,24 @@
 
         <ImageButton
             android:id="@+id/findPrev"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
             android:contentDescription="@string/find_previous"
             android:scaleType="center"
             android:src="@drawable/ic_nav_up" />
 
         <ImageButton
             android:id="@+id/findNext"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
             android:contentDescription="@string/find_next"
             android:scaleType="center"
             android:src="@drawable/ic_nav_down" />
 
         <ImageButton
             android:id="@+id/findClose"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
             android:contentDescription="@string/find_close"
             android:scaleType="center"
             android:src="@drawable/ic_menu_close" />
@@ -126,12 +128,12 @@
             <Button
                 android:id="@+id/captionsButton"
                 android:layout_width="wrap_content"
-                android:layout_height="48dp"
+                android:layout_height="wrap_content"
                 android:layout_marginEnd="8dp"
                 android:contentDescription="Subtítulos en vivo"
                 android:gravity="center"
                 android:minWidth="0dp"
-                android:minHeight="0dp"
+                android:minHeight="@dimen/touch_target"
                 android:paddingStart="16dp"
                 android:paddingEnd="16dp"
                 android:text="CC"
@@ -143,12 +145,12 @@
             <Button
                 android:id="@+id/miniPlayerButton"
                 android:layout_width="wrap_content"
-                android:layout_height="48dp"
+                android:layout_height="wrap_content"
                 android:drawableStart="@drawable/ic_pip"
                 android:drawablePadding="8dp"
                 android:gravity="center"
                 android:minWidth="0dp"
-                android:minHeight="0dp"
+                android:minHeight="@dimen/touch_target"
                 android:paddingStart="16dp"
                 android:paddingEnd="18dp"
                 android:text="@string/mini_video"
@@ -175,7 +177,8 @@
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="50dp"
+        android:layout_height="wrap_content"
+        android:minHeight="50dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="12dp"
@@ -191,8 +194,8 @@
 
         <ImageButton
             android:id="@+id/tabToolsButton"
-            android:layout_width="38dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
             android:contentDescription="Red, grupos e identidad Burner de esta pestaña"
             android:src="@drawable/ic_tab_tools"
             android:scaleType="center" />
@@ -200,7 +203,8 @@
         <EditText
             android:id="@+id/omnibox"
             android:layout_width="0dp"
-            android:layout_height="40dp"
+            android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
             android:layout_weight="1"
             android:drawablePadding="10dp"
             android:gravity="center_vertical"
@@ -217,13 +221,13 @@
 
         <Button
             android:id="@+id/clearOmniboxButton"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="wrap_content"
             android:layout_marginStart="2dp"
             android:contentDescription="@string/clear_address"
             android:gravity="center"
             android:minWidth="0dp"
-            android:minHeight="0dp"
+            android:minHeight="@dimen/touch_target"
             android:padding="0dp"
             android:text="×"
             android:textAllCaps="false"
@@ -232,13 +236,13 @@
 
         <Button
             android:id="@+id/tabButton"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="wrap_content"
             android:layout_marginStart="4dp"
             android:contentDescription="@string/open_tabs"
             android:gravity="center"
             android:minWidth="0dp"
-            android:minHeight="0dp"
+            android:minHeight="@dimen/touch_target"
             android:padding="0dp"
             android:text="1"
             android:textAllCaps="false"
@@ -247,13 +251,13 @@
 
         <Button
             android:id="@+id/menuButton"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="wrap_content"
             android:contentDescription="@string/open_menu"
             android:drawableTop="@drawable/ic_nav_menu"
             android:gravity="center"
             android:minWidth="0dp"
-            android:minHeight="0dp"
+            android:minHeight="@dimen/touch_target"
             android:paddingTop="8dp"
             android:paddingBottom="8dp"
             android:text="" />
@@ -276,7 +280,8 @@
     <LinearLayout
         android:id="@+id/navBar"
         android:layout_width="match_parent"
-        android:layout_height="46dp"
+        android:layout_height="wrap_content"
+        android:minHeight="@dimen/touch_target"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -285,7 +290,7 @@
         <ImageButton
             android:id="@+id/backButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="@dimen/touch_target"
             android:layout_weight="1"
             android:contentDescription="Atrás"
             android:scaleType="center"
@@ -294,7 +299,7 @@
         <ImageButton
             android:id="@+id/forwardButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="@dimen/touch_target"
             android:layout_weight="1"
             android:contentDescription="Adelante"
             android:scaleType="center"
@@ -303,7 +308,7 @@
         <ImageButton
             android:id="@+id/homeButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="@dimen/touch_target"
             android:layout_weight="1"
             android:contentDescription="Inicio"
             android:scaleType="center"
@@ -312,7 +317,7 @@
         <ImageButton
             android:id="@+id/reloadButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="@dimen/touch_target"
             android:layout_weight="1"
             android:contentDescription="Recargar"
             android:scaleType="center"
@@ -321,7 +326,7 @@
         <ImageButton
             android:id="@+id/newTabButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="@dimen/touch_target"
             android:layout_weight="1"
             android:contentDescription="Nueva pestaña"
             android:scaleType="center"

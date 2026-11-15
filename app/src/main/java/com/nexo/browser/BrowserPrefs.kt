@@ -17,6 +17,7 @@ object BrowserPrefs {
     const val ACCENT_ORANGE = "orange"
     const val ACCENT_PINK = "pink"
     const val ACCENT_RED = "red"
+    const val ACCENT_DYNAMIC = "dynamic"
 
     const val ENGINE_GOOGLE = "google"
     const val ENGINE_DDG = "duckduckgo"

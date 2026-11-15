@@ -7,7 +7,9 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.Window
-import android.view.animation.DecelerateInterpolator
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.SpringAnimation
+import androidx.dynamicanimation.animation.SpringForce
 import android.widget.LinearLayout
 import kotlin.math.abs
 
@@ -41,7 +43,7 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
     private var dragging = false
     private var dismissed = false
     private var tracker: VelocityTracker? = null
-    private var settle: ValueAnimator? = null
+    private var settle: SpringAnimation? = null
 
     private fun inZone(event: MotionEvent): Boolean =
         dragZonePx <= 0 || event.y <= dragZonePx
@@ -140,18 +142,17 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
 
     private fun animateTo(target: Float, end: () -> Unit) {
         settle?.cancel()
-        settle = ValueAnimator.ofFloat(translationY, target).apply {
-            duration = (160L + abs(target - translationY) / resources.displayMetrics.density * 0.6f).toLong().coerceAtMost(320L)
-            interpolator = DecelerateInterpolator()
-            addUpdateListener {
-                translationY = it.animatedValue as Float
-                updateDim()
-            }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                private var cancelled = false
-                override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
-                override fun onAnimationEnd(animation: android.animation.Animator) { if (!cancelled) end() }
-            })
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            translationY = target
+            updateDim()
+            end()
+            return
+        }
+        settle = SpringAnimation(this, DynamicAnimation.TRANSLATION_Y, target).apply {
+            spring = SpringForce(target).setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY)
+                .setStiffness(SpringForce.STIFFNESS_MEDIUM)
+            addUpdateListener { _, _, _ -> updateDim() }
+            addEndListener { _, cancelled, _, _ -> if (!cancelled) end() }
             start()
         }
     }

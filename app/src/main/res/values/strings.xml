@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="dynamic_color">Del sistema (Material You)</string>
+    <string name="store_retry">Reintentar</string>
     <string name="app_name">Nexo Browser</string>
     <string name="omnibox_hint">Buscar o escribir dirección</string>
     <string name="open_menu">Abrir menú</string>

@@ -9,7 +9,8 @@
     <LinearLayout
         android:id="@+id/settingsHeader"
         android:layout_width="match_parent"
-        android:layout_height="64dp"
+        android:layout_height="wrap_content"
+        android:minHeight="64dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingStart="8dp"
@@ -17,8 +18,8 @@
 
         <ImageButton
             android:id="@+id/backButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
             android:contentDescription="@string/back"
             android:scaleType="center"
             android:src="@drawable/ic_nav_back" />
@@ -41,7 +42,8 @@
         android:clipToPadding="false"
         android:scrollbars="none">
 
-        <LinearLayout
+        <com.nexo.browser.ContentColumn
+            android:layout_gravity="center_horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
@@ -52,7 +54,8 @@
             <Button
                 android:id="@+id/defaultBrowserButton"
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
+                android:layout_height="wrap_content"
+            android:minHeight="52dp"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="6dp"
                 android:text="@string/default_browser"
@@ -89,7 +92,8 @@
                 <Spinner
                     android:id="@+id/themeSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
                 <View
                     android:layout_width="match_parent"
@@ -106,7 +110,8 @@
                 <Spinner
                     android:id="@+id/accentSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
                 <View
                     android:layout_width="match_parent"
@@ -123,7 +128,8 @@
                 <Spinner
                     android:id="@+id/textSizeSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
                 <View
                     android:layout_width="match_parent"
@@ -171,7 +177,8 @@
                 <Spinner
                     android:id="@+id/searchSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
                 <View
                     android:layout_width="match_parent"
@@ -289,7 +296,8 @@
                 <Spinner
                     android:id="@+id/autoplaySpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
                 <View
                     android:layout_width="match_parent"
@@ -400,7 +408,8 @@
                 <Button
                     android:id="@+id/configureCaptionsButton"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:text="Configurar subtítulos y traducción"
                     android:textAllCaps="false"
                     android:textSize="14.5sp" />
@@ -436,7 +445,8 @@
                 <Spinner
                     android:id="@+id/translatorTargetSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
             </LinearLayout>
 
@@ -568,7 +578,8 @@
                 <Spinner
                     android:id="@+id/cookiesSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
                 <View
                     android:layout_width="match_parent"
@@ -585,7 +596,8 @@
                 <Spinner
                     android:id="@+id/dnsSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
             </LinearLayout>
 
@@ -633,7 +645,8 @@
                 <Spinner
                     android:id="@+id/liveTabsSpinner"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target"
                     android:layout_marginBottom="12dp" />
             </LinearLayout>
 
@@ -671,7 +684,8 @@
             <Button
                 android:id="@+id/clearDataButton"
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
+                android:layout_height="wrap_content"
+            android:minHeight="52dp"
                 android:layout_marginTop="10dp"
                 android:text="Borrar datos de navegación ahora"
                 android:textAllCaps="false"
@@ -731,7 +745,7 @@
                 android:gravity="center"
                 android:tag="muted"
                 android:textSize="12.5sp" />
-        </LinearLayout>
+        </com.nexo.browser.ContentColumn>
     </ScrollView>
 
     <LinearLayout
@@ -747,7 +761,8 @@
         <Button
             android:id="@+id/saveSettingsButton"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="wrap_content"
+            android:minHeight="52dp"
             android:text="Guardar cambios"
             android:textAllCaps="false"
             android:textSize="15.5sp"

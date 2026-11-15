@@ -25,6 +25,7 @@ class ExtensionStoreActivity :
 
     // Solo la búsqueda más reciente puede actualizar la lista.
     private var searchGeneration = 0
+    private var lastResultTerm: String? = null
 
     private var items:
         List<StoreAddon> =
@@ -127,7 +128,7 @@ class ExtensionStoreActivity :
                     event ->
 
                 val enter =
-                    event?.keyCode ==
+                    event?.action == KeyEvent.ACTION_UP && event.keyCode ==
                         KeyEvent
                             .KEYCODE_ENTER
 
@@ -144,6 +145,8 @@ class ExtensionStoreActivity :
                 }
             }
 
+        status.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        findViewById<Button>(R.id.storeRetryButton).setOnClickListener { search() }
         applyTheme()
 
         refreshInstalled {
@@ -207,6 +210,8 @@ class ExtensionStoreActivity :
 
     private fun search() {
         setLoading(true)
+        findViewById<View>(R.id.storeRetryButton).visibility = View.GONE
+        status.setTextColor(ThemeManager.palette(this).muted)
 
         val term =
             query.text
@@ -244,6 +249,7 @@ class ExtensionStoreActivity :
             result.onSuccess {
                 values ->
                 items = values
+                lastResultTerm = term
 
                 status.text =
                     when {
@@ -260,8 +266,10 @@ class ExtensionStoreActivity :
                 render()
             }.onFailure {
                 error ->
-                status.text =
-                    "No se pudo cargar la tienda de Mozilla."
+                status.setTextColor(ThemeManager.palette(this).danger)
+                status.text = "No se pudo cargar la tienda de Mozilla." +
+                    if (items.isNotEmpty()) " Se conservan los resultados de “${lastResultTerm?.ifBlank { "Recomendaciones" }.orEmpty()}”." else " Comprueba la conexión y reintenta."
+                findViewById<View>(R.id.storeRetryButton).visibility = View.VISIBLE
 
                 Toast.makeText(
                     this,
@@ -484,6 +492,8 @@ class ExtensionStoreActivity :
             palette.background
         )
 
+        progress.indeterminateTintList = android.content.res.ColorStateList.valueOf(palette.accent)
+        ThemeManager.styleButton(this, findViewById(R.id.storeRetryButton))
         ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
         ThemeManager.takeInitialFocus(findViewById(R.id.storeRoot))
 
