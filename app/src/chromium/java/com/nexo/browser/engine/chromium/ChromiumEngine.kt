@@ -99,7 +99,11 @@ object ChromiumEngine : BrowserEngine {
     override fun isStarted(): Boolean = started
 
     /** WebView no mantiene abiertos los archivos de Nexo que se transfieren. */
-    override fun shutdownForTransfer(done: () -> Unit) = done()
+    override fun shutdownForTransfer(done: () -> Unit) {
+        // Puesto que todas las perfiles están en memoria, un cierre solo limpia el snapshot de WebView.
+        runCatching { WebView(appContext).apply { clearCache(true); destroy() } }
+        done()
+    }
 
     /** WebView nueva con su perfil asignado antes de cualquier otro uso, como exige WebView. */
     internal fun newWebView(context: Context, profileName: String?): NexoWebView {
