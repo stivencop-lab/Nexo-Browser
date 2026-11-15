@@ -172,7 +172,7 @@
         android:visibility="gone" />
 
     <!-- Floating dock adapted from the supplied prototype; web content keeps its full viewport. -->
-    <com.nexo.browser.GestureDock
+<LinearLayout
         android:id="@+id/browserDock"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -270,6 +270,7 @@
             android:paddingBottom="8dp"
             android:text="" />
     </LinearLayout>
+
 
     <LinearLayout
         android:id="@+id/navBar"
