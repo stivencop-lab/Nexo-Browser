@@ -173,9 +173,8 @@ class PlaybackCaptureService : Service() {
                 .setSampleRate(PlaybackPcm.SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
             val min = AudioRecord.getMinBufferSize(PlaybackPcm.SAMPLE_RATE,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
             check(min > 0)
-            // Búfer de 1 s: si el teléfono va cargado, el hilo de lectura nunca se queda atrás
-            // (con el búfer justo Android descartaba audio y Gecko podía notar la presión).
-            val audio = AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(maxOf(min*4, PlaybackPcm.SAMPLE_RATE * 2))
+            // Búfer de ~250 ms: suficiente para evitar pérdidas sin retener un segundo de captura.
+            val audio = AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(maxOf(min * 2, PlaybackPcm.SAMPLE_RATE / 2))
                 .setAudioPlaybackCaptureConfig(config).build()
             recorder = audio
             check(audio.state == AudioRecord.STATE_INITIALIZED)

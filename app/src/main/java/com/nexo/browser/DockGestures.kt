@@ -5,7 +5,9 @@ import android.util.AttributeSet
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.VelocityTracker
+import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.widget.LinearLayout
 import kotlin.math.abs
 
@@ -36,13 +38,41 @@ class GestureDock @JvmOverloads constructor(
     private var intercepted = false
     private var tracker: VelocityTracker? = null
 
+    private fun hasInteractiveChild(x: Float, y: Float): Boolean {
+        val child = findChildAt(x, y) ?: return false
+        return child.isClickable || child.isLongClickable || child is ViewGroup && child.isClickable
+    }
+
+    private fun findChildAt(x: Float, y: Float): View? {
+        for (index in childCount - 1 downTo 0) {
+            val child = getChildAt(index)
+            if (child.visibility != View.VISIBLE || x < child.left || x >= child.right || y < child.top || y >= child.bottom) continue
+            if (child is ViewGroup) {
+                val nested = child.findViewAt(x - child.left, y - child.top)
+                if (nested != null) return nested
+            }
+            return child
+        }
+        return null
+    }
+
+    private fun ViewGroup.findViewAt(x: Float, y: Float): View? {
+        for (index in childCount - 1 downTo 0) {
+            val child = getChildAt(index)
+            if (child.visibility != View.VISIBLE || x < child.left || x >= child.right || y < child.top || y >= child.bottom) continue
+            if (child is ViewGroup) child.findViewAt(x - child.left, y - child.top)?.let { return it }
+            return child
+        }
+        return null
+    }
+
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 startX = event.rawX
                 startY = event.rawY
                 intercepted = false
-                tracking = gesturesEnabled()
+                tracking = gesturesEnabled() && !hasInteractiveChild(event.x, event.y)
                 tracker?.recycle()
                 tracker = if (tracking) VelocityTracker.obtain().apply { addMovement(event) } else null
             }
@@ -66,7 +96,7 @@ class GestureDock @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!intercepted) {
             // Toques sobre el fondo de la barra: también pueden iniciar un gesto.
-            if (event.actionMasked == MotionEvent.ACTION_DOWN && gesturesEnabled()) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN && gesturesEnabled() && !hasInteractiveChild(event.x, event.y)) {
                 startX = event.rawX
                 startY = event.rawY
                 tracking = true

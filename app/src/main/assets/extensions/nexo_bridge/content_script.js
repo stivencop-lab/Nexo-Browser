@@ -101,7 +101,27 @@
    * El motor solo se carga en el marco que lo necesita; al desactivarlo se
    * retiran sus estilos y observadores.
    */
-  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false };
+  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false, earlyStyle: null };
+
+  // Fallback de primer render: no oculta la página; solo pinta el canvas base mientras
+  // Dark Reader calcula los estilos completos. Gecko ya anuncia el esquema oscuro nativo.
+  function applyEarlyNight(enabled) {
+    try {
+      const root = document.documentElement;
+      if (!root) return;
+      root.toggleAttribute("data-nexo-night", enabled);
+      if (enabled && !night.earlyStyle) {
+        const style = document.createElement("style");
+        style.id = "nexo-early-night";
+        style.textContent = "html[data-nexo-night=\"true\"],html[data-nexo-night=\"true\"] body{background:#0c1222;color:#e8e6e3;}";
+        (root.head || root).appendChild(style);
+        night.earlyStyle = style;
+      } else if (!enabled && night.earlyStyle) {
+        night.earlyStyle.remove();
+        night.earlyStyle = null;
+      }
+    } catch (_) {}
+  }
 
   function parseColor(value) {
     const match = /rgba?\(([^)]+)\)/.exec(String(value || ""));
@@ -162,6 +182,7 @@
   function setNight(want, background) {
     if (/^#[0-9a-f]{6}$/i.test(background)) night.background = background;
     night.want = want;
+    applyEarlyNight(want);
     if (!want) {
       if (night.active && darkReaderReady()) { try { DarkReader.disable(); } catch (_) {} }
       night.active = false;
@@ -173,13 +194,8 @@
         darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" }); } catch (_) {}
       return;
     }
-    // Los colores de la página solo se conocen con el documento cargado.
-    if (document.readyState === "loading") {
-      if (!night.waiting) {
-        night.waiting = true;
-        document.addEventListener("DOMContentLoaded", () => { night.waiting = false; enableNight(); }, { once: true });
-      }
-    } else enableNight();
+    // El script se ejecuta en document_start; no esperes a DOMContentLoaded.
+    enableNight();
   }
 
   installVisibilityGuard();
@@ -1569,7 +1585,11 @@
       }
     }
 
-    if (message.type === "media_nudge") nudgeMedia();
+    if (message.type === "media_nudge") {
+      // No reasignar currentTime: ese salto artificial podía provocar tirones y
+      // alterar la sincronía A/V. Solo actualizamos el estado informado.
+      scheduleVideoReport();
+    }
 
     if (message.type === "captions") {
       setCaptions(message.active === true, message.live === true, message.lang, message.target);
