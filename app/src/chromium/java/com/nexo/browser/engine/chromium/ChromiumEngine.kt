@@ -38,6 +38,8 @@ object ChromiumEngine : BrowserEngine {
         started = true
         // Antes de cargar ningún perfil: los privados y Burner de la sesión anterior.
         runCatching { ChromiumProfiles.purgeStale() }
+        // Actualización desde Nexo con Gecko: sus cookies antes de abrir la primera pestaña.
+        GeckoProfileImport.runOnce(context)
         applySettings(context)
     }
 

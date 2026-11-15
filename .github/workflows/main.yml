@@ -173,7 +173,7 @@ jobs:
           if [ "$NEXO_TRANSITION" = true ]; then expected=com.ejemplo.navegador; fi
           python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package "$expected" app/build/outputs/apk/gecko/debug/*.apk app/build/outputs/apk/gecko/release/*.apk
           if [ "$NEXO_TRANSITION" != true ]; then
-            python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package com.nexo.browser.chromium app/build/outputs/apk/chromium/debug/*.apk app/build/outputs/apk/chromium/release/*.apk
+            python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package com.nexo.browser app/build/outputs/apk/chromium/debug/*.apk app/build/outputs/apk/chromium/release/*.apk
           fi
 
       - name: Confirm build did not mutate tracked source

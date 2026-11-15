@@ -20,8 +20,12 @@ android {
     }
     /*
      * Motor web: "gecko" (GeckoView, la versión publicada) y "chromium"
-     * (Android System WebView, en migración). La variante chromium se instala
-     * aparte (sufijo .chromium) para probarla junto a la publicada.
+     * (Android System WebView, en migración). Las dos usan el mismo paquete:
+     * la de Chromium, firmada con la misma clave, se instala como
+     * actualización de la de Gecko y conserva historial, accesos, pestañas,
+     * ajustes y claves (y trae las cookies de Gecko, ver GeckoProfileImport).
+     * Con -PnexoSideBySide se instala aparte (sufijo .chromium) para probarla
+     * junto a la publicada.
      */
     flavorDimensions += "engine"
     productFlavors {
@@ -31,7 +35,7 @@ android {
         }
         create("chromium") {
             dimension = "engine"
-            applicationIdSuffix = ".chromium"
+            if (project.hasProperty("nexoSideBySide")) applicationIdSuffix = ".chromium"
             versionNameSuffix = "-chromium"
         }
     }
