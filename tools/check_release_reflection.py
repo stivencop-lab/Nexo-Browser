@@ -24,7 +24,7 @@ def manifest_classes(aapt2, apk):
     """Clases que el sistema o las librerías instancian a partir del manifiesto."""
     dump = subprocess.run(
         [aapt2, "dump", "xmltree", "--file", "AndroidManifest.xml", apk],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, errors="replace", check=True,
     ).stdout
     package = re.search(r'package="([^"]+)"', dump)
     package = package.group(1) if package else ""
@@ -59,7 +59,9 @@ def dex_constructors(dexdump, apk):
                 continue
             path = Path(tmp) / entry
             path.write_bytes(archive.read(entry))
-            dump = subprocess.run([dexdump, str(path)], capture_output=True, text=True, check=True).stdout
+            # dexdump imprime cadenas en Modified UTF-8 (U+0000 como 0xC0 0x80): se reemplazan.
+            dump = subprocess.run([dexdump, str(path)], capture_output=True, text=True,
+                                  errors="replace", check=True).stdout
             current = None
             section = None
             method = None
