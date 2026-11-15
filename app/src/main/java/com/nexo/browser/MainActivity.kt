@@ -198,24 +198,17 @@ class MainActivity :
      * barra de navegación ni del teclado: se desplaza con el inset inferior.
      */
     private fun configureSystemInsets() {
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.rootView)) { _, insets ->
-            // ADJUST_RESIZE ya reduce el area disponible cuando aparece el IME.
-            // Solo el inset de navegacion pertenece al margen externo del dock;
-            // sumar el IME aqui hacia que toda la barra flotara sobre el teclado.
-            val systemBottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-            val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
-            val dock = findViewById<GestureDock>(R.id.browserDock)
-            (dock.layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { params ->
-                val base = (8 * resources.displayMetrics.density).toInt()
-                val bottom = if (imeVisible) base else maxOf(base, systemBottom)
-                if (params.bottomMargin != bottom) {
-                    params.bottomMargin = bottom
-                    dock.layoutParams = params
-                }
-            }
-            insets
+        // The activity content owns safe areas once; ADJUST_RESIZE does not add IME padding.
+        val content = findViewById<View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            view.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, ime))
+            WindowInsetsCompat.Builder(insets)
+                .setInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE)
+                .build()
         }
-        ViewCompat.requestApplyInsets(findViewById(R.id.rootView))
+        ViewCompat.requestApplyInsets(content)
     }
 
     private fun bindViews() {
@@ -522,7 +515,7 @@ class MainActivity :
             setPadding(dp(16f), dp(8f), dp(16f), dp(10f))
             addView(TextView(this@MainActivity).apply {
                 text = "EXTENSIONES  ›"; textSize = 10f; letterSpacing = 0.08f
-                typeface = resources.getFont(R.font.inter_variable); setTextColor(if (p.isDark) 0xFFC4B5FD.toInt() else p.accent)
+                typeface = resources.getFont(R.font.inter_variable); setTextColor(p.accent)
                 minimumHeight = dp(40f); gravity = android.view.Gravity.CENTER_VERTICAL
                 isClickable = true; contentDescription = "Administrar extensiones"
                 setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
@@ -539,7 +532,7 @@ class MainActivity :
                     setImageResource(if (isShield) R.drawable.ic_quick_shield else R.drawable.ic_extension_placeholder)
                     if (!isShield) imageTintList = android.content.res.ColorStateList.valueOf(p.accent)
                     setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
-                    background = ThemeManager.rounded(this@MainActivity, if (isShield) 0x2210B981 else p.accentSoft, 12f)
+                    background = ThemeManager.rounded(this@MainActivity, if (isShield) p.success.container else p.accentSoft, 12f)
                 }
                 if (!isShield) ExtensionManager.loadIcon(extension, dp(40f)) { bitmap ->
                     if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
@@ -547,8 +540,8 @@ class MainActivity :
                 val row = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
                     minimumHeight = dp(76f); setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
-                    val surface = if (isShield) androidx.core.graphics.ColorUtils.blendARGB(p.surface, 0xFF10B981.toInt(), if (p.isDark) 0.10f else 0.05f) else p.elevated
-                    background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 16f, if (isShield) 0x5510B981 else p.outline), 16f)
+                    val surface = if (isShield) p.surfaceContainerHigh else p.elevated
+                    background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 16f, p.outlineVariant), 16f)
                     isClickable = true; isFocusable = true
                     contentDescription = "Abrir panel de ${extension.metaData.name ?: "extensión"}"
                     setOnClickListener {
@@ -625,10 +618,10 @@ class MainActivity :
         val square = android.widget.FrameLayout(this).apply {
             addView(icon, android.widget.FrameLayout.LayoutParams(dp(46f), dp(46f), android.view.Gravity.CENTER))
             if (badge != null) addView(TextView(this@MainActivity).apply {
-                text = badge; textSize = 9f; setTextColor(android.graphics.Color.WHITE)
+                text = badge; textSize = 9f; setTextColor(p.error.onColor)
                 typeface = resources.getFont(R.font.jetbrains_mono)
                 setPadding(dp(4f), dp(1f), dp(4f), dp(1f))
-                background = ThemeManager.rounded(this@MainActivity, 0xFFDC2626.toInt(), 8f)
+                background = ThemeManager.rounded(this@MainActivity, p.error.color, 8f)
             }, android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.view.Gravity.TOP or android.view.Gravity.END
@@ -957,11 +950,12 @@ class MainActivity :
         root.setBackgroundColor(p.background)
         findViewById<View>(R.id.browserDock).apply {
             background = ThemeManager.rounded(this@MainActivity, p.surface, 28f, p.outline)
-            elevation = 8f * resources.displayMetrics.density
+            elevation = if (p.isDark) 0f else 4f * resources.displayMetrics.density
         }
         topBar.background = null
         navBar.background = null
-        browserFrame.applyPalette(p.surface, p.accent, p.outline)
+        browserFrame.applyPalette(p.surface, p.accent, p.outlineVariant)
+        geckoView.setBackgroundColor(p.background)
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
         styleMiniPlayerChip()
@@ -985,7 +979,7 @@ class MainActivity :
         }
 
         privateBanner.setBackgroundColor(p.accentSoft)
-        privateBanner.setTextColor(p.accent)
+        privateBanner.setTextColor(p.onAccentSoft)
         progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
         progress.progressBackgroundTintList =
             android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
@@ -1498,28 +1492,14 @@ class MainActivity :
     }
 
     /**
-     * Píldora translúcida sobre el video (se lee igual en tema claro u
+     * Píldora opaca sobre el video (se lee igual en tema claro u
      * oscuro) con aparición suave en lugar de un botón que salta.
      */
     private fun styleMiniPlayerChip() {
-        val density = resources.displayMetrics.density
-        miniPlayerButton.background = ThemeManager.ripple(
-            this,
-            android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xE6111827.toInt())
-                cornerRadius = 24f * density
-                setStroke(density.toInt().coerceAtLeast(1), 0x33FFFFFF)
-            },
-            24f,
-            0x40FFFFFF
-        )
-        miniPlayerButton.backgroundTintList = null
-        miniPlayerButton.setTextColor(android.graphics.Color.WHITE)
-        miniPlayerButton.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+        CaptionsUi.styleChip(this, miniPlayerButton, false)
+        miniPlayerButton.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(ThemeManager.palette(this).text)
         miniPlayerButton.isAllCaps = false
         miniPlayerButton.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-        miniPlayerButton.stateListAnimator = null
-        miniPlayerButton.elevation = 8f * density
         miniPlayerButton.contentDescription = "Abrir el video en una ventana flotante. Mantén pulsado para ocultar este botón."
         miniPlayerButton.setOnLongClickListener {
             miniChipHiddenFor = TabManager.activeTab()?.let { it.id + "|" + it.url }
@@ -1950,6 +1930,8 @@ class MainActivity :
         // La Activity gestiona la rotación: Gecko debe enterarse para
         // actualizar screen.orientation y las media queries.
         runCatching { GeckoRuntimeHolder.get(this).configurationChanged(newConfig) }
+        ViewCompat.requestApplyInsets(findViewById(android.R.id.content))
+        if (BrowserPrefs.isNexoHome(TabManager.activeTab()?.url)) startPage.render(TabManager.activeTab()?.isPrivate == true)
     }
 
     override fun onDestroy() {

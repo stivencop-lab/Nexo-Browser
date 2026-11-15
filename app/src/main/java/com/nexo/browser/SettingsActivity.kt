@@ -48,7 +48,7 @@ class SettingsActivity : Activity() {
     private lateinit var remoteDebug: Switch
     private lateinit var captionsEnabled: Switch
 
-    private val textSizes = listOf(80, 90, 100, 110, 120, 135, 150, 175)
+    private val textSizes = listOf(80, 90, 100, 110, 120, 135, 150, 175, 200)
     private val autoplayOptions = listOf(
         "Permitir" to BrowserPrefs.AUTOPLAY_ALLOW,
         "Bloquear solo con sonido" to BrowserPrefs.AUTOPLAY_BLOCK_AUDIBLE,
@@ -61,7 +61,7 @@ class SettingsActivity : Activity() {
         "OLED negro" to BrowserPrefs.THEME_OLED,
         "Claro" to BrowserPrefs.THEME_LIGHT
     )
-    private val accents = listOf(
+    private val accents by lazy { listOf(
         "Cobalto" to BrowserPrefs.ACCENT_COBALT,
         "Violeta" to BrowserPrefs.ACCENT_VIOLET,
         "Cian" to BrowserPrefs.ACCENT_CYAN,
@@ -69,7 +69,9 @@ class SettingsActivity : Activity() {
         "Naranja" to BrowserPrefs.ACCENT_ORANGE,
         "Rosa" to BrowserPrefs.ACCENT_PINK,
         "Rojo" to BrowserPrefs.ACCENT_RED
-    )
+    ) + if (Build.VERSION.SDK_INT >= 31 || BrowserPrefs.accent(this) == BrowserPrefs.ACCENT_DYNAMIC) {
+        listOf(getString(R.string.dynamic_color) to BrowserPrefs.ACCENT_DYNAMIC)
+    } else emptyList() }
     private val engines = listOf(
         "Google" to BrowserPrefs.ENGINE_GOOGLE,
         "DuckDuckGo" to BrowserPrefs.ENGINE_DDG,

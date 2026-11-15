@@ -13,8 +13,8 @@ android {
         applicationId = if (project.hasProperty("nexoTransition")) "com.ejemplo.navegador" else "com.nexo.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 58
-        versionName = "0.29.5"
+        versionCode = 59
+        versionName = "0.30.0"
         // Solo la actualización de transición (paquete anterior) entrega sus datos a Nexo nuevo.
         manifestPlaceholders["legacyExport"] = project.hasProperty("nexoTransition").toString()
     }
@@ -92,6 +92,9 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
     // Selector de pestañas: tarjetas recicladas y deslizar para cerrar.
     implementation("androidx.recyclerview:recyclerview:1.4.0")
+    // HCT / Material color utilities; the browser keeps its native View UI.
+    implementation("com.materialkolor:material-color-utilities:3.0.1")
+    implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
     // WebSocket para los subtítulos en vivo (Deepgram).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

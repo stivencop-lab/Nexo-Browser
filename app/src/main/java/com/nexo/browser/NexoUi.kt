@@ -66,7 +66,7 @@ object NexoUi {
         val p = ThemeManager.palette(activity)
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ThemeManager.rounded(activity, p.elevated, 18f, p.outline)
+            background = ThemeManager.rounded(activity, p.elevated, 16f, p.outlineVariant)
             setPadding(dp(activity, 14f), dp(activity, 12f), dp(activity, 14f), dp(activity, 12f))
         }
     }
@@ -81,10 +81,12 @@ object NexoUi {
             ellipsize = TextUtils.TruncateAt.END
             maxWidth = dp(activity, 200f)
             gravity = Gravity.CENTER
-            minHeight = dp(activity, 38f)
+            minHeight = dp(activity, 48f)
+            minWidth = dp(activity, 48f)
+            isSelected = selected
             setPadding(dp(activity, if (dotColor != null) 12f else 16f), 0, dp(activity, 16f), 0)
             typeface = if (selected) bold(activity) else Typeface.DEFAULT
-            setTextColor(if (selected) (if (p.isDark) p.text else p.accent) else p.text)
+            setTextColor(if (selected) p.onAccentSoft else p.text)
             val fill = if (selected) p.accentSoft else p.elevated
             val stroke = if (selected) ColorUtils.setAlphaComponent(p.accent, 140) else p.outline
             background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, fill, 19f, stroke), 19f)
@@ -93,7 +95,7 @@ object NexoUi {
                     android.graphics.drawable.GradientDrawable().apply {
                         shape = android.graphics.drawable.GradientDrawable.OVAL
                         setColor(dotColor)
-                        setSize(dp(activity, 10f), dp(activity, 10f))
+                        setSize(dp(activity, 8f), dp(activity, 8f))
                     }, null, null, null
                 )
                 compoundDrawablePadding = dp(activity, 8f)
@@ -113,7 +115,7 @@ object NexoUi {
             setPadding(dp(activity, sidePaddingDp), 0, dp(activity, sidePaddingDp), 0)
         }
         chips.forEachIndexed { index, chip ->
-            row.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 38f)).apply {
+            row.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 if (index > 0) marginStart = dp(activity, 8f)
             })
         }
@@ -144,9 +146,10 @@ object NexoUi {
             inputType = if (numeric) InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
                 else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             ThemeManager.styleEdit(activity, this)
-            setPadding(dp(activity, 16f), 0, dp(activity, 16f), 0)
+            minHeight = dp(activity, 48f)
+            setPadding(dp(activity, 16f), dp(activity, 8f), dp(activity, 16f), dp(activity, 8f))
         }
-        box.addView(edit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 48f)))
+        box.addView(edit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return box to edit
     }
 
@@ -156,7 +159,7 @@ object NexoUi {
             orientation = LinearLayout.HORIZONTAL
             addView(first, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, firstWeight))
             addView(second, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, secondWeight).apply {
-                marginStart = dp(activity, 10f)
+                marginStart = dp(activity, 8f)
             })
         }
 
@@ -165,7 +168,8 @@ object NexoUi {
         val p = ThemeManager.palette(activity)
         val toggle = Switch(activity).apply {
             isChecked = checked
-            contentDescription = title
+            contentDescription = listOfNotNull(title, subtitle).joinToString(". ")
+            minHeight = dp(activity, 48f)
             ThemeManager.styleSwitch(activity, this)
             setOnCheckedChangeListener { _, value -> onChange(value) }
         }
@@ -173,10 +177,12 @@ object NexoUi {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(activity, 52f)
-            isClickable = true
+            // The Switch is the single accessibility/checkable node for this row.
             setOnClickListener { toggle.toggle() }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 addView(TextView(activity).apply { text = title; textSize = 14.5f; setTextColor(p.text) })
                 if (!subtitle.isNullOrBlank()) addView(TextView(activity).apply {
                     text = subtitle; textSize = 12f; setTextColor(p.muted); setPadding(0, dp(activity, 2f), 0, 0)
@@ -201,7 +207,7 @@ object NexoUi {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(activity, 60f)
-            setPadding(dp(activity, 10f), dp(activity, 8f), dp(activity, 12f), dp(activity, 8f))
+            setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 12f), dp(activity, 8f))
             background = ThemeManager.ripple(activity, null, 16f)
             isClickable = true
             isFocusable = true

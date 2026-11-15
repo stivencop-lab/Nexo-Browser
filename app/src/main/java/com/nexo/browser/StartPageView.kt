@@ -64,9 +64,8 @@ class StartPageView(
     private data class Link(val label: String, val url: String = "", val kind: String = "web") {
         val id get() = if (kind == "web") url else kind
     }
-    private val content = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.START }
+    private val content = ContentColumn(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.START }
     private val prefs get() = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    private val emerald = Color.rgb(47, 214, 160)
     private var renderedPrivate = false
     private var renderedShieldToken: String? = null
     private val delayedShieldRefresh = Runnable { refreshShieldIfChanged() }
@@ -88,6 +87,11 @@ class StartPageView(
         }
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw && w > 0) post { if (isAttachedToWindow) render(renderedPrivate) }
+    }
+
     override fun onDetachedFromWindow() {
         removeCallbacks(delayedShieldRefresh)
         super.onDetachedFromWindow()
@@ -101,7 +105,7 @@ class StartPageView(
     private fun bento() = ThemeManager.palette(activity).let { p -> GradientDrawable(
         GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(p.surface, p.surface)
     ).apply { cornerRadius = dp(18f).toFloat(); setStroke(dp(1f), p.outline) } }
-    init { isFillViewport = true; isVerticalScrollBarEnabled = false; addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)) }
+    init { isFillViewport = true; isVerticalScrollBarEnabled = false; addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL)) }
 
     fun render(isPrivate: Boolean) {
         renderedPrivate = isPrivate
@@ -111,18 +115,18 @@ class StartPageView(
         val top = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
         val badge = ExtensionManager.phantomBadge(global = true)
         val available = ExtensionManager.installedPhantom()?.metaData?.enabled == true && badge != "OFF" && badge != "PAUSE"
-        val shieldColor = if (available) { if (p.isDark) 0xFF7EEAC6.toInt() else 0xFF0A7656.toInt() } else p.muted
+        val shieldColor = if (available) p.success.color else p.muted
         top.addView(LinearLayout(activity).apply {
-            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(44f); setPadding(dp(10f), 0, dp(10f), 0)
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48f); setPadding(dp(10f), 0, dp(10f), 0)
             background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, 22f, p.outline), 22f)
             isClickable = true; isFocusable = true; contentDescription = "Abrir panel de PhantomShield"
             setOnClickListener { onShield() }
-            addView(View(activity).apply { background = ThemeManager.rounded(activity, shieldColor, 4f) }, params(dp(6f), dp(6f)).apply { marginEnd = dp(7f) })
+            addView(View(activity).apply { background = ThemeManager.rounded(activity, shieldColor, 4f) }, params(dp(6f), dp(6f)).apply { marginEnd = dp(8f) })
             addView(text("PhantomShield", 11f, p.text, true))
             addView(text(when (badge) { "OFF" -> "Pausado"; "PAUSE" -> "Pausado"; null -> "Panel"; else -> "$badge total" }, 10.5f, shieldColor, true).apply {
                 typeface = resources.getFont(R.font.jetbrains_mono)
-                setPadding(dp(6f), dp(3f), dp(6f), dp(3f))
-                background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(emerald, 24), 12f)
+                setPadding(dp(6f), dp(4f), dp(6f), dp(4f))
+                background = ThemeManager.rounded(activity, p.success.container, 12f)
             }, params().apply { width = ViewGroup.LayoutParams.WRAP_CONTENT; marginStart = dp(8f) })
         })
         top.addView(View(activity), params(0, dp(1f)).apply { weight = 1f })
@@ -131,18 +135,16 @@ class StartPageView(
             setPadding(dp(12f), dp(12f), dp(12f), dp(12f)); background = ThemeManager.ripple(activity, bento(), 22f)
             contentDescription = "Abrir pestaña privada"; isClickable = true; isFocusable = true
             setOnClickListener { onPrivate() }
-        }, params(dp(44f), dp(44f)))
+        }, params(dp(48f), dp(48f)))
         content.addView(top, params())
 
         content.addView(ImageView(activity).apply {
             setImageResource(if (isPrivate) R.drawable.ic_menu_private else R.drawable.ic_nexo_logo)
             val inset = if (isPrivate) dp(16f) else 0
             setPadding(inset, inset, inset, inset)
-            imageTintList = if (isPrivate) ColorStateList.valueOf(Color.WHITE) else null
-            background = if (isPrivate) GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(androidx.core.graphics.ColorUtils.blendARGB(p.accent, Color.WHITE, 0.24f), p.accent, androidx.core.graphics.ColorUtils.blendARGB(p.accent, Color.BLACK, 0.2f))).apply {
-                cornerRadius = dp(22f).toFloat(); setStroke(dp(1f), 0x55FFFFFF)
-            } else null
-            elevation = dp(2f).toFloat()
+            imageTintList = if (isPrivate) ColorStateList.valueOf(p.onAccentSoft) else null
+            background = if (isPrivate) ThemeManager.rounded(activity, p.accentSoft, 16f, p.outlineVariant) else null
+
         }, params(dp(64f), dp(64f)).apply { topMargin = dp(28f); bottomMargin = dp(16f) })
         content.addView(text(if (isPrivate) "Navegación privada" else "Nexo", 34f, p.text, true).apply { gravity = Gravity.START })
         content.addView(text(if (isPrivate) "Un espacio separado para navegar" else "Navegación rápida, privacidad bajo tu control", 12f, p.muted).apply {
@@ -156,27 +158,30 @@ class StartPageView(
             val heading = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
             heading.addView(text("Accesos rápidos", 13f, p.muted, true), params(0).apply { weight = 1f })
             heading.addView(text("Editar", 12f, if (p.isDark) androidx.core.graphics.ColorUtils.blendARGB(p.accent, p.text, 0.5f) else p.accent, true).apply {
-                minimumHeight = dp(44f); gravity = Gravity.CENTER; setPadding(dp(12f), 0, 0, 0)
+                minimumHeight = dp(48f); gravity = Gravity.CENTER; setPadding(dp(12f), 0, 0, 0)
                 isClickable = true; isFocusable = true; setOnClickListener { editLinks() }
             })
             content.addView(heading, params())
             val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
             val links = allLinks().filterNot { it.id in hidden }.take(MAX_TILES) + Link("Añadir", kind = "add")
-            links.chunked(4).forEach { group ->
-                val row = LinearLayout(activity).apply { weightSum = 4f }
+            val availableWidth = (width / resources.displayMetrics.density).takeIf { it > 0 }
+                ?: resources.configuration.screenWidthDp.toFloat()
+            val columns = UiLayout.actionColumns(minOf(availableWidth, UiLayout.CONTENT_MAX_DP.toFloat()) - 40f, resources.configuration.fontScale)
+            links.chunked(columns).forEach { group ->
+                val row = LinearLayout(activity).apply { weightSum = columns.toFloat() }
                 group.forEach { row.addView(tile(it), params(0).apply { weight = 1f }) }
                 content.addView(row, params())
             }
         }
         content.addView(View(activity), params(1, 0).apply { weight = 1f })
-        content.addView(privacyCard(), params().apply { topMargin = dp(22f) })
+        content.addView(privacyCard(), params().apply { topMargin = dp(24f) })
     }
 
     private fun tile(link: Link): View {
         val p = ThemeManager.palette(activity)
         val host = BrowserPagePresentation.shortcut(link.url)?.identity.orEmpty()
         return LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(5f), 0, dp(12f))
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, dp(4f), 0, dp(12f))
             background = ThemeManager.ripple(activity, null, 18f); isClickable = true; isFocusable = true; contentDescription = link.label
             setOnClickListener {
                 when (link.kind) {
@@ -201,10 +206,10 @@ class StartPageView(
             }
             // Color propio de cada acceso de Nexo (los logos de sitios traen el suyo).
             val tint = when (link.kind) {
-                "extensions" -> 0xFF22D3EE.toInt()
-                "downloads" -> 0xFF3B82F6.toInt()
-                "history" -> 0xFF8B5CF6.toInt()
-                "burner" -> 0xFFF97316.toInt()
+                "extensions" -> p.info.color
+                "downloads" -> p.accent
+                "history" -> p.tertiary.color
+                "burner" -> p.warning.color
                 "add" -> p.muted
                 else -> null
             }
@@ -212,11 +217,11 @@ class StartPageView(
                 square.addView(ImageView(activity).apply {
                     setImageResource(iconRes)
                     if (tint != null) imageTintList = ColorStateList.valueOf(tint)
-                }, FrameLayout.LayoutParams(dp(25f), dp(25f), Gravity.CENTER))
+                }, FrameLayout.LayoutParams(dp(24f), dp(24f), Gravity.CENTER))
             } else {
                 // Inicial sobre el color del sitio mientras llega su logo (o si no tiene).
                 val siteHost = runCatching { android.net.Uri.parse(link.url).host }.getOrNull().orEmpty()
-                square.addView(text(if (host.contains("wikipedia.org")) "W" else SiteIconStore.letter(siteHost.ifBlank { link.label }), 20f, Color.WHITE, true).apply {
+                square.addView(text(if (host.contains("wikipedia.org")) "W" else SiteIconStore.letter(siteHost.ifBlank { link.label }), 20f, UiContrast.foreground(SiteIconStore.letterColor(siteHost.ifBlank { link.label })), true).apply {
                     gravity = Gravity.CENTER
                     if (host.contains("wikipedia.org")) typeface = Typeface.create("serif", Typeface.BOLD)
                     background = ThemeManager.rounded(activity, SiteIconStore.letterColor(siteHost.ifBlank { link.label }), 12f)
@@ -232,8 +237,8 @@ class StartPageView(
                 }
             }
             addView(square, params(dp(56f), dp(56f)))
-            addView(text(link.label, 11f, if (link.kind == "shield") { if (p.isDark) 0xFF7EEAC6.toInt() else 0xFF0A7656.toInt() } else p.text).apply {
-                gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(dp(2f), dp(6f), dp(2f), 0)
+            addView(text(link.label, 11f, if (link.kind == "shield") { p.success.color } else p.text).apply {
+                gravity = Gravity.CENTER; maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setPadding(dp(2f), dp(6f), dp(2f), 0)
             }, params())
         }
     }
@@ -241,13 +246,13 @@ class StartPageView(
     private fun privacyCard(): View {
         val p = ThemeManager.palette(activity)
         return LinearLayout(activity).apply {
-            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(76f); setPadding(dp(14f), dp(14f), dp(14f), dp(14f))
+            gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(76f); setPadding(dp(16f), dp(16f), dp(16f), dp(16f))
             background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, 18f, p.outline), 18f)
             isClickable = true; isFocusable = true; contentDescription = "Abrir protección PhantomShield"
             setOnClickListener { onShield() }
             addView(ImageView(activity).apply {
                 setImageResource(R.drawable.ic_quick_shield); setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
-                background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(emerald, 32), 12f)
+                background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(p.success.color, 32), 12f)
             }, params(dp(38f), dp(38f)).apply { marginEnd = dp(12f) })
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -256,9 +261,9 @@ class StartPageView(
                 addView(LinearLayout(activity).apply {
                     gravity = Gravity.CENTER_VERTICAL
                     addView(text("Protección PhantomShield", 12f, p.text, true), params(0).apply { weight = 1f })
-                    addView(text(status, 8.5f, if (p.isDark) 0xFF7EEAC6.toInt() else 0xFF0A7656.toInt(), true).apply {
-                        setPadding(dp(5f), dp(3f), dp(5f), dp(3f)); typeface = resources.getFont(R.font.jetbrains_mono)
-                        background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(emerald, 28), 5f)
+                    addView(text(status, 8.5f, p.success.color, true).apply {
+                        setPadding(dp(4f), dp(4f), dp(4f), dp(4f)); typeface = resources.getFont(R.font.jetbrains_mono)
+                        background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(p.success.color, 28), 5f)
                     })
                 })
                 addView(text(if (badge != null && badge.matches(Regex("[0-9]{1,3}\\+?"))) "$badge bloqueos en total" else "Consulta la protección de cada sitio", 10.5f, p.muted).apply { setPadding(0, dp(4f), 0, 0) })

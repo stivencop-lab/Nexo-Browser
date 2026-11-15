@@ -159,7 +159,7 @@ object TabSwitcher {
         }
         val undoButton = TextView(activity).apply {
             text = "Deshacer"; textSize = 14f; gravity = Gravity.CENTER
-            setTextColor(if (p.isDark) androidx.core.graphics.ColorUtils.blendARGB(p.accent, Color.WHITE, 0.45f) else p.accent)
+            setTextColor(p.accent)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setPadding(dp(activity, 16f), 0, dp(activity, 16f), 0)
             minWidth = dp(activity, 48f)
@@ -558,7 +558,7 @@ private class TabCardAdapter(
         }
         val placeholderIcon = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
         val placeholderLetter = TextView(activity).apply {
-            gravity = Gravity.CENTER; textSize = 20f; setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER; textSize = 20f; setTextColor(p.text)
             typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
         }
         val placeholderHost = TextView(activity).apply {
@@ -659,6 +659,7 @@ private class TabCardAdapter(
                     holder.icon.imageTintList = ColorStateList.valueOf(p.muted)
                     holder.placeholderIcon.setImageDrawable(null)
                     holder.placeholderIcon.background = ThemeManager.rounded(activity, SiteIconStore.letterColor(host), 14f)
+                    holder.placeholderLetter.setTextColor(UiContrast.foreground(SiteIconStore.letterColor(host)))
                     holder.placeholderLetter.text = SiteIconStore.letter(host)
                     holder.placeholderLetter.visibility = View.VISIBLE
                     SiteIconStore.load(activity, origin) { bitmap ->

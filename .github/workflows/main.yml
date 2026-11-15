@@ -116,6 +116,17 @@ jobs:
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
 
+      - name: Native UI theme and accessibility regressions
+        if: matrix.transition == false
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:testDebugUnitTest -PnexoScreenshots \
+            -PnexoShotsDir="$PWD/app/build/reports/ui-previews" \
+            --tests '*UiThemeRegressionTest' --no-daemon --max-workers=4
+          mkdir -p app/build/reports/ui-tests
+          cp app/build/test-results/testDebugUnitTest/TEST-*.xml app/build/reports/ui-tests/
+
       - name: Build, test and lint committed source
         shell: bash
         run: |
@@ -162,6 +173,7 @@ jobs:
             app/build/reports/lint-results-*.html
             app/build/reports/lint-results-*.xml
             app/build/reports/tests/
+            app/build/reports/ui-*/
           if-no-files-found: warn
           retention-days: 14
 
@@ -250,6 +262,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Native UI theme and accessibility regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:testDebugUnitTest -PnexoScreenshots \
+            --tests '*UiThemeRegressionTest' --no-daemon --max-workers=4
 
       # La compilación corre SIN acceso a los secretos de firma.
       - name: Build release from committed source

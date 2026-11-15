@@ -17,7 +17,9 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsetsController
+import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.Button
@@ -28,22 +30,6 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
-
-data class BrowserPalette(
-    val background: Int,
-    val surface: Int,
-    val elevated: Int,
-    val text: Int,
-    val muted: Int,
-    val accent: Int,
-    val onAccent: Int,
-    /** Bordes finos y separadores. */
-    val outline: Int = ColorUtils.setAlphaComponent(muted, 46),
-    /** Fondo suave del acento (chips, insignias, estados activos). */
-    val accentSoft: Int = ColorUtils.setAlphaComponent(accent, 36),
-    val danger: Int = Color.rgb(220, 38, 38),
-    val isDark: Boolean = false
-)
 
 /** Fila de lista con insignia, título, subtítulo y dato secundario. */
 data class ListRow(
@@ -73,68 +59,41 @@ object ThemeManager {
 
     /** Identifica tema + acento: si cambia, hay que recrear la Activity. */
     fun themeKey(activity: Activity): String =
-        resolvedTheme(activity) + "|" + BrowserPrefs.accent(activity)
+        resolvedTheme(activity) + "|" + accentColor(activity)
 
     private fun accentColor(activity: Activity): Int =
         when (BrowserPrefs.accent(activity)) {
-            BrowserPrefs.ACCENT_COBALT -> Color.rgb(61, 107, 242)
-            BrowserPrefs.ACCENT_CYAN -> Color.rgb(6, 182, 212)
-            BrowserPrefs.ACCENT_LIME -> Color.rgb(34, 197, 94)
-            BrowserPrefs.ACCENT_ORANGE -> Color.rgb(249, 115, 22)
-            BrowserPrefs.ACCENT_PINK -> Color.rgb(236, 72, 153)
-            BrowserPrefs.ACCENT_RED -> Color.rgb(239, 68, 68)
-            else -> Color.rgb(124, 58, 237)
+            BrowserPrefs.ACCENT_DYNAMIC -> if (Build.VERSION.SDK_INT >= 31) {
+                activity.getColor(android.R.color.system_accent1_500)
+            } else BrowserColors.COBALT
+            BrowserPrefs.ACCENT_COBALT -> BrowserColors.COBALT
+            BrowserPrefs.ACCENT_CYAN -> BrowserColors.CYAN
+            BrowserPrefs.ACCENT_LIME -> BrowserColors.LIME
+            BrowserPrefs.ACCENT_ORANGE -> BrowserColors.ORANGE
+            BrowserPrefs.ACCENT_PINK -> BrowserColors.PINK
+            BrowserPrefs.ACCENT_RED -> BrowserColors.RED
+            else -> BrowserColors.VIOLET
         }
 
-    fun palette(activity: Activity): BrowserPalette {
-        val accent = accentColor(activity)
-        val onAccent = UiContrast.foreground(accent)
+    // Palette generation is pure but nontrivial. Reuse tokens without retaining Activities.
+    private data class PaletteKey(val mode: String, val seed: Int)
+    private val palettes = object : LinkedHashMap<PaletteKey, BrowserPalette>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaletteKey, BrowserPalette>?): Boolean = size > 16
+    }
 
-        return when (resolvedTheme(activity)) {
-            BrowserPrefs.THEME_LIGHT -> BrowserPalette(
-                background = Color.rgb(242, 244, 249),
-                surface = Color.WHITE,
-                elevated = Color.rgb(232, 236, 245),
-                text = Color.rgb(15, 22, 38),
-                muted = Color.rgb(91, 102, 128),
-                accent = accent,
-                onAccent = onAccent,
-                outline = Color.rgb(216, 222, 234),
-                accentSoft = ColorUtils.setAlphaComponent(accent, 28),
-                isDark = false
-            )
-            BrowserPrefs.THEME_OLED -> BrowserPalette(
-                background = Color.BLACK,
-                surface = Color.rgb(12, 14, 20),
-                elevated = Color.rgb(22, 26, 36),
-                text = Color.rgb(237, 241, 250),
-                muted = Color.rgb(146, 153, 168),
-                accent = accent,
-                onAccent = onAccent,
-                outline = Color.rgb(35, 40, 54),
-                accentSoft = ColorUtils.setAlphaComponent(accent, 52),
-                danger = Color.rgb(255, 112, 136),
-                isDark = true
-            )
-            else -> BrowserPalette(
-                background = Color.rgb(12, 18, 34),
-                surface = Color.rgb(19, 27, 48),
-                elevated = Color.rgb(27, 37, 64),
-                text = Color.rgb(237, 241, 250),
-                muted = Color.rgb(150, 162, 190),
-                accent = accent,
-                onAccent = onAccent,
-                outline = Color.rgb(39, 50, 79),
-                accentSoft = ColorUtils.setAlphaComponent(accent, 52),
-                danger = Color.rgb(255, 112, 136),
-                isDark = true
-            )
+    fun palette(activity: Activity): BrowserPalette {
+        val key = PaletteKey(resolvedTheme(activity), accentColor(activity))
+        return synchronized(palettes) {
+            palettes.getOrPut(key) {
+                BrowserColors.create(key.seed, key.mode != BrowserPrefs.THEME_LIGHT, key.mode == BrowserPrefs.THEME_OLED)
+            }
         }
     }
 
     fun themeRes(activity: Activity): Int {
         val dark = isDark(activity)
         return when (BrowserPrefs.accent(activity)) {
+            BrowserPrefs.ACCENT_DYNAMIC -> if (dark) R.style.Theme_Nexo_Dark_Dynamic else R.style.Theme_Nexo_Light_Dynamic
             BrowserPrefs.ACCENT_COBALT -> if (dark) R.style.Theme_Nexo_Dark_Cobalt else R.style.Theme_Nexo_Light_Cobalt
             BrowserPrefs.ACCENT_CYAN -> if (dark) R.style.Theme_Nexo_Dark_Cyan else R.style.Theme_Nexo_Light_Cyan
             BrowserPrefs.ACCENT_LIME -> if (dark) R.style.Theme_Nexo_Dark_Lime else R.style.Theme_Nexo_Light_Lime
@@ -154,27 +113,33 @@ object ThemeManager {
 
         val p = palette(activity)
         val window = activity.window
-        window.statusBarColor = p.surface
-        window.navigationBarColor = p.surface
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
+        installInsets(activity)
+        window.setBackgroundDrawable(ColorDrawable(p.background))
         window.decorView.setBackgroundColor(p.background)
 
-        val light = !p.isDark
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val appearance = if (light) {
-                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            } else 0
-            window.insetsController?.setSystemBarsAppearance(
-                appearance,
-                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = if (light) {
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-            } else 0
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !p.isDark
+            isAppearanceLightNavigationBars = !p.isDark
         }
+    }
+
+    /** One owner per window: combine IME and safe areas with max(), never add twice. */
+    private fun installInsets(activity: Activity) {
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+        ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
+            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            content.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, keyboard))
+            // Root handles these once; embedded views must not pad them a second time.
+            WindowInsetsCompat.Builder(insets)
+                .setInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE)
+                .build()
+        }
+        ViewCompat.requestApplyInsets(content)
     }
 
     // ---------------------------------------------------------------
@@ -249,6 +214,7 @@ object ThemeManager {
         button.backgroundTintList = null
         button.stateListAnimator = null
         button.elevation = 0f
+        button.minHeight = dp(activity, 48f)
         button.isAllCaps = false
         button.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
@@ -274,6 +240,7 @@ object ThemeManager {
         button.backgroundTintList = null
         button.stateListAnimator = null
         button.elevation = 0f
+        button.minHeight = dp(activity, 48f)
         button.isAllCaps = false
     }
 
@@ -293,7 +260,7 @@ object ThemeManager {
     /** Contenedor tipo tarjeta: superficie redondeada con borde fino. */
     fun styleCard(activity: Activity, view: View, radiusDp: Float = 20f) {
         val p = palette(activity)
-        view.background = rounded(activity, p.surface, radiusDp, if (p.isDark) p.outline else null)
+        view.background = rounded(activity, p.surface, radiusDp, if (p.isDark) p.outlineVariant else null)
         view.clipToOutline = true
     }
 
@@ -301,7 +268,7 @@ object ThemeManager {
     fun barBackground(activity: Activity, lineOnTop: Boolean): Drawable {
         val p = palette(activity)
         return LayerDrawable(
-            arrayOf(ColorDrawable(p.surface), ColorDrawable(p.outline))
+            arrayOf(ColorDrawable(p.surface), ColorDrawable(p.outlineVariant))
         ).apply {
             setLayerHeight(1, dp(activity, 1f).coerceAtLeast(1))
             setLayerGravity(1, if (lineOnTop) Gravity.TOP else Gravity.BOTTOM)
@@ -316,6 +283,7 @@ object ThemeManager {
             rounded(activity, Color.TRANSPARENT, 7f, p.text, 1.8f),
             inset
         )
+        button.fontFeatureSettings = "tnum"
         button.background = ripple(activity, box, 24f)
         button.setTextColor(p.text)
         button.backgroundTintList = null
@@ -324,7 +292,7 @@ object ThemeManager {
     }
 
     fun styleDivider(activity: Activity, view: View) {
-        view.setBackgroundColor(palette(activity).outline)
+        view.setBackgroundColor(palette(activity).outlineVariant)
     }
 
     /** Barra superior de pantallas secundarias: botón volver + título. */
@@ -357,7 +325,8 @@ object ThemeManager {
                 (view as? TextView)?.apply {
                     setTextColor(p.text)
                     textSize = 15f
-                    maxLines = 1
+                    maxLines = if (dropdown) 3 else 2
+                    minHeight = dp(activity, 48f)
                     ellipsize = TextUtils.TruncateAt.END
                     val d = resources.displayMetrics.density
                     if (dropdown) {
@@ -367,7 +336,7 @@ object ThemeManager {
                         background = ripple(activity, null, 12f)
                     } else {
                         // El fondo y la flecha los pone styleSpinner.
-                        setPadding((16 * d).toInt(), 0, (40 * d).toInt(), 0)
+                        setPadding((16 * d).toInt(), (8 * d).toInt(), (40 * d).toInt(), (8 * d).toInt())
                         background = null
                         gravity = Gravity.CENTER_VERTICAL
                     }
@@ -435,7 +404,7 @@ object ThemeManager {
             minimumHeight = (64 * d).toInt()
             background = ripple(
                 activity,
-                rounded(activity, p.surface, 18f, if (p.isDark) p.outline else null),
+                rounded(activity, p.surface, 18f, if (p.isDark) p.outlineVariant else null),
                 18f
             )
             layoutParams = ViewGroup.LayoutParams(
@@ -510,7 +479,7 @@ object ThemeManager {
         toggle.setTextColor(p.text)
         toggle.thumbTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-            intArrayOf(p.accent, if (p.isDark) Color.rgb(203, 213, 225) else Color.rgb(148, 163, 184))
+            intArrayOf(p.accent, p.outline)
         )
         toggle.trackTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
@@ -528,7 +497,7 @@ object ThemeManager {
     fun styleEdit(activity: Activity, edit: EditText) {
         val p = palette(activity)
         val normal = rounded(activity, p.elevated, 24f)
-        val focused = rounded(activity, if (p.isDark) p.surface else Color.WHITE, 24f, p.accent, 1.5f)
+        val focused = rounded(activity, p.surfaceContainerHighest, 24f, p.accent, 1.5f)
 
         edit.background = StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused), focused)

@@ -1,8 +1,10 @@
 # Nexo Browser
 
-> **Versión actual: v0.29.3** · `versionCode 56` · Paquete `com.nexo.browser`
-> 
-> [Descargar la última versión](https://github.com/stivencop414-bot/NavegadorGecko/releases/latest) · [Ver cambios](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.29.3)
+> **Versión de desarrollo: v0.30.0** · `versionCode 59` · Paquete `com.nexo.browser`
+>
+> La actualización está preparada para revisión; el APK publicado sigue disponible en
+> [la última release](https://github.com/stivencop414-bot/NavegadorGecko/releases/latest).
+> Consulta la [auditoría de interfaz y validación de 0.30.0](docs/AUDITORIA-UI-0.30.0.md).
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
@@ -37,7 +39,9 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
   Canvas/WebGL; si ese componente falla, un Burner sin proxy abre igualmente (aislado por Gecko).
 - Modo escritorio: User-Agent + viewport.
 - Temas Midnight, OLED y claro.
-- Siete colores de acento, con cobalto por defecto.
+- Siete acentos HCT con cobalto por defecto y color del sistema (Material You) opcional desde Android 12.
+- Barras y componentes compartidos con controles de 48 dp, campos que crecen con la fuente y hojas adaptadas a tablet.
+- Tema de ventanas y botones flotantes con contraste verificado; áreas seguras para barras, recortes y teclado.
 - Historial con búsqueda en vivo (título, dominio o dirección, sin distinguir tildes), descargas y compartir.
 - Descargas aceleradas: los archivos grandes de servidores que admiten rangos se reparten en 2–4
   conexiones (misma sesión, nunca con proxy ni Burner), una descarga cortada se reanuda desde el último
@@ -177,7 +181,13 @@ gradle :app:assembleDebug
 gradle :app:lintRelease
 ```
 
-Capturas de la interfaz nativa (Robolectric, opcional y fuera de la CI):
+Pruebas de interfaz nativa (Robolectric, también en CI):
+
+```bash
+gradle :app:testDebugUnitTest -PnexoScreenshots --tests '*UiThemeRegressionTest'
+```
+
+Capturas adicionales de la interfaz nativa (opcionales):
 
 ```bash
 gradle :app:testDebugUnitTest --tests 'com.nexo.browser.ScreenshotTest' \
