@@ -42,12 +42,18 @@ internal object GeckoProfileImport {
         val doneAt = prefs.getLong(KEY_DONE_AT, 0L)
         if (doneAt == 0L) {
             val home = File(context.filesDir, "mozilla")
-            val imported = if (home.isDirectory) runCatching { importCookies(context) }.getOrDefault(-1) else null
-            prefs.edit()
-                .putLong(KEY_DONE_AT, System.currentTimeMillis())
-                .putInt(KEY_IMPORTED, imported ?: 0)
-                .apply()
-            if (imported != null) notice(imported)
+            if (!home.isDirectory) {
+                markDone(prefs, 0)
+                notice(0)
+                return
+            }
+            val imported = try {
+                importCookies(context)
+            } catch (_: Exception) {
+                return
+            }
+            markDone(prefs, imported)
+            notice(imported)
             return
         }
         if (!prefs.getBoolean(KEY_CLEANED, false) && System.currentTimeMillis() - doneAt > KEEP_MILLIS) {
@@ -57,6 +63,10 @@ internal object GeckoProfileImport {
                 if (ok) prefs.edit().putBoolean(KEY_CLEANED, true).apply()
             }
         }
+    }
+
+    private fun markDone(prefs: android.content.SharedPreferences, imported: Int) {
+        prefs.edit().putLong(KEY_DONE_AT, System.currentTimeMillis()).putInt(KEY_IMPORTED, imported).apply()
     }
 
     private fun notice(imported: Int) {
