@@ -176,28 +176,34 @@ formato compatible se muestra la inicial. No se solicitan desde pestañas privad
 Requisitos: JDK 21, Gradle 9.8.2 y Android SDK con `platforms;android-37.2` y
 `build-tools;37.0.0` (GeckoView 159 exige compilar contra la API 37.2; AGP 9.5).
 
+Hay dos variantes de motor (ver [migración a Chromium WebView](docs/MIGRACION-CHROMIUM-WEBVIEW.md)):
+
+- **`gecko`**: GeckoView, la versión publicada (`com.nexo.browser`).
+- **`chromium`**: Android System WebView, en migración (`com.nexo.browser.chromium`, se instala junto a la publicada).
+
 ```bash
 node --test app/src/test/js/*.test.cjs  # regresiones de extensiones y mini reproductor
-gradle :app:testDebugUnitTest   # tests unitarios (reglas de URL, buscador, nombres de archivo)
-gradle :app:assembleDebug
-gradle :app:lintRelease
+gradle :app:testGeckoDebugUnitTest :app:testChromiumDebugUnitTest   # tests unitarios
+gradle :app:assembleGeckoDebug :app:assembleChromiumDebug
+gradle :app:lintGeckoRelease :app:lintChromiumRelease
 ```
 
 Pruebas de interfaz nativa (Robolectric, también en CI):
 
 ```bash
-gradle :app:testDebugUnitTest -PnexoScreenshots --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest'
+gradle :app:testGeckoDebugUnitTest -PnexoScreenshots --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest'
 ```
 
 Capturas adicionales de la interfaz nativa (opcionales):
 
 ```bash
-gradle :app:testDebugUnitTest --tests 'com.nexo.browser.ScreenshotTest' \
+gradle :app:testGeckoDebugUnitTest --tests 'com.nexo.browser.ScreenshotTest' \
   -PnexoScreenshots -PnexoShotsDir=/ruta/capturas
 ```
 
-Las librerías nativas van comprimidas en el APK (como Firefox para Android): el APK
-arm64 pesa ~100 MB en vez de ~216 MB y Android las extrae una vez al instalar.
+Las librerías nativas de la variante Gecko van comprimidas en el APK (como Firefox para
+Android): el APK arm64 pesa ~100 MB en vez de ~216 MB y Android las extrae una vez al
+instalar. La variante Chromium no lleva motor propio: usa el WebView del sistema.
 
 ## CI y releases
 El workflow `.github/workflows/main.yml` compila, ejecuta tests y lint en cada PR y push a `main`.

@@ -1,6 +1,6 @@
 # Auditoría y plan: migración de Nexo a Chromium WebView
 
-> Estado: **decisiones tomadas; fase 1 implementada** (ver [§7](#7-decisiones) y [§10](#10-estado-de-la-fase-1)).
+> Estado: **fases 1 y 2 implementadas** (ver [§7](#7-decisiones), [§10](#10-estado-de-la-fase-1) y [§11](#11-estado-de-la-fase-2)).
 > Base revisada: `main` en v0.30.2 (`versionCode 61`), commit `9bcb1ca`.
 
 ## 1. Resumen
@@ -283,7 +283,7 @@ Tomadas por el propietario del proyecto el 15-11-2026:
 | Proxy por pestaña / Burner con proxy | **Proxy global** de la app (`ProxyController`) con aviso visible; retardo, ubicación simulada y variación Canvas siguen por pestaña |
 | Traducción de páginas | **En la nube**, con el proveedor ya configurado para subtítulos (Google sin clave, DeepL o IA) |
 | Permisos de trabajo | Documentación oficial, instalación del Android SDK en el contenedor y comienzo de la fase 1 |
-| Teléfonos sin `MULTI_PROFILE` | Pendiente de confirmar; propuesta: desactivar pestañas privadas y Burner con aviso |
+| Teléfonos sin `MULTI_PROFILE` | Pestañas privadas y Burner **desactivadas con aviso** (confirmado el 15-11-2026) |
 
 ## 8. Verificaciones
 
@@ -296,7 +296,8 @@ Documentación oficial consultada el 15-11-2026 (developer.android.com):
 | `WebViewCompat.setProfile` | Antes de cualquier otro uso del WebView (salvo añadirlo a la vista); falla si ya navegó o ejecutó JS | Se asigna en el constructor de la pestaña |
 | Objetos por perfil | `CookieManager`, `WebStorage`, `GeolocationPermissions`, `ServiceWorkerController`, caché HTTP, precarga | Borrado y permisos por perfil |
 | `addDocumentStartJavaScript` | Todos los marcos cuyo **origen** cumple las reglas (sin rutas); solo marcos que empiezan a cargar después de la llamada | Los patrones `matches` de las extensiones se comprueban dentro del script |
-| Mundos aislados | Existe `addJavaScriptOnEvent` con `JavaScriptExecutionWorld` (1.16.0) | 🔎 comprobar en 1.18.0 si permite mundos aislados por extensión |
+| Mundos aislados | Confirmado en el AAR 1.18.0: `WebViewCompat.getExecutionWorld`, `addJavaScriptOnEvent(…, JavaScriptExecutionWorld)` y `addWebMessageListener(…, JavaScriptExecutionWorld, …)` (función `JS_INJECTION_IN_FRAME_AND_WORLD`) | Los scripts de contenido de NXR y el puente pueden correr en un mundo aislado por extensión cuando el WebView del teléfono lo admita |
+| Otras APIs de 1.18.0 | `Profile.addCustomHeader` (cabecera `Sec-GPC` posible), `WebViewCompat.saveState(…, tamaño máximo, …)`, `NavigationListener`; `Profile.preconnect` es experimental y `setRequestedWithHeaderOriginAllowList` está restringida (lint) | La fase 2 usa `saveState` con límite; no usa `preconnect` ni la lista de `X-Requested-With` |
 | `addWebMessageListener` con `*` | Se inyecta en todos los marcos; la documentación exige tratar los mensajes como no fiables | Validar `sourceOrigin`, `isMainFrame` y un secreto por pestaña |
 | `onRenderProcessGone` | Varios WebView pueden compartir proceso; se llama para cada uno afectado | Recuperar cada pestaña afectada |
 | `shouldInterceptRequest` | Fuera del hilo principal; en redirecciones solo se llama para la URL inicial | Los bloqueos por URL final no son posibles |
@@ -369,3 +370,65 @@ Hecho en la rama de trabajo, sin cambios de comportamiento:
   `TabRouting`, `TranslatorManager`, `PagePrompts`, `SitePermissions`, `DownloadStore` y la
   interfaz de extensiones. Su API pública ya recibe `EngineSession`.
 - La vista de página se llama `pageView` en el *layout*.
+
+## 11. Estado de la fase 2
+
+Variantes de compilación (`flavorDimensions` `engine`):
+
+| Variante | Motor | Paquete | Publicación |
+| --- | --- | --- | --- |
+| `gecko` | GeckoView 159 | `com.nexo.browser` | La release de GitHub sigue publicando solo esta |
+| `chromium` | Android System WebView + `androidx.webkit` 1.18.0 | `com.nexo.browser.chromium` | Se compila y prueba en CI; se instala junto a la publicada |
+
+Organización del código:
+
+- `src/main`: todo lo común, sin tipos de GeckoView (comprobado: la variante chromium compila
+  sin la dependencia). Nuevos `SitePermissionPrompts` (preguntas de permisos),
+  `ExtensionEntry` (menú de extensiones), `DownloadResponse`/`DownloadFetcher` (descargas) y
+  `PullToRefreshTarget`. La vista de página la crea el motor (`BrowserEngine.createView`).
+- `src/gecko`: GeckoView, `ExtensionManager`, `TabRouting`, `TranslatorManager`, `PagePrompts`,
+  `SitePermissions`, `ExtensionsActivity`/`ExtensionStoreActivity` (AMO) y `NexoGeckoView`.
+- `src/chromium`: `ChromiumEngine`, `ChromiumEngineSession`, `ChromiumPageView`,
+  `ChromiumProfiles`, `ChromiumDownloads`, `ChromiumState` y las versiones de los módulos anteriores.
+
+Funciona en la variante chromium (pendiente de probar en teléfono):
+
+| Función | Cómo |
+| --- | --- |
+| Pestañas, historial atrás/adelante, recarga, modo escritorio | Una WebView por pestaña viva; descarte LRU con estado guardado (`WebViewCompat.saveState` con límite de 256 KB) |
+| Pestañas privadas y Burner | Perfil privado rotativo y uno por identidad Burner; los antiguos se borran al arrancar. Sin `MULTI_PROFILE`: desactivadas con aviso y Burner no crea la cuenta de correo |
+| Ventanas nuevas (`target=_blank`, `window.open`) | Misma política de Gecko (gesto, confirmación de otro sitio); la WebView de la ventana conserva `window.opener` y no carga hasta que Nexo decide |
+| Enlaces a apps (`tel:`, `intent://`…) | Misma ruta que en Gecko (`ExternalApps`) |
+| Diálogos | alert/confirm/prompt con bloqueo de repeticiones, "¿salir de la página?", archivos, autenticación HTTP, reenvío de formularios; solo la pestaña visible |
+| Permisos | Cámara, micrófono, DRM y ubicación con la pregunta común y los permisos de Android |
+| Descargas | OkHttp con las cookies del perfil de la pestaña (nunca las normales en privado), en varias conexiones y con reanudación |
+| Buscar en la página, menú de pulsación larga, captura (PixelCopy), PDF (diálogo de impresión) | APIs de WebView |
+| Pantalla completa de video | `onShowCustomView` dentro de la vista de página |
+| Cierre del proceso de render | `onRenderProcessGone` devuelve `true` y cada pestaña afectada se recupera con el límite de reintentos de `TabManager` |
+| Ajustes | JavaScript, tamaño de texto, Safe Browsing, cookies de terceros, reproducción automática, solo HTTPS (mejora a https y bloquea contenido mixto), depuración remota |
+| Privacidad | Sin marcas de WebView en el User-Agent, atribución desactivada, errores TLS siempre cancelados |
+| Extensiones | Pantalla con el estado de los módulos y **comprobación de una extensión** de escritorio (CRX verificado, XPI o ZIP) con los módulos NXR |
+
+Pendiente en la variante chromium (fases siguientes):
+
+- Fase 3: PhantomShield nativo (sin bloqueo de anuncios todavía; `setTrackingProtection` no hace nada).
+- Fase 4: puente de páginas (subtítulos, mini video con recorte, modo nocturno, controles
+  multimedia y reproducción en segundo plano), traducción en la nube, proxy global, retardo,
+  ubicación simulada y variación de huella. Hasta entonces una pestaña con proxy **no se abre**
+  (nunca por conexión directa).
+- Runtime NXR: instalación y ejecución de extensiones de escritorio.
+- Sin equivalente: DoH configurable, ETP de Gecko, protección de huellas de Gecko.
+
+Cambios que también afectan a la variante gecko (sin cambiar su comportamiento visible):
+la vista de página se crea en código, las descargas pasan por `DownloadResponse` (y ya no se
+guarda como archivo una respuesta de error HTTP) y los permisos usan `SitePermissionPrompts`.
+
+Prueba en teléfono (lista mínima antes de publicar la variante chromium):
+
+1. Instalar `app-chromium-*-debug.apk` junto a la versión publicada.
+2. Navegar, volver atrás, recargar, cerrar Nexo y comprobar que las pestañas se restauran.
+3. Pestaña privada: iniciar sesión, cerrar todas las privadas y comprobar que la sesión no sigue.
+4. Burner con un WebView sin `MULTI_PROFILE` (Android System WebView antiguo): debe avisar.
+5. Inicio de sesión de Google o GitHub por ventana emergente (`window.opener`).
+6. Video a pantalla completa, subir un archivo, cámara en una videollamada, descargar un archivo grande.
+7. Buscar en la página, captura de pantalla y "Guardar como PDF".
