@@ -10,66 +10,13 @@ import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
-import com.nexo.browser.engine.EngineSession
-import com.nexo.browser.engine.EngineView
-import com.nexo.browser.engine.gecko.gecko
-import org.mozilla.geckoview.GeckoView
-import org.mozilla.geckoview.PanZoomController
 import kotlin.math.abs
 import kotlin.math.min
 
-/**
- * GeckoView que pregunta a Gecko, al tocar, si la página está arriba del todo
- * y si el gesto lo maneja el navegador (no un mapa, juego o carrusel).
- */
-class NexoGeckoView @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null
-) : GeckoView(context, attrs), EngineView {
-    override fun attach(session: EngineSession, background: Int) {
-        val gecko = session.gecko
-        // Fondo del tema mientras la página pinta (evita el destello blanco).
-        runCatching { gecko.compositorController.setClearColor(background) }
-        coverUntilFirstPaint(background)
-        setSession(gecko)
-    }
-
-    override fun release() {
-        releaseSession()
-    }
-
-    override fun onPictureInPictureModeChanged(inPictureInPicture: Boolean) {
-        runCatching { session?.compositorController?.onPipModeChanged(inPictureInPicture) }
-    }
-
-    override fun capture(onResult: (android.graphics.Bitmap?) -> Unit) {
-        runCatching { capturePixels().accept({ onResult(it) }, { onResult(null) }) }
-            .onFailure { onResult(null) }
-    }
-
-    /** true solo cuando un deslizamiento hacia abajo debe recargar la página. */
-    @Volatile var canPullToRefresh = false
-        private set
-
-    private var touchEpoch = 0L
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            ++touchEpoch
-            canPullToRefresh = false
-        }
-        if (event.actionMasked != MotionEvent.ACTION_DOWN) return super.onTouchEvent(event)
-        canPullToRefresh = false
-        val epoch = ++touchEpoch
-        val touchedSession = session
-        onTouchEventForDetailResult(event).accept { detail ->
-            if (epoch != touchEpoch || session !== touchedSession || detail == null) return@accept
-            val handledByBrowser = detail.handledResult() == PanZoomController.INPUT_RESULT_HANDLED
-            val canScrollUp = detail.scrollableDirections() and PanZoomController.SCROLLABLE_FLAG_TOP != 0
-            val canOverscroll = detail.overscrollDirections() and PanZoomController.OVERSCROLL_FLAG_VERTICAL != 0
-            canPullToRefresh = handledByBrowser && !canScrollUp && canOverscroll
-        }
-        return true
-    }
+/** Vista de página que sabe si un deslizamiento hacia abajo debe recargar. */
+interface PullToRefreshTarget {
+    /** true solo cuando la página está arriba y el gesto no lo usa la propia web. */
+    val canPullToRefresh: Boolean
 }
 
 /**
@@ -126,8 +73,8 @@ class PullRefreshLayout @JvmOverloads constructor(
         hideIndicator()
     }
 
-    private fun geckoView(): NexoGeckoView? =
-        (0 until childCount).map { getChildAt(it) }.firstOrNull { it is NexoGeckoView } as? NexoGeckoView
+    private fun pageView(): PullToRefreshTarget? =
+        (0 until childCount).map { getChildAt(it) }.firstOrNull { it is PullToRefreshTarget } as? PullToRefreshTarget
 
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -139,7 +86,7 @@ class PullRefreshLayout @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 if (pulling) return true
                 if (refreshing || event.pointerCount > 1 || !enabledForPage()) return false
-                val view = geckoView() ?: return false
+                val view = pageView() ?: return false
                 val dy = event.y - downY
                 val dx = event.x - downX
                 if (dy > touchSlop * 2 && dy > abs(dx) * 1.6f && view.canPullToRefresh) {

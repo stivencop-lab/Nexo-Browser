@@ -485,7 +485,7 @@ object CaptionsUi {
             BrowserPrefs.setCaptionAudioAuto(activity, audioAuto)
             if (friendlyAudio != BrowserPrefs.captureFriendlyAudio(activity)) {
                 BrowserPrefs.setCaptureFriendlyAudio(activity, friendlyAudio)
-                GeckoRuntimeHolder.applyAudioPrefs(activity)
+                com.nexo.browser.engine.Engines.current.applyAudioSettings(activity)
             }
             BrowserPrefs.setAiTranslateProvider(activity, aiProvider)
             BrowserPrefs.setAiTranslateModel(activity, aiModelField.text.toString())

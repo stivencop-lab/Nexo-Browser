@@ -213,11 +213,23 @@ class MainActivity :
         ViewCompat.requestApplyInsets(content)
     }
 
+    /** Sustituye el hueco del layout por la vista de página del motor, en su mismo sitio. */
+    private fun installPageView(): View {
+        val placeholder = findViewById<View>(R.id.pageView)
+        val parent = placeholder.parent as android.view.ViewGroup
+        val index = parent.indexOfChild(placeholder)
+        val view = com.nexo.browser.engine.Engines.current.createView(this)
+        view.id = R.id.pageView
+        parent.removeViewAt(index)
+        parent.addView(view, index, placeholder.layoutParams)
+        return view
+    }
+
     private fun bindViews() {
         root = findViewById(R.id.rootView)
         topBar = findViewById(R.id.topBar)
         navBar = findViewById(R.id.navBar)
-        pageView = findViewById(R.id.pageView)
+        pageView = installPageView()
         engineView = pageView as EngineView
         browserFrame = findViewById(R.id.browserFrame)
         startPage = StartPageView(
@@ -225,7 +237,7 @@ class MainActivity :
             onOpen = { url -> TabManager.navigate(url) },
             onPrivate = { viewModel.newTab(true) },
             onShield = { openShieldPanel() },
-            onExtensions = { openScreen(ExtensionStoreActivity::class.java) },
+            onExtensions = { openScreen(ExtensionManager.storeScreen()) },
             onAction = { action -> startPageAction(action) }
         ).apply { visibility = View.GONE }
         // Encima de la GeckoView y debajo del botón "Mini video".
@@ -505,8 +517,8 @@ class MainActivity :
      * fila deslizable con todas las demás (icono real e insignia de cada una).
      */
     private fun extensionShortcuts(dismiss: () -> Unit): View? {
-        val phantom = ExtensionManager.installedPhantom()
-        val others = ExtensionManager.actionableExtensions().filterNot { it.id == ExtensionManager.PHANTOMSHIELD_ID }
+        val phantom = ExtensionManager.phantomEntry()
+        val others = ExtensionManager.actionEntries().filterNot { it.id == ExtensionManager.PHANTOMSHIELD_ID }
         val items = listOfNotNull(phantom)
         val p = ThemeManager.palette(this)
         val d = resources.displayMetrics.density
@@ -535,7 +547,7 @@ class MainActivity :
                     setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
                     background = ThemeManager.rounded(this@MainActivity, if (isShield) p.success.container else p.accentSoft, 12f)
                 }
-                if (!isShield) ExtensionManager.loadIcon(extension, dp(40f)) { bitmap ->
+                if (!isShield) ExtensionManager.loadIconFor(extension.id, dp(40f)) { bitmap ->
                     if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
                 }
                 val row = LinearLayout(this@MainActivity).apply {
@@ -544,11 +556,11 @@ class MainActivity :
                     val surface = if (isShield) p.surfaceContainerHigh else p.elevated
                     background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 16f, p.outlineVariant), 16f)
                     isClickable = true; isFocusable = true
-                    contentDescription = "Abrir panel de ${extension.metaData.name ?: "extensión"}"
+                    contentDescription = "Abrir panel de ${extension.name ?: "extensión"}"
                     setOnClickListener {
                         dismiss()
-                        if (!extension.metaData.enabled) openScreen(ExtensionsActivity::class.java)
-                        else ExtensionManager.runAction(extension) { ok, message ->
+                        if (!extension.enabled) openScreen(ExtensionsActivity::class.java)
+                        else ExtensionManager.runActionFor(extension.id) { ok, message ->
                             if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
                         }
                     }
@@ -556,13 +568,13 @@ class MainActivity :
                     addView(LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         addView(TextView(this@MainActivity).apply {
-                            text = extension.metaData.name ?: "Extensión"; textSize = 12.5f
+                            text = extension.name ?: "Extensión"; textSize = 12.5f
                             typeface = android.graphics.Typeface.create(resources.getFont(R.font.inter_variable), android.graphics.Typeface.BOLD)
                             setTextColor(p.text); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                         })
                         addView(TextView(this@MainActivity).apply {
                             text = when {
-                                !extension.metaData.enabled -> "Extensión desactivada"
+                                !extension.enabled -> "Extensión desactivada"
                                 badge == "OFF" -> "Bloqueo pausado"
                                 badge == "PAUSE" -> "Pausada en esta página"
                                 badge != null -> "$badge bloqueos en esta página"
@@ -573,11 +585,11 @@ class MainActivity :
                         })
                     }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                     if (isShield) addView(android.widget.Switch(this@MainActivity).apply {
-                        isChecked = extension.metaData.enabled
+                        isChecked = extension.enabled
                         contentDescription = "Habilitar extensión PhantomShield"; ThemeManager.styleSwitch(this@MainActivity, this)
                         setOnCheckedChangeListener { _, enabled ->
                             dismiss()
-                            ExtensionManager.setEnabled(this@MainActivity, extension, enabled) { ok, message ->
+                            ExtensionManager.setEnabledFor(this@MainActivity, extension.id, enabled) { ok, message ->
                                 runOnUiThread {
                                     if (!ok) Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                                     TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
@@ -601,19 +613,19 @@ class MainActivity :
     }
 
     /** Botón de una extensión en el menú (null = añadir extensiones). */
-    private fun extensionTile(extension: org.mozilla.geckoview.WebExtension?, dismiss: () -> Unit): View {
+    private fun extensionTile(extension: ExtensionEntry?, dismiss: () -> Unit): View {
         val p = ThemeManager.palette(this)
         val d = resources.displayMetrics.density
         fun dp(value: Float) = (value * d).toInt()
-        val name = extension?.metaData?.name ?: "Añadir"
-        val badge = extension?.let { ExtensionManager.badge(it) }
+        val name = extension?.name ?: "Añadir"
+        val badge = extension?.let { ExtensionManager.badgeFor(it.id) }
         val icon = ImageView(this).apply {
             setImageResource(if (extension == null) R.drawable.ic_nav_add else R.drawable.ic_extension_placeholder)
             imageTintList = android.content.res.ColorStateList.valueOf(if (extension == null) p.muted else p.accent)
             setPadding(dp(9f), dp(9f), dp(9f), dp(9f))
             background = ThemeManager.rounded(this@MainActivity, if (extension == null) p.elevated else p.accentSoft, 14f, p.outline)
         }
-        if (extension != null) ExtensionManager.loadIcon(extension, dp(44f)) { bitmap ->
+        if (extension != null) ExtensionManager.loadIconFor(extension.id, dp(44f)) { bitmap ->
             if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
         }
         val square = android.widget.FrameLayout(this).apply {
@@ -637,8 +649,8 @@ class MainActivity :
             contentDescription = if (extension == null) "Añadir extensiones" else "Abrir $name" + (badge?.let { " · $it" } ?: "")
             setOnClickListener {
                 dismiss()
-                if (extension == null) openScreen(ExtensionStoreActivity::class.java)
-                else ExtensionManager.runAction(extension) { ok, message ->
+                if (extension == null) openScreen(ExtensionManager.storeScreen())
+                else ExtensionManager.runActionFor(extension.id) { ok, message ->
                     if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
                 }
             }
@@ -737,7 +749,7 @@ class MainActivity :
         }
     }
 
-    /** La página completa como PDF (motor de impresión de Gecko), en Descargas. */
+    /** La página completa como PDF (motor de impresión del motor web), en Descargas. */
     private fun savePageAsPdf() {
         val tab = TabManager.activeTab() ?: return
         val session = tab.session ?: return
@@ -745,8 +757,12 @@ class MainActivity :
             Toast.makeText(this, "Abre una página para guardarla", Toast.LENGTH_SHORT).show()
             return
         }
-        Toast.makeText(this, "Generando PDF…", Toast.LENGTH_SHORT).show()
         val name = FileNames.sanitize(tab.title.ifBlank { displayUrl(tab.url) }.take(80), "pagina") + ".pdf"
+        // Motores sin PDF directo: diálogo del sistema con "Guardar como PDF".
+        suppressAutoPipOnce = true
+        if (session.printWithSystemDialog(this, name.removeSuffix(".pdf"))) return
+        suppressAutoPipOnce = false
+        Toast.makeText(this, "Generando PDF…", Toast.LENGTH_SHORT).show()
         session.saveAsPdf { stream, error ->
             when {
                 stream != null -> DownloadStore.saveStream(this, stream, name, "application/pdf", tab.url) { _, message ->
@@ -759,12 +775,12 @@ class MainActivity :
     }
 
     private fun openShieldPanel() {
-        val shield = ExtensionManager.actionableExtensions().firstOrNull { it.id == ExtensionManager.PHANTOMSHIELD_ID }
+        val shield = ExtensionManager.actionEntries().firstOrNull { it.id == ExtensionManager.PHANTOMSHIELD_ID }
         if (shield == null) {
             openScreen(ExtensionsActivity::class.java)
             return
         }
-        ExtensionManager.runAction(shield) { ok, message ->
+        ExtensionManager.runActionFor(shield.id) { ok, message ->
             if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
     }
@@ -1055,7 +1071,7 @@ class MainActivity :
             // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
             attachedSession?.let { LiveCaptions.stop(it) }
             // Un permiso pedido desde otra pestaña no se concede desde esta.
-            attachedSession?.let { SitePermissions.cancelFor(it) }
+            attachedSession?.let { SitePermissionPrompts.cancelFor(it) }
             if (attachedSession != null) engineView.release()
             // Fondo del tema mientras la página pinta (evita el destello blanco).
             engineView.attach(session, ThemeManager.palette(this).background)
@@ -1216,9 +1232,9 @@ class MainActivity :
 
     private fun displayUrl(url: String): String {
         if (UrlSafety.scheme(url) == "moz-extension") {
-            val installedOptions = ExtensionManager.actionableExtensions().mapNotNull { candidate ->
-                val options = candidate.metaData.optionsPageUrl ?: return@mapNotNull null
-                val name = candidate.metaData.name ?: return@mapNotNull null
+            val installedOptions = ExtensionManager.actionEntries().mapNotNull { candidate ->
+                val options = candidate.optionsPageUrl ?: return@mapNotNull null
+                val name = candidate.name ?: return@mapNotNull null
                 options to name
             }
             return BrowserPagePresentation.extensionLabel(url, installedOptions) ?: "Página de extensión"

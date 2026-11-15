@@ -171,6 +171,31 @@ object ExtensionManager {
     /** Estado real de la extensión incluida, también cuando está desactivada. */
     fun installedPhantom(): WebExtension? = known[PHANTOMSHIELD_ID]
 
+    // --- Vista neutral para la interfaz común (sin WebExtension) ---
+
+    private fun WebExtension.entry() = ExtensionEntry(id, metaData.name, metaData.enabled, metaData.optionsPageUrl)
+
+    fun phantomEntry(): ExtensionEntry? = installedPhantom()?.entry()
+
+    fun actionEntries(): List<ExtensionEntry> = actionableExtensions().map { it.entry() }
+
+    fun badgeFor(id: String): String? = known[id]?.let { badge(it) }
+
+    fun loadIconFor(id: String, sizePx: Int, onDone: (android.graphics.Bitmap?) -> Unit) {
+        known[id]?.let { loadIcon(it, sizePx, onDone) } ?: onDone(null)
+    }
+
+    fun runActionFor(id: String, onDone: (Boolean, String) -> Unit) {
+        known[id]?.let { runAction(it, onDone) } ?: onDone(false, "La extensión ya no está instalada.")
+    }
+
+    fun setEnabledFor(context: Context, id: String, enabled: Boolean, onDone: (Boolean, String) -> Unit) {
+        known[id]?.let { setEnabled(context, it, enabled, onDone) } ?: onDone(false, "La extensión ya no está instalada.")
+    }
+
+    /** Pantalla para añadir extensiones (tienda de addons.mozilla.org en Gecko). */
+    fun storeScreen(): Class<out Activity> = ExtensionStoreActivity::class.java
+
     /** Standard browser-action badge; no native messaging or page data is exposed. */
     fun phantomBadge(global: Boolean = false): String? {
         if (known[PHANTOMSHIELD_ID]?.metaData?.enabled == false) return "OFF"

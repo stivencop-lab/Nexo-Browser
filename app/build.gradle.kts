@@ -18,6 +18,23 @@ android {
         // Solo la actualización de transición (paquete anterior) entrega sus datos a Nexo nuevo.
         manifestPlaceholders["legacyExport"] = project.hasProperty("nexoTransition").toString()
     }
+    /*
+     * Motor web: "gecko" (GeckoView, la versión publicada) y "chromium"
+     * (Android System WebView, en migración). La variante chromium se instala
+     * aparte (sufijo .chromium) para probarla junto a la publicada.
+     */
+    flavorDimensions += "engine"
+    productFlavors {
+        create("gecko") {
+            dimension = "engine"
+            isDefault = true
+        }
+        create("chromium") {
+            dimension = "engine"
+            applicationIdSuffix = ".chromium"
+            versionNameSuffix = "-chromium"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -87,7 +104,9 @@ kotlin {
 
 dependencies {
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
-    implementation("org.mozilla.geckoview:geckoview-omni:159.0.20261102144711")
+    "geckoImplementation"("org.mozilla.geckoview:geckoview-omni:159.0.20261102144711")
+    // Perfiles aislados, scripts de inicio de documento y puente de mensajes de WebView.
+    "chromiumImplementation"("androidx.webkit:webkit:1.18.0")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
     // Selector de pestañas: tarjetas recicladas y deslizar para cerrar.

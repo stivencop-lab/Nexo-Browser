@@ -77,7 +77,6 @@
             android:launchMode="singleTask" android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity android:name="com.nexo.browser.SettingsActivity" android:exported="false" />
         <activity android:name="com.nexo.browser.ExtensionsActivity" android:exported="false" />
-        <activity android:name="com.nexo.browser.ExtensionStoreActivity" android:exported="false" />
         <activity android:name="com.nexo.browser.HistoryActivity" android:exported="false" />
         <activity android:name="com.nexo.browser.DownloadsActivity" android:exported="false" />
         <activity

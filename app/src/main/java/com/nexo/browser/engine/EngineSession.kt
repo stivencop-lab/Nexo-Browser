@@ -1,5 +1,6 @@
 package com.nexo.browser.engine
 
+import android.app.Activity
 import android.graphics.Bitmap
 import java.io.InputStream
 
@@ -43,6 +44,12 @@ interface EngineSession {
 
     /** Página completa como PDF; [onResult] recibe el flujo o el error. */
     fun saveAsPdf(onResult: (InputStream?, Throwable?) -> Unit)
+
+    /**
+     * Motores sin PDF directo: abre el diálogo de impresión del sistema
+     * ("Guardar como PDF"). Devuelve false si el motor usa [saveAsPdf].
+     */
+    fun printWithSystemDialog(activity: Activity, title: String): Boolean = false
 
     fun close()
 }
@@ -102,6 +109,27 @@ enum class LoadDecision {
 interface EngineDownload {
     val uri: String
     fun discard()
+
+    /** Respuesta lista para leer. Bloquea: llamar fuera del hilo principal. */
+    fun open(): DownloadResponse
+}
+
+/** Respuesta HTTP de una descarga, sin tipos del motor. */
+class DownloadResponse(
+    val uri: String,
+    val statusCode: Int,
+    val headers: Map<String, String>,
+    val body: InputStream?
+) {
+    fun close() {
+        runCatching { body?.close() }
+    }
+}
+
+/** Peticiones de descarga con las cookies del perfil normal o privado. */
+interface DownloadFetcher {
+    /** Bloquea: llamar fuera del hilo principal. Lanza IOException si no hay respuesta. */
+    fun fetch(url: String, headers: Map<String, String>, referrer: String?, isPrivate: Boolean): DownloadResponse
 }
 
 /** Reproductor multimedia de una página, controlable desde la notificación. */

@@ -27,7 +27,7 @@ object MigrationMode {
     fun commit(c: Context) = TransferCommit(File(c.applicationInfo.dataDir),File(c.filesDir,"transfer-journal"))
     fun enter(activity: Activity) {
         AlertDialog.Builder(activity).setTitle("Transferir el perfil")
-            .setMessage("Se cerrará Nexo. Vuelve a abrirlo para exportar o importar sin Gecko activo. No se incluyen descargas, cookies web, pestañas privadas ni Burner. Conserva la contraseña de la copia; no se puede recuperar.")
+            .setMessage("Se cerrará Nexo. Vuelve a abrirlo para exportar o importar sin el motor web activo. No se incluyen descargas, cookies web, pestañas privadas ni Burner. Conserva la contraseña de la copia; no se puede recuperar.")
             .setPositiveButton("Cerrar y preparar") { _,_ ->
                 TabManager.persistNow()
                 TabStore.flush()
@@ -38,7 +38,7 @@ object MigrationMode {
                 marker(activity).apply { parentFile?.mkdirs(); java.io.FileOutputStream(this).use { it.write(byteArrayOf(1)); it.fd.sync() } }
                 LiveCaptions.stopAll()
                 activity.stopService(Intent(activity, MediaPlaybackService::class.java))
-                GeckoRuntimeHolder.shutdownForTransfer {
+                com.nexo.browser.engine.Engines.current.shutdownForTransfer {
                     // Drain writes queued by the final navigation/shutdown callbacks too.
                     TabStore.flush()
                     HistoryStore.flush()
@@ -65,9 +65,9 @@ class MigrationActivity : Activity() {
     private var busy = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        check(MigrationMode.cold && !GeckoRuntimeHolder.started())
+        check(MigrationMode.cold && !com.nexo.browser.engine.Engines.current.isStarted())
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24,32,24,24) }
-        status = TextView(this).apply { text = "Transferencia de Nexo · ${packageName}\nGecko está detenido. La importación reemplaza ajustes, historial, accesos y pestañas normales. Conserva los datos anteriores del destino hasta que decidas eliminarlos. Las extensiones externas se reinstalan después con confirmación y verificación de Gecko. No se importan cookies ni descargas." }
+        status = TextView(this).apply { text = "Transferencia de Nexo · ${packageName}\nEl motor web está detenido. La importación reemplaza ajustes, historial, accesos y pestañas normales. Conserva los datos anteriores del destino hasta que decidas eliminarlos. Las extensiones externas se reinstalan después con confirmación y verificación de Gecko. No se importan cookies ni descargas." }
         password = EditText(this).apply { hint = "Contraseña de la copia (mínimo 12 caracteres)"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
         actions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun button(label: String, action: () -> Unit) { actions.addView(Button(this).apply { text = label; setOnClickListener { if(!busy) action() } }) }
@@ -97,7 +97,7 @@ class MigrationActivity : Activity() {
     }
     private fun pick(export: Boolean) {
         if (MigrationMode.dataChanged) { status.text = "Los archivos han cambiado. Sal de mantenimiento y vuelve a abrir Nexo antes de otra exportación o importación; así no se reutilizan cachés antiguas."; return }
-        if (!MigrationMode.ready(this)) { status.text = "El cierre de Gecko se interrumpió. Sal de este modo, abre Nexo y vuelve a preparar la transferencia para cerrar el perfil limpiamente."; return }
+        if (!MigrationMode.ready(this)) { status.text = "El cierre del motor web se interrumpió. Sal de este modo, abre Nexo y vuelve a preparar la transferencia para cerrar el perfil limpiamente."; return }
         if (password.text.length !in 12..256) { status.text = "Usa una contraseña de 12 a 256 caracteres."; return }
         startActivityForResult(Intent(if(export) Intent.ACTION_CREATE_DOCUMENT else Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "application/octet-stream"; addCategory(Intent.CATEGORY_OPENABLE)

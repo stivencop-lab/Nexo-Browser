@@ -21,6 +21,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 object TabManager {
     private const val PRIVATE_LIVE_LIMIT = 8
+    private const val ISOLATION_UNAVAILABLE =
+        "Este teléfono no puede abrir pestañas privadas ni Burner aisladas: su Android System WebView no admite perfiles " +
+            "separados y compartirían cookies con las normales. Actualiza «Android System WebView» desde Google Play."
     interface Listener {
         fun onActiveTabChanged(tab: BrowserTab, session: EngineSession)
         fun onTabChanged(tab: BrowserTab)
@@ -49,6 +52,7 @@ object TabManager {
         TabRouting.initialize()
 
         if (!initialized) {
+            Engines.current.initialize(context.applicationContext)
             initialized = true
             restoreOrCreate()
         }
@@ -65,6 +69,16 @@ object TabManager {
     }
 
     fun allTabs(): List<BrowserTab> = tabs.toList()
+
+    /**
+     * El motor puede aislar pestañas privadas y Burner. Si no, no se abren:
+     * se avisa en vez de crear una pestaña "privada" que comparta datos.
+     */
+    fun isolatedTabsAvailable(): Boolean {
+        val available = Engines.current.supportsIsolatedTabs(requireContext())
+        if (!available) listener?.onMessage(ISOLATION_UNAVAILABLE)
+        return available
+    }
 
     fun activeTab(): BrowserTab? =
         tabs.firstOrNull { it.id == activeId } ?: tabs.firstOrNull()
@@ -141,7 +155,8 @@ object TabManager {
         groupName: String? = null,
         burnerId: String? = null,
         networkProfile: TabNetworkProfile? = null
-    ): BrowserTab {
+    ): BrowserTab? {
+        if ((isPrivate || burnerId != null) && !isolatedTabsAvailable()) return null
         val initialUrl =
             if (isSafeAppNavigationUrl(url)) {
                 url
@@ -355,6 +370,7 @@ object TabManager {
     fun reopenClosed(id: String? = null, activate: Boolean = true): BrowserTab? {
         pruneClosed()
         val entry = (if (id == null) recentlyClosed.peekLast() else recentlyClosed.lastOrNull { it.id == id }) ?: return null
+        if (entry.isPrivate && !isolatedTabsAvailable()) return null
         recentlyClosed.remove(entry)
         val tab = BrowserTab(
             id = entry.id.takeIf { candidate -> tabs.none { it.id == candidate } } ?: UUID.randomUUID().toString(),
@@ -380,7 +396,7 @@ object TabManager {
 
         val removed = tabs[index]
         val wasActive = removed.id == activeId
-        removed.session?.let { SitePermissions.cancelFor(it) }
+        removed.session?.let { SitePermissionPrompts.cancelFor(it) }
         // Burner no se reabre: al cerrar su última pestaña se borran sus datos.
         if (removed.burnerId == null && !BrowserPrefs.isNexoHome(removed.url) && UrlSafety.isAppNavigable(removed.url)) {
             recentlyClosed.addLast(ClosedTab(
@@ -413,6 +429,10 @@ object TabManager {
             }
         }
         if (!removed.isPrivate) TabPreviewStore.remove(requireContext(), removed.id)
+        // Última pestaña privada común (sin Burner): el motor borra sus datos.
+        if (removed.isPrivate && removed.burnerId == null && tabs.none { it.isPrivate && it.burnerId == null }) {
+            Engines.current.onPrivateSessionEnded(requireContext())
+        }
 
         if (tabs.isEmpty()) {
             val c = requireContext()
@@ -451,7 +471,7 @@ object TabManager {
         tab.url = target
         tab.navigationEpoch++
         // Los permisos pedidos por la página anterior ya no valen.
-        tab.session?.let { SitePermissions.cancelFor(it) }
+        tab.session?.let { SitePermissionPrompts.cancelFor(it) }
         tab.lastUsed = System.currentTimeMillis()
 
         if(tab.networkProfile == null && tab.burnerId == null) Engines.current.speculativeConnect(requireContext(),target)
@@ -886,7 +906,7 @@ object TabManager {
                 tab.sessionState = null
                 tab.navigationEpoch++
                 // Los permisos pedidos por la página anterior ya no valen.
-                tab.session?.let { SitePermissions.cancelFor(it) }
+                tab.session?.let { SitePermissionPrompts.cancelFor(it) }
                 windowPrompt?.dismiss()
             }
             tab.url = url
@@ -1017,7 +1037,7 @@ object TabManager {
             if (LiveCaptions.isActive(session)) LiveCaptions.stop(session)
             tab.navigationEpoch++
             // Los permisos pedidos por la página anterior ya no valen.
-            tab.session?.let { SitePermissions.cancelFor(it) }
+            tab.session?.let { SitePermissionPrompts.cancelFor(it) }
             TranslatorManager.forget(session)
             PagePrompts.onPageStart(session)
             BrowserMediaController.resetVideo(tab.id)

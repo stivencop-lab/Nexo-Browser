@@ -208,14 +208,3 @@ object GeckoRuntimeHolder {
         runCatching { settings.setRemoteDebuggingEnabled(BrowserPrefs.remoteDebugging(context)) }
     }
 }
-
-object AppContext {
-    @Volatile private var app: Context? = null
-
-    fun initialize(context: Context) {
-        app = context.applicationContext
-    }
-
-    fun get(): Context =
-        requireNotNull(app) { "AppContext no inicializado" }
-}

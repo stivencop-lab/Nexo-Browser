@@ -71,7 +71,7 @@ class StartPageView(
     private val delayedShieldRefresh = Runnable { refreshShieldIfChanged() }
 
     private fun shieldToken() =
-        "${ExtensionManager.installedPhantom()?.metaData?.enabled}|${ExtensionManager.phantomBadge(global = true)}"
+        "${ExtensionManager.phantomEntry()?.enabled}|${ExtensionManager.phantomBadge(global = true)}"
 
     private fun refreshShieldIfChanged() {
         if (isShown && hasWindowFocus() && renderedShieldToken != shieldToken()) render(renderedPrivate)
@@ -114,7 +114,7 @@ class StartPageView(
         setBackgroundColor(p.background); content.removeAllViews(); content.setPadding(dp(20f), dp(16f), dp(20f), dp(16f))
         val top = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
         val badge = ExtensionManager.phantomBadge(global = true)
-        val available = ExtensionManager.installedPhantom()?.metaData?.enabled == true && badge != "OFF" && badge != "PAUSE"
+        val available = ExtensionManager.phantomEntry()?.enabled == true && badge != "OFF" && badge != "PAUSE"
         val shieldColor = if (available) p.success.color else p.muted
         top.addView(LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48f); setPadding(dp(10f), 0, dp(10f), 0)

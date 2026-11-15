@@ -1,12 +1,18 @@
 package com.nexo.browser.engine.gecko
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.view.View
 import com.nexo.browser.GeckoRuntimeHolder
+import com.nexo.browser.NexoGeckoView
 import com.nexo.browser.PagePrompts
 import com.nexo.browser.SitePermissions
 import com.nexo.browser.TranslatorManager
 import com.nexo.browser.UrlSafety
 import com.nexo.browser.engine.BrowserEngine
+import com.nexo.browser.engine.DownloadFetcher
+import com.nexo.browser.engine.DownloadResponse
 import com.nexo.browser.engine.EngineContextElement
 import com.nexo.browser.engine.EngineDownload
 import com.nexo.browser.engine.EngineFinder
@@ -24,11 +30,16 @@ import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
+import org.mozilla.geckoview.GeckoWebExecutor
 import org.mozilla.geckoview.MediaSession
 import org.mozilla.geckoview.StorageController
+import org.mozilla.geckoview.WebRequest
 import org.mozilla.geckoview.WebResponse
+import java.io.IOException
 import java.io.InputStream
 import java.util.WeakHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** Motor Gecko (GeckoView): adapta sus delegados a [EngineObserver]. */
 object GeckoEngine : BrowserEngine {
@@ -36,6 +47,50 @@ object GeckoEngine : BrowserEngine {
 
     override val displayName: String
         get() = "Gecko ${org.mozilla.geckoview.BuildConfig.MOZILLA_VERSION}"
+
+    override fun createView(context: Context): View = NexoGeckoView(context)
+
+    override fun isStarted(): Boolean = GeckoRuntimeHolder.started()
+
+    override fun shutdownForTransfer(done: () -> Unit) = GeckoRuntimeHolder.shutdownForTransfer(done)
+
+    override fun applyAudioSettings(context: Context) = GeckoRuntimeHolder.applyAudioPrefs(context)
+
+    /**
+     * Descargas por el ejecutor de red de Gecko: comparte cookies, caché y
+     * modo privado con las pestañas. Responde en el hilo que lo llama: se pide
+     * desde el principal y se espera aquí.
+     */
+    override val downloadFetcher: DownloadFetcher = object : DownloadFetcher {
+        private val main = Handler(Looper.getMainLooper())
+
+        override fun fetch(url: String, headers: Map<String, String>, referrer: String?, isPrivate: Boolean): DownloadResponse {
+            val context = com.nexo.browser.AppContext.get()
+            val request = WebRequest.Builder(url)
+                .cacheMode(WebRequest.CACHE_MODE_NO_STORE)
+                .apply {
+                    headers.forEach { (name, value) -> header(name, value) }
+                    if (referrer != null && UrlSafety.isWebUrl(referrer)) referrer(referrer)
+                }
+                .build()
+            val flags = if (isPrivate) GeckoWebExecutor.FETCH_FLAGS_PRIVATE else GeckoWebExecutor.FETCH_FLAGS_NONE
+            val latch = CountDownLatch(1)
+            var result: WebResponse? = null
+            var failure: Throwable? = null
+            main.post {
+                runCatching {
+                    GeckoRuntimeHolder.webExecutor(context).fetch(request, flags).accept(
+                        { response -> result = response; latch.countDown() },
+                        { error -> failure = error; latch.countDown() }
+                    )
+                }.onFailure { failure = it; latch.countDown() }
+            }
+            if (!latch.await(25, TimeUnit.SECONDS)) throw IOException("sin respuesta del servidor")
+            failure?.let { throw IOException(it.message ?: "error de red", it) }
+            val response = result ?: throw IOException("sin respuesta del servidor")
+            return response.toDownload()
+        }
+    }
 
     override fun createSession(context: Context, params: SessionParams): EngineSession {
         val settings = GeckoSessionSettings.Builder()
@@ -111,7 +166,11 @@ class GeckoDownload(val response: WebResponse) : EngineDownload {
     override fun discard() {
         runCatching { response.body?.close() }
     }
+
+    override fun open(): DownloadResponse = response.toDownload()
 }
+
+internal fun WebResponse.toDownload(): DownloadResponse = DownloadResponse(uri, statusCode, headers, body)
 
 private class GeckoMedia(val media: MediaSession) : EngineMedia {
     override val isActive: Boolean get() = media.isActive

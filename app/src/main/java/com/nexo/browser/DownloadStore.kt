@@ -18,9 +18,9 @@ import android.os.SystemClock
 import android.text.format.Formatter
 import org.json.JSONArray
 import org.json.JSONObject
-import org.mozilla.geckoview.GeckoWebExecutor
-import org.mozilla.geckoview.WebRequest
-import org.mozilla.geckoview.WebResponse
+import com.nexo.browser.engine.DownloadResponse
+import com.nexo.browser.engine.EngineDownload
+import com.nexo.browser.engine.Engines
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -31,10 +31,8 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 data class DownloadEntry(
@@ -157,7 +155,7 @@ object DownloadStore {
     // ---------------------------------------------------------------
 
     /**
-     * Descarga una URL (menú contextual) a través de Gecko: envía las cookies
+     * Descarga una URL (menú contextual) a través del motor: envía las cookies
      * de la sesión, respeta el modo privado y guarda en la misma carpeta que
      * el resto de descargas, de modo que aparece en la pantalla Descargas.
      * [parallel]: permite repartir archivos grandes en varias conexiones.
@@ -177,74 +175,46 @@ object DownloadStore {
         }
 
         val app = context.applicationContext
-        val request = WebRequest.Builder(url)
-            .cacheMode(WebRequest.CACHE_MODE_NO_STORE)
-            .apply {
-                if (referrer != null && UrlSafety.isWebUrl(referrer)) referrer(referrer)
+        val source = if (parallel) DownloadSource(isPrivate, referrer, split) else null
+        io.execute {
+            val response = try {
+                Engines.current.downloadFetcher.fetch(url, emptyMap(), referrer?.takeIf { UrlSafety.isWebUrl(it) }, isPrivate)
+            } catch (error: Throwable) {
+                main.post { callback(false, "Descarga fallida: ${error.message ?: "error de red"}") }
+                return@execute
             }
-            .build()
-
-        val flags =
-            if (isPrivate) GeckoWebExecutor.FETCH_FLAGS_PRIVATE
-            else GeckoWebExecutor.FETCH_FLAGS_NONE
-
-        runCatching {
-            GeckoRuntimeHolder.webExecutor(app)
-                .fetch(request, flags)
-                .accept(
-                    { response ->
-                        if (response == null) {
-                            main.post { callback(false, "Descarga fallida: sin respuesta") }
-                        } else if (response.statusCode !in 200..299) {
-                            runCatching { response.body?.close() }
-                            main.post {
-                                callback(false, "Descarga fallida: HTTP ${response.statusCode}")
-                            }
-                        } else {
-                            saveResponse(app, response, if (parallel) DownloadSource(isPrivate, referrer, split) else null, callback)
-                        }
-                    },
-                    { error ->
-                        main.post {
-                            callback(false, "Descarga fallida: ${error?.message ?: "error de red"}")
-                        }
-                    }
-                )
-        }.onFailure {
-            callback(false, "Descarga fallida: ${it.message}")
+            if (response.statusCode !in 200..299) {
+                response.close()
+                main.post { callback(false, "Descarga fallida: HTTP ${response.statusCode}") }
+            } else {
+                receive(app, response, source, callback)
+            }
         }
     }
-
-    fun saveResponse(
-        context: Context,
-        response: WebResponse,
-        callback: (Boolean, String) -> Unit
-    ) = saveResponse(context, response, null, callback)
 
     /** Respuesta que el motor no puede mostrar (`Content-Disposition`, tipos binarios…). */
     fun saveDownload(
         context: Context,
-        download: com.nexo.browser.engine.EngineDownload,
-        source: DownloadSource?,
-        callback: (Boolean, String) -> Unit
-    ) {
-        val response = (download as? com.nexo.browser.engine.gecko.GeckoDownload)?.response
-        if (response == null) {
-            download.discard()
-            callback(false, "Este motor aún no admite esta descarga.")
-            return
-        }
-        saveResponse(context, response, source, callback)
-    }
-
-    fun saveResponse(
-        context: Context,
-        response: WebResponse,
+        download: EngineDownload,
         source: DownloadSource?,
         callback: (Boolean, String) -> Unit
     ) {
         val app = context.applicationContext
-        io.execute { receive(app, response, source, callback) }
+        io.execute {
+            val response = try {
+                download.open()
+            } catch (error: Throwable) {
+                download.discard()
+                main.post { callback(false, "Descarga fallida: ${error.message ?: "error de red"}") }
+                return@execute
+            }
+            if (response.statusCode !in 200..299) {
+                response.close()
+                main.post { callback(false, "Descarga fallida: HTTP ${response.statusCode}") }
+            } else {
+                receive(app, response, source, callback)
+            }
+        }
     }
 
     /** Captura de la página como PNG en Descargas. */
@@ -298,7 +268,7 @@ object DownloadStore {
     // Recepción
     // ---------------------------------------------------------------
 
-    private fun receive(app: Context, response: WebResponse, source: DownloadSource?, callback: (Boolean, String) -> Unit) {
+    private fun receive(app: Context, response: DownloadResponse, source: DownloadSource?, callback: (Boolean, String) -> Unit) {
         var file: File? = null
         var job: ActiveDownload? = null
         try {
@@ -378,7 +348,7 @@ object DownloadStore {
     private fun receiveSequential(
         app: Context,
         job: ActiveDownload,
-        response: WebResponse,
+        response: DownloadResponse,
         body: InputStream,
         channel: FileChannel,
         folder: File,
@@ -407,7 +377,7 @@ object DownloadStore {
     private fun receiveSplit(
         app: Context,
         job: ActiveDownload,
-        response: WebResponse,
+        response: DownloadResponse,
         body: InputStream,
         channel: FileChannel,
         folder: File,
@@ -467,13 +437,13 @@ object DownloadStore {
     private fun fetchPart(
         app: Context,
         job: ActiveDownload,
-        original: WebResponse,
+        original: DownloadResponse,
         channel: FileChannel,
         folder: File,
         source: DownloadSource,
         start: Long,
         end: Long,
-        first: WebResponse?
+        first: DownloadResponse?
     ) {
         var position = start
         var attempt = 0
@@ -497,40 +467,21 @@ object DownloadStore {
     }
 
     /** Pide [start, end) y comprueba que es el tramo correcto del mismo archivo. */
-    private fun openRange(app: Context, job: ActiveDownload, original: WebResponse, source: DownloadSource, start: Long, end: Long): WebResponse {
-        val request = WebRequest.Builder(original.uri)
-            .header("Range", "bytes=$start-${end - 1}")
-            .cacheMode(WebRequest.CACHE_MODE_NO_STORE)
-            .apply { source.referrer?.takeIf { UrlSafety.isWebUrl(it) }?.let { referrer(it) } }
-            .build()
-        val flags = if (source.isPrivate) GeckoWebExecutor.FETCH_FLAGS_PRIVATE else GeckoWebExecutor.FETCH_FLAGS_NONE
-        val response = fetchBlocking(app, request, flags)
+    private fun openRange(app: Context, job: ActiveDownload, original: DownloadResponse, source: DownloadSource, start: Long, end: Long): DownloadResponse {
+        val response = Engines.current.downloadFetcher.fetch(
+            original.uri,
+            mapOf("Range" to "bytes=$start-${end - 1}"),
+            source.referrer?.takeIf { UrlSafety.isWebUrl(it) },
+            source.isPrivate
+        )
         val range = DownloadPlan.parseContentRange(header(response.headers, "Content-Range"))
         val valid = response.statusCode == 206 && range != null && range.start == start &&
             (range.total < 0 || range.total == job.total) && DownloadPlan.sameEntity(original.headers, response.headers)
         if (!valid) {
-            runCatching { response.body?.close() }
+            response.close()
             throw IOException("el servidor no entregó el tramo pedido")
         }
         return response
-    }
-
-    /** GeckoWebExecutor responde en el hilo que lo llama: se pide desde el principal y se espera aquí. */
-    private fun fetchBlocking(app: Context, request: WebRequest, flags: Int): WebResponse {
-        val latch = CountDownLatch(1)
-        var result: WebResponse? = null
-        var failure: Throwable? = null
-        main.post {
-            runCatching {
-                GeckoRuntimeHolder.webExecutor(app).fetch(request, flags).accept(
-                    { response -> result = response; latch.countDown() },
-                    { error -> failure = error; latch.countDown() }
-                )
-            }.onFailure { failure = it; latch.countDown() }
-        }
-        if (!latch.await(25, TimeUnit.SECONDS)) throw IOException("sin respuesta del servidor")
-        failure?.let { throw IOException(it.message ?: "error de red", it) }
-        return result ?: throw IOException("sin respuesta del servidor")
     }
 
     /**

@@ -323,6 +323,7 @@ object TabSwitcher {
                     val name = TabGroupRules.name(value) ?: return@askText
                     val tab = TabManager.activeTab()?.takeIf { it.isPrivate == showPrivate }
                         ?: adapter.items.firstOrNull() ?: TabManager.createTab(BrowserPrefs.homePage(activity), showPrivate, false)
+                        ?: return@askText
                     TabManager.moveToGroup(tab.id, name)
                     selectedGroup = name; refresh()
                 }
