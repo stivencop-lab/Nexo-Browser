@@ -199,12 +199,15 @@ class MainActivity :
      */
     private fun configureSystemInsets() {
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.rootView)) { _, insets ->
+            // ADJUST_RESIZE ya reduce el area disponible cuando aparece el IME.
+            // Solo el inset de navegacion pertenece al margen externo del dock;
+            // sumar el IME aqui hacia que toda la barra flotara sobre el teclado.
             val systemBottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
             val dock = findViewById<GestureDock>(R.id.browserDock)
             (dock.layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { params ->
                 val base = (8 * resources.displayMetrics.density).toInt()
-                val bottom = maxOf(base, systemBottom, imeBottom)
+                val bottom = if (imeVisible) base else maxOf(base, systemBottom)
                 if (params.bottomMargin != bottom) {
                     params.bottomMargin = bottom
                     dock.layoutParams = params
