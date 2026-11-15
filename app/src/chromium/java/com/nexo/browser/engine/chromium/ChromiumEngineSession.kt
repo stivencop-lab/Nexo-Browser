@@ -119,7 +119,9 @@ class ChromiumEngineSession internal constructor(
 
     init {
         applySettings()
-        // Scripts de PhantomShield antes de la primera navegación (solo valen para las siguientes).
+        // Register the native bridge before the first navigation so restored
+        // tabs and popup windows receive media/caption controls as well.
+        ExtensionManager.bindSession(this)
         PhantomShield.attach(webView, shield)
         webView.webViewClient = Client()
         webView.webChromeClient = ChromeClient()
@@ -262,6 +264,7 @@ class ChromiumEngineSession internal constructor(
         if (closed) return
         closed = true
         observer = null
+        ExtensionManager.forgetSession(this)
         main.removeCallbacks(stateTask)
         host?.detach(this)
         runCatching { customCallback?.onCustomViewHidden() }
