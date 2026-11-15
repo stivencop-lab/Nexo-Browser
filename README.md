@@ -1,5 +1,9 @@
 # Nexo Browser
 
+> **Versión actual: v0.29.2** · `versionCode 55` · Paquete `com.nexo.browser`
+> 
+> [Descargar la última versión](https://github.com/stivencop414-bot/NavegadorGecko/releases/latest) · [Ver cambios](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.29.2)
+
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
 Desde **0.25.0**, el identificador Android es **`com.nexo.browser`**.
