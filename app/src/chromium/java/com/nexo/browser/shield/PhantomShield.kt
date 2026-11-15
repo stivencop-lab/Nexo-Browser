@@ -438,7 +438,16 @@ object PhantomShield {
         val message = payload as? JSONObject ?: return
         val session = tab.session?.get() ?: return
         when (message.optString("type")) {
-            "video_state" -> BrowserMediaController.onVideoState(tab.id.toString(), message.optBoolean("present"), message.optBoolean("playing"), message.optInt("width"), message.optInt("height"), null)
+            "video_state" -> {
+                val rect = if (message.optInt("rw", 0) > 0) android.graphics.Rect(
+                    message.optInt("rx"), message.optInt("ry"),
+                    message.optInt("rx") + message.optInt("rw"), message.optInt("ry") + message.optInt("rh")
+                ) else null
+                BrowserMediaController.onVideoState(
+                    tab.id.toString(), message.optBoolean("present"), message.optBoolean("playing"),
+                    message.optInt("width"), message.optInt("height"), rect
+                )
+            }
             "captions_track" -> LiveCaptions.onTrack(session, message.optString("source", "track"))
             "captions_text" -> LiveCaptions.onDomText(appContext, session, message.optString("text"))
             "captions_cues" -> LiveCaptions.onCues(appContext, session, message.optJSONArray("cues") ?: JSONArray())
