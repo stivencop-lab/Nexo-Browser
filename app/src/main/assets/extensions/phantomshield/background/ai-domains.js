@@ -26,6 +26,7 @@
   const DAY = 86400000;
   const TTL_WATCH = 30 * DAY;
   const TTL_BLOCKED = 90 * DAY;
+  const safety = globalThis.PhantomFunctionalSafety;
 
   // Alojamientos compartidos: se aprende el host exacto, no todo el dominio.
   const SHARED_HOSTING = /(?:^|\.)(?:cloudfront\.net|amazonaws\.com|azureedge\.net|azurewebsites\.net|akamaized\.net|akamaihd\.net|fastly\.net|b-cdn\.net|herokuapp\.com|github\.io|netlify\.app|vercel\.app|pages\.dev|workers\.dev|web\.app|firebaseapp\.com|appspot\.com|blogspot\.com|wordpress\.com|wixsite\.com)$/;
@@ -72,7 +73,7 @@
 
   function isSafe(domain) {
     const site = siteOf(domain);
-    return SAFE.has(domain) || SAFE.has(site) || /(?:^|\.)google\.[a-z.]+$/.test(domain);
+    return SAFE.has(domain) || SAFE.has(site) || safety.isProtectedHost(domain) || /(?:^|\.)google\.[a-z.]+$/.test(domain);
   }
 
   /** Huella corta con sal (FNV-1a doble): sirve para contar sitios, no para revelarlos. */
@@ -131,7 +132,7 @@
       const now = Date.now();
       for (const [domain, entry] of this.entries) {
         const ttl = entry.state === 'blocked' ? TTL_BLOCKED : TTL_WATCH;
-        if (now - entry.last > ttl || entry.last > now + DAY || this.allowed.has(domain)) this.entries.delete(domain);
+        if (now - entry.last > ttl || entry.last > now + DAY || this.isAllowed(domain) || isSafe(domain)) this.entries.delete(domain);
       }
       if (this.entries.size > LIMIT) {
         // Se conservan primero los bloqueados y los vistos más recientemente.
@@ -160,10 +161,19 @@
 
     /** ¿El host (o un dominio padre) está aprendido como bloqueado? Síncrono, para webRequest. */
     isBlocked(host) {
-      if (!this.blocked.size || !host) return false;
+      if (!this.blocked.size || !host || isSafe(host) || this.isAllowed(host)) return false;
       let candidate = String(host).toLowerCase().replace(/\.$/, '');
       while (candidate.includes('.')) {
         if (this.blocked.has(candidate)) return true;
+        candidate = candidate.slice(candidate.indexOf('.') + 1);
+      }
+      return false;
+    }
+
+    isAllowed(host) {
+      let candidate = String(host || '').toLowerCase().replace(/\.$/, '');
+      while (candidate.includes('.')) {
+        if (this.allowed.has(candidate)) return true;
         candidate = candidate.slice(candidate.indexOf('.') + 1);
       }
       return false;
@@ -178,12 +188,12 @@
       const pageSite = siteOf(pageHost);
       const found = new Set();
       const consider = (url, requireClick) => {
-        if (typeof url !== 'string' || url.length > 512) return;
+        if (typeof url !== 'string' || url.length > 512 || safety.isProtectedUrl(url)) return;
         const host = hostOf(url);
-        if (!validHost(host) || siteOf(host) === pageSite) return;
+        if (!validHost(host) || siteOf(host) === pageSite || this.isAllowed(host)) return;
         if (requireClick && !CLICK.test(url)) return;
         const domain = domainFor(host);
-        if (!validHost(domain) || isSafe(domain) || this.allowed.has(domain)) return;
+        if (!validHost(domain) || isSafe(domain) || this.isAllowed(domain)) return;
         if (typeof known === 'function' && known(host)) return;
         found.add(domain);
       };
@@ -204,7 +214,7 @@
       const site = fingerprint(this.salt, siteOf(pageHost));
       const now = Date.now();
       for (const domain of domains.slice(0, 8)) {
-        if (!validHost(domain) || this.allowed.has(domain) || isSafe(domain)) continue;
+        if (!validHost(domain) || this.isAllowed(domain) || isSafe(domain)) continue;
         let entry = this.entries.get(domain);
         if (!entry) {
           entry = { domain: domain, sites: [], hits: 0, first: now, last: now, state: 'watch' };

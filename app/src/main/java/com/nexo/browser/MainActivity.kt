@@ -10,7 +10,6 @@ import android.app.SearchManager
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.graphics.drawable.Icon
-import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
@@ -898,7 +897,7 @@ class MainActivity :
 
     private fun copyText(label: String, value: String) {
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
+        clipboard.setPrimaryClip(ClipboardPrivacy.plainText(label, value, TabManager.activeTab()?.isPrivate == true))
         Toast.makeText(this, "Copiado", Toast.LENGTH_SHORT).show()
     }
 

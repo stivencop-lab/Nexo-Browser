@@ -60,9 +60,67 @@ function domainsHarness(stored = {}) {
   } } };
   const context = vm.createContext({ browser, URL, Map, Set, Math, Date, Uint32Array, setTimeout, clearTimeout,
     crypto: require('node:crypto').webcrypto });
-  vm.runInContext(read('background/ai-domains.js'), context);
-  return { store, domains: context.PhantomAdDomains };
+  for (const file of ['data/functional-safety.js', 'background/ai-domains.js']) vm.runInContext(read(file), context);
+  return { store, domains: context.PhantomAdDomains, safety: context.PhantomFunctionalSafety };
 }
+
+test('functional URLs protect media, captions, players, OAuth, CAPTCHA and payments with host boundaries', () => {
+  const { safety } = domainsHarness();
+  for (const url of [
+    'https://cdn.other.example/master.m3u8?token=abc', 'https://cdn.other.example/manifest.mpd',
+    'https://cdn.other.example/segment.m4s', 'https://cdn.other.example/part.ts',
+    'https://cdn.other.example/movie.mp4', 'https://cdn.other.example/subtitle.vtt?x=1',
+    'https://cdn.other.example/subtitle.srt#cue', 'https://other.example/embed-abc',
+    'https://other.example/player.html', 'https://other.example/oauth2/authorize',
+    'https://other.example/checkout/session', 'https://js.hcaptcha.com/widget',
+    'https://tenant.auth0.com/widget', 'https://voe.sx/abc', 'https://login.microsoftonline.com/common'
+  ]) assert.equal(safety.isProtectedUrl(url), true, url);
+  assert.equal(safety.isProtectedUrl('/player/abc', 'https://news.example.org/story'), true);
+  for (const url of [
+    'https://auth0.com.evil.example/widget', 'https://fakehcaptcha.com/widget',
+    'https://adnet.example/frame?next=/player/x&file=movie.mp4',
+    'https://adnet.example/frame#https://paypal.com', 'https://adnet.example/p.png',
+    'data:text/html,https://paypal.com', 'javascript:alert(1)', 'invalid'
+  ]) assert.equal(safety.isProtectedUrl(url), false, url);
+});
+
+test('functional frames and click targets never become learned ad infrastructure', () => {
+  const { domains } = domainsHarness();
+  for (const url of ['https://cdn.cinema.example/track.vtt', 'https://stream.vendor.example/embed/abc',
+    'https://identity.vendor.example/oauth/authorize', 'https://tenant.auth0.com/widget',
+    'https://pay.vendor.example/checkout/session']) {
+    assert.deepEqual([...domains.evidence('news.example.org', url, [url + '?adurl=shop'], () => false)], [], url);
+  }
+});
+
+test('protected domains saved by an older version are removed on restart', async () => {
+  const now = Date.now();
+  const h = domainsHarness({ aiAdDomains: { salt: 'abcdef123456', entries: [
+    { domain: 'auth0.com', sites: [], hits: 4, first: now, last: now, state: 'blocked' },
+    { domain: 'google.com', sites: [], hits: 4, first: now, last: now, state: 'blocked' },
+    { domain: 'real-adnet.example', sites: [], hits: 4, first: now, last: now, state: 'blocked' }
+  ] } });
+  await h.domains.ready;
+  assert.equal(h.domains.isBlocked('tenant.auth0.com'), false);
+  assert.equal(h.domains.isBlocked('www.google.com'), false);
+  assert.equal(h.domains.isBlocked('real-adnet.example'), true);
+  const list = await h.domains.list();
+  assert.deepEqual([...list.domains].map(item => item.domain), ['real-adnet.example']);
+});
+
+test('never-block respects parent exclusions and an allowed child overrides a learned parent', async () => {
+  const h = domainsHarness();
+  for (let i = 0; i < 4; i++) await h.domains.learn('news.example.org', ['adnet-x.com']);
+  await h.domains.allow('player.adnet-x.com');
+  assert.equal(h.domains.isBlocked('player.adnet-x.com'), false);
+  assert.equal(h.domains.isBlocked('cdn.player.adnet-x.com'), false);
+  assert.equal(h.domains.isBlocked('ads.adnet-x.com'), true);
+  assert.equal(h.domains.isBlocked('fakeplayer.adnet-x.com'), true);
+  await h.domains.allow('cloudfront.net');
+  await h.domains.learn('news.example.org', ['tenant.cloudfront.net']);
+  assert.deepEqual([...h.domains.evidence('news.example.org', 'https://tenant.cloudfront.net/ad.html', [], () => false)], []);
+  assert.equal((await h.domains.list()).domains.some(item => item.domain.endsWith('cloudfront.net')), false);
+});
 
 test('only ad infrastructure is learned: frames and click links of third parties, never safe or own-site hosts', () => {
   const { domains } = domainsHarness();
@@ -181,6 +239,26 @@ test('turning learning off keeps classification working but saves no domains', a
   }
   assert.equal(h.context.PhantomAdDomains.isBlocked('serve.adnet-z.com'), false);
   assert.equal((await h.context.PhantomAdDomains.list()).domains.length, 0);
+});
+
+test('learned domains preserve functional requests while explicit filter rules still apply', async () => {
+  const now = Date.now();
+  const h = await background({ aiAdDomains: { salt: 'abcdef123456', entries: [
+    { domain: 'adnet-x.com', sites: [], hits: 4, first: now, last: now, state: 'blocked' }
+  ] } });
+  const common = { documentUrl: 'https://news.example.org/', tabId: 9 };
+  assert.equal(h.request({ ...common, type: 'script', url: 'https://adnet-x.com/tag.js' }).cancel, true);
+  for (const [type, path] of [['media', 'delivery?id=1'], ['xmlhttprequest', 'master.m3u8'],
+    ['xmlhttprequest', 'captions.vtt'], ['sub_frame', 'embed/abc'], ['sub_frame', 'oauth/authorize'], ['sub_frame', 'checkout/session']]) {
+    assert.deepEqual({ ...h.request({ ...common, type, url: 'https://adnet-x.com/' + path }) }, {}, path);
+  }
+  h.context.PhantomNetworkEngineInstance.addRule(h.context.PhantomNetworkEngineInstance._createRuleObject('||adnet-x.com^$media'));
+  assert.equal(h.request({ ...common, type: 'media', url: 'https://adnet-x.com/movie.mp4' }).cancel, true);
+  // Una ventana funcional no se redirige solo por la memoria IA; una regla $popup sí conserva su efecto.
+  const popup = { type: 'main_frame', url: 'https://adnet-x.com/login', originUrl: 'https://news.example.org/' };
+  assert.deepEqual({ ...h.request({ ...popup, tabId: 20 }) }, {});
+  h.context.PhantomNetworkEngineInstance.addRule(h.context.PhantomNetworkEngineInstance._createRuleObject('||adnet-x.com^$popup'));
+  assert.match(h.request({ ...popup, tabId: 21 }).redirectUrl, /popup-blocked\.html$/);
 });
 
 // ---------------------------------------------------------------

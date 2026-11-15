@@ -3,7 +3,6 @@ package com.nexo.browser
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
-import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Handler
@@ -116,7 +115,7 @@ object BurnerMailbox {
 
     private fun copy(activity: Activity, label: String, value: String, toast: String) {
         (activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-            .setPrimaryClip(ClipData.newPlainText(label, value))
+            .setPrimaryClip(ClipboardPrivacy.plainText(label, value, sensitive = true))
         Toastish.show(activity, toast)
     }
 
@@ -166,7 +165,7 @@ object BurnerMailbox {
                     val content = NexoUi.column(activity)
                     MailTmClient.verificationCode(message.subject, message.intro, text.take(2000))?.let { code ->
                         content.addView(NexoUi.chip(activity, "Copiar código  $code", true) {
-                            copy(activity, "Código", code, "Código $code copiado.")
+                            copy(activity, "Código", code, "Código copiado.")
                         })
                     }
                     content.addView(TextView(activity).apply {
@@ -230,7 +229,7 @@ object BurnerMailbox {
                             openMessage(account, message, row)
                         }
                         if (code != null) row.setOnLongClickListener {
-                            copy(activity, "Código", code, "Código $code copiado."); true
+                            copy(activity, "Código", code, "Código copiado."); true
                         }
                         items.addView(row)
                     }

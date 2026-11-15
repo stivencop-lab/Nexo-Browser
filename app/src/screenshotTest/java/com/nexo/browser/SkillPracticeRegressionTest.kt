@@ -21,6 +21,17 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-xhdpi")
 class SkillPracticeRegressionTest {
+    @Test @Config(sdk = [26, 33, 35])
+    fun privateClipboardMarksSensitivityAndPreservesTheCopiedText() {
+        val privateClip = ClipboardPrivacy.plainText("Enlace", "https://example.com/private", sensitive = true)
+        assertEquals("https://example.com/private", privateClip.getItemAt(0).text.toString())
+        assertEquals("Enlace", privateClip.description.label.toString())
+        assertTrue(privateClip.description.extras!!.getBoolean("android.content.extra.IS_SENSITIVE"))
+        val normalClip = ClipboardPrivacy.plainText("Enlace", "https://example.com/", sensitive = false)
+        assertNull(normalClip.description.extras)
+        assertEquals("https://example.com/", normalClip.getItemAt(0).text.toString())
+    }
+
     @Test fun externalIntentCannotCarryActionsPermissionsSelectorsOrArbitraryExtras() {
         val app = RuntimeEnvironment.getApplication()
         val raw = "intent://pay/#Intent;scheme=demo;action=android.intent.action.SEND;" +
