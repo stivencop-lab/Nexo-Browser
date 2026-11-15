@@ -1,10 +1,11 @@
 # Nexo Browser
 
-> **Versión de desarrollo: v0.30.0** · `versionCode 59` · Paquete `com.nexo.browser`
+> **Versión de desarrollo: v0.30.1** · `versionCode 60` · Paquete `com.nexo.browser`
 >
 > La actualización está preparada para revisión; el APK publicado sigue disponible en
 > [la última release](https://github.com/stivencop414-bot/NavegadorGecko/releases/latest).
-> Consulta la [auditoría de interfaz y validación de 0.30.0](docs/AUDITORIA-UI-0.30.0.md).
+> Consulta la [auditoría de interfaz de 0.30.0](docs/AUDITORIA-UI-0.30.0.md) y las
+> [mejoras de seguridad, recursos y organización de 0.30.1](docs/AUDITORIA-SKILLS-2-3-4.md).
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
@@ -184,7 +185,7 @@ gradle :app:lintRelease
 Pruebas de interfaz nativa (Robolectric, también en CI):
 
 ```bash
-gradle :app:testDebugUnitTest -PnexoScreenshots --tests '*UiThemeRegressionTest'
+gradle :app:testDebugUnitTest -PnexoScreenshots --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest'
 ```
 
 Capturas adicionales de la interfaz nativa (opcionales):

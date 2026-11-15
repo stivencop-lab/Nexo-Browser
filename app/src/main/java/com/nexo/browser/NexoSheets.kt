@@ -28,6 +28,7 @@ data class SheetAction(
     val active: Boolean = false,
     val danger: Boolean = false,
     val subtitle: String? = null,
+    val checked: Boolean? = null,
     val onClick: () -> Unit
 )
 
@@ -36,6 +37,20 @@ data class SheetAction(
  * sustituyen al menú emergente y a los diálogos de lista del sistema.
  */
 object NexoSheets {
+    fun actionGroups(activity: Activity, groups: List<MenuSections.Group>, dismiss: () -> Unit): View =
+        NexoUi.column(activity, horizontalDp = 16f).apply {
+            groups.forEach { group ->
+                addView(NexoUi.section(activity, group.title))
+                addView(NexoUi.card(activity).apply {
+                    setPadding(0, 0, 0, 0)
+                    group.actions.forEach { action ->
+                        addView(NexoUi.actionRow(activity, action.icon, action.label, action.subtitle, action.danger) {
+                            dismiss(); action.onClick()
+                        })
+                    }
+                })
+            }
+        }
     private fun dp(activity: Activity, value: Float): Int =
         (value * activity.resources.displayMetrics.density).toInt()
 
@@ -46,6 +61,7 @@ object NexoSheets {
     fun show(activity: Activity, content: View): Dialog {
         val p = ThemeManager.palette(activity)
         val dialog = Dialog(activity)
+        WindowPrivacy.inherit(dialog.window, activity.window)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
         val radius = dp(activity, 28f).toFloat()
@@ -222,6 +238,16 @@ object NexoSheets {
                     isClickable = true
                     isFocusable = true
                     contentDescription = action.label
+                    isSelected = action.checked ?: action.active
+                    action.checked?.let { checked ->
+                        ViewCompat.setAccessibilityDelegate(this, object : androidx.core.view.AccessibilityDelegateCompat() {
+                            override fun onInitializeAccessibilityNodeInfo(host: View, info: androidx.core.view.accessibility.AccessibilityNodeInfoCompat) {
+                                super.onInitializeAccessibilityNodeInfo(host, info)
+                                info.isCheckable = true
+                                info.isChecked = checked
+                            }
+                        })
+                    }
                     setOnClickListener {
                         dismiss()
                         action.onClick()

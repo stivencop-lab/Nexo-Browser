@@ -6,11 +6,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
 import android.widget.ImageView
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.Executors
+import java.lang.ref.WeakReference
 
 /** Carga iconos remotos (tienda de extensiones) con límites de tamaño. */
 object RemoteImageLoader {
@@ -26,7 +23,11 @@ object RemoteImageLoader {
     private val main = Handler(Looper.getMainLooper())
 
     fun trimMemory(level: Int) {
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) cache.evictAll()
+        when (MemoryPressure.cacheAction(level)) {
+            MemoryPressure.CacheAction.CLEAR -> cache.evictAll()
+            MemoryPressure.CacheAction.REDUCE -> cache.trimToSize(cache.maxSize() / 2)
+            MemoryPressure.CacheAction.KEEP -> Unit
+        }
     }
 
     fun load(url: String, target: ImageView) {
@@ -39,12 +40,13 @@ object RemoteImageLoader {
             return
         }
 
+        val reference = WeakReference(target)
         pool.execute {
             val bitmap = runCatching { fetch(url) }.getOrNull() ?: return@execute
 
             cache.put(url, bitmap)
             main.post {
-                if (target.tag == url) showBitmap(target, bitmap)
+                reference.get()?.takeIf { it.tag == url }?.let { showBitmap(it, bitmap) }
             }
         }
     }
@@ -64,37 +66,8 @@ object RemoteImageLoader {
         target.setImageBitmap(bitmap)
     }
 
-    private fun fetch(url: String): Bitmap? {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = 5000
-            connection.readTimeout = 7000
-            connection.useCaches = true
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("User-Agent", "NexoBrowser")
-            if (connection.responseCode !in 200..299) return null
-
-            // Una redirección no debe sacar la carga de HTTPS.
-            if (connection.url.protocol != "https") return null
-
-            val bytes = connection.inputStream.use { readLimited(it) } ?: return null
-            return decodeBounded(bytes)
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun readLimited(input: InputStream): ByteArray? {
-        val out = ByteArrayOutputStream()
-        val buffer = ByteArray(16 * 1024)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            if (out.size() + count > MAX_BYTES) return null
-            out.write(buffer, 0, count)
-        }
-        return out.toByteArray()
-    }
+    private fun fetch(url: String): Bitmap? =
+        NativeImageNetwork.fetch(url, MAX_BYTES, "image/*")?.let { decodeBounded(it.bytes) }
 
     private fun decodeBounded(bytes: ByteArray): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
