@@ -84,6 +84,7 @@ object PhantomShield {
     /** Estado por pestaña: página principal, bloqueos y marcos que escuchan cambios de ajustes. */
     class ShieldTab internal constructor(val isPrivate: Boolean) {
         val id: Int = nextId.incrementAndGet()
+        internal var session: WeakReference<ChromiumEngineSession>? = null
         @Volatile var topUrl: String? = null
             private set
         @Volatile var topHost: String? = null
@@ -407,6 +408,7 @@ object PhantomShield {
     private fun onPageMessage(tab: ShieldTab, message: WebMessageCompat, origin: Uri, isMainFrame: Boolean, reply: JavaScriptReplyProxy) {
         val call = parse(message) ?: return
         remember(tab, reply)
+        if (call.kind == "bridge") { handleBridge(tab, call.payload); return }
         when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })
@@ -422,6 +424,26 @@ object PhantomShield {
                 send(reply, call.id, pageMessage(tab, payload, origin, isMainFrame))
             }
             else -> send(reply, call.id, null, "No disponible")
+        }
+    }
+
+    internal fun bindSession(tab: ShieldTab, session: ChromiumEngineSession) { tab.session = WeakReference(session) }
+    internal fun sendToSession(session: ChromiumEngineSession, message: JSONObject): Boolean {
+        val text = JSONObject().put("event", "native").put("message", message).toString()
+        var sent = false
+        session.shield.frames.forEach { ref -> ref.get()?.let { sent = runCatching { it.postMessage(text); true }.getOrDefault(sent) } }
+        return sent
+    }
+    private fun handleBridge(tab: ShieldTab, payload: Any?) {
+        val message = payload as? JSONObject ?: return
+        val session = tab.session?.get() ?: return
+        when (message.optString("type")) {
+            "video_state" -> BrowserMediaController.onVideoState(tab.id.toString(), message.optBoolean("present"), message.optBoolean("playing"), message.optInt("width"), message.optInt("height"), null)
+            "captions_track" -> LiveCaptions.onTrack(session, message.optString("source", "track"))
+            "captions_text" -> LiveCaptions.onDomText(appContext, session, message.optString("text"))
+            "captions_cues" -> LiveCaptions.onCues(appContext, session, message.optJSONArray("cues") ?: JSONArray())
+            "captions_active" -> LiveCaptions.onActiveCues(appContext, session, message.optJSONArray("ids") ?: JSONArray())
+            "content_script_ready" -> LiveCaptions.onBridgeConnected(session)
         }
     }
 
