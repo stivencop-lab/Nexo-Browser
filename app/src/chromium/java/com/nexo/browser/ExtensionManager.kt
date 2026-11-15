@@ -5,6 +5,8 @@ import android.content.Context
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.chromium.ChromiumEngineSession
 import org.json.JSONObject
+import com.nexo.browser.engine.chromium.ChromiumEngineSession
+import org.json.JSONObject
 import com.nexo.browser.shield.PhantomShield
 
 /**
@@ -66,6 +68,8 @@ object ExtensionManager {
     fun setTabActive(session: EngineSession, active: Boolean) = Unit
 
     fun sendBrowserState(context: Context) = Unit
+    private fun send(session: EngineSession?, message: JSONObject): Boolean =
+        (session as? ChromiumEngineSession)?.let { PhantomShield.sendToSession(it, message) } ?: false
     private fun send(session: EngineSession?, message: JSONObject): Boolean =
         (session as? ChromiumEngineSession)?.let { PhantomShield.sendToSession(it, message) } ?: false
     fun setPipMode(session: EngineSession?, active: Boolean, resumePlayback: Boolean = false, isolateCss: Boolean = true) =
