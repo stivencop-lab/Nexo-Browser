@@ -35,7 +35,11 @@ internal object ChromiumProfiles {
         val store = ProfileStore.getInstance()
         store.allProfileNames
             .filter { it.startsWith(PRIVATE_PREFIX) || it.startsWith(BURNER_PREFIX) }
-            .forEach { name -> runCatching { store.deleteProfile(name) } }
+            .filter { it != privateName }
+            .forEach { name ->
+                runCatching { store.deleteProfile(name) }
+                cookieManagers.remove(name)
+            }
     }
 
     /** Nombre del perfil de una pestaña; `null` para el perfil normal. */
