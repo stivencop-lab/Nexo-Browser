@@ -3,6 +3,8 @@ package com.nexo.browser
 import android.app.Activity
 import android.content.Context
 import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.chromium.ChromiumEngineSession
+import org.json.JSONObject
 import com.nexo.browser.shield.PhantomShield
 
 /**
@@ -59,17 +61,20 @@ object ExtensionManager {
     fun isRemoteExtensionPackage(url: String): Boolean = false
     fun installUrl(context: Context, url: String, onDone: (Boolean, String) -> Unit) = onDone(false, NOT_YET)
 
-    fun bindSession(session: EngineSession) = Unit
-    fun forgetSession(session: EngineSession) = Unit
+    fun bindSession(session: EngineSession) { (session as? ChromiumEngineSession)?.let { PhantomShield.bindSession(it.shield, it) } }
+    fun forgetSession(session: EngineSession) { (session as? ChromiumEngineSession)?.shield?.session = null }
     fun setTabActive(session: EngineSession, active: Boolean) = Unit
 
-    // Puente de páginas (fase 4): sin él, nada que entregar.
     fun sendBrowserState(context: Context) = Unit
-    fun setPipMode(session: EngineSession?, active: Boolean, resumePlayback: Boolean = false, isolateCss: Boolean = true) = Unit
-    fun sendPipCommand(session: EngineSession?, command: String): Boolean = false
-    fun setCaptions(session: EngineSession?, active: Boolean, live: Boolean = false, language: String = "multi", target: String = ""): Boolean = false
-    fun restartCaptions(session: EngineSession?): Boolean = false
-    fun restoreCaptions(session: EngineSession) = Unit
-    fun sendLifecycle(session: EngineSession?, foreground: Boolean) = Unit
-    fun hasMediaBridge(session: EngineSession?): Boolean = false
+    private fun send(session: EngineSession?, message: JSONObject): Boolean =
+        (session as? ChromiumEngineSession)?.let { PhantomShield.sendToSession(it, message) } ?: false
+    fun setPipMode(session: EngineSession?, active: Boolean, resumePlayback: Boolean = false, isolateCss: Boolean = true) =
+        send(session, JSONObject().put("type", "pip_mode").put("active", active).put("resume", resumePlayback).put("isolate", isolateCss))
+    fun sendPipCommand(session: EngineSession?, command: String): Boolean = send(session, JSONObject().put("type", "pip_command").put("command", command))
+    fun setCaptions(session: EngineSession?, active: Boolean, live: Boolean = false, language: String = "multi", target: String = ""): Boolean =
+        send(session, JSONObject().put("type", "captions").put("active", active).put("live", live).put("lang", language).put("target", target))
+    fun restartCaptions(session: EngineSession?): Boolean = send(session, JSONObject().put("type", "captions_restart"))
+    fun restoreCaptions(session: EngineSession) = send(session, JSONObject().put("type", "captions_grant"))
+    fun sendLifecycle(session: EngineSession?, foreground: Boolean) = send(session, JSONObject().put("type", "lifecycle").put("state", if (foreground) "foreground" else "background"))
+    fun hasMediaBridge(session: EngineSession?): Boolean = send(session, JSONObject().put("type", "get_state"))
 }
