@@ -108,6 +108,23 @@ object ChromiumEngine : BrowserEngine {
             ChromiumProfiles.profile(profileName)
             WebViewCompat.setProfile(webView, profileName)
         }
+        // Configure the WebView before handing it to WebViewTransport. Android
+        // invokes the opener immediately; OAuth/payment pages must see the same
+        // JavaScript, storage, cookie and security policy as a normal tab.
+        val settings = webView.settings
+        settings.javaScriptEnabled = BrowserPrefs.javascript(context)
+        settings.domStorageEnabled = true
+        settings.setSupportMultipleWindows(true)
+        settings.javaScriptCanOpenWindowsAutomatically = true
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
+        settings.safeBrowsingEnabled = BrowserPrefs.safeBrowsing(context)
+        settings.mixedContentMode = if (BrowserPrefs.httpsOnly(context))
+            android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        else android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        ChromiumProfiles.cookieManager(profileName)?.setAcceptCookie(
+            BrowserPrefs.cookieMode(context) != BrowserPrefs.COOKIES_NONE
+        )
         return webView
     }
 }
