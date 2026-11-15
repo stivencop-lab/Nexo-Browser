@@ -463,7 +463,7 @@ class MainActivity :
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
             },
-            SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = current?.desktopMode == true) {
+            SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = current?.desktopMode == true, checked = current?.desktopMode == true) {
                 TabManager.setDesktopMode(!(current?.desktopMode ?: false))
             },
             SheetAction(R.drawable.ic_menu_copy, "Copiar URL") { current?.let { copyText("Enlace", it.url) } },
@@ -494,7 +494,9 @@ class MainActivity :
         val content = NexoSheets.column(
             this, menuHeader, NexoSheets.primaryActions(this, primaryActions, dismiss)
         )
-        content.addView(NexoSheets.grid(this, actions, dismiss = dismiss))
+        val menu = MenuSections.arrange(actions)
+        if (menu.quick.isNotEmpty()) content.addView(NexoSheets.grid(this, menu.quick, dismiss = dismiss))
+        content.addView(NexoSheets.actionGroups(this, menu.groups, dismiss))
         extensionShortcuts(dismiss)?.let { content.addView(it) }
         sheet = NexoSheets.show(this, content)
     }
@@ -1075,6 +1077,7 @@ class MainActivity :
             runCatching {
                 session.compositorController.setClearColor(ThemeManager.palette(this).background)
             }
+            geckoView.coverUntilFirstPaint(ThemeManager.palette(this).background)
             geckoView.setSession(session)
             attachedSession = session
         }
@@ -1246,6 +1249,7 @@ class MainActivity :
     }
 
     private fun renderTab(tab: BrowserTab) {
+        WindowPrivacy.apply(window, tab.isPrivate)
         // Burner: la franja muestra el correo temporal y abre su buzón.
         privateBanner.text = if (tab.burnerId != null) {
             BurnerMailbox.address(tab.burnerId)?.let { "Burner · $it  ›" } ?: "Burner · identidad efímera · buzón  ›"
@@ -1259,7 +1263,7 @@ class MainActivity :
         forwardButton.isEnabled = tab.canGoForward
         privateBanner.visibility =
             if (!immersive && tab.isPrivate) View.VISIBLE else View.GONE
-        title = if (tab.isPrivate) "Privado · ${tab.title}" else tab.title
+        title = if (tab.isPrivate) "Navegación privada" else tab.title
         updateMiniPlayerChip()
     }
 

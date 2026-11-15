@@ -3,7 +3,6 @@ package com.nexo.browser
 import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import android.net.Uri
 import android.os.StrictMode
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -47,7 +46,7 @@ class NexoApplication : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         TabManager.onTrimMemory(level)
-        if (level >= 60 /* MODERATE */) SiteIconStore.trimMemory()
+        SiteIconStore.trimMemory(level)
         RemoteImageLoader.trimMemory(level)
     }
 }
@@ -58,14 +57,6 @@ object CrashLog {
     private const val MAX_REPORT_CHARS = 12000
     private const val MAX_STACK_LINES = 90
     private var installed = false
-
-    private val secretQuery = Regex(
-        """(?i)(token|access[_-]?token|refresh[_-]?token|auth|authorization|session|secret|api[_-]?key|password)=([^&\s]+)"""
-    )
-    private val webUrl = Regex("""https?://[^\s<>"')\]]+""")
-    private val appPath = Regex(
-        """/(?:data/(?:data|user/\d+)|storage/emulated/\d+/Android/data)/[^\s:]+"""
-    )
 
     @Synchronized
     fun install(context: Context) {
@@ -112,25 +103,7 @@ object CrashLog {
         }
     }
 
-    private fun redactCrashReport(raw: String): String {
-        var clean = secretQuery.replace(raw) { match ->
-            "${match.groupValues[1]}=<redacted>"
-        }
-
-        clean = webUrl.replace(clean) { match ->
-            runCatching {
-                val uri = Uri.parse(match.value)
-                uri.buildUpon()
-                    .clearQuery()
-                    .fragment(null)
-                    .build()
-                    .toString()
-            }.getOrDefault("<url-redacted>")
-        }
-
-        clean = appPath.replace(clean, "<app-path-redacted>")
-        return clean
-    }
+    private fun redactCrashReport(raw: String): String = CrashReportRedactor.redact(raw)
 
     fun appVersion(context: Context): String =
         runCatching {

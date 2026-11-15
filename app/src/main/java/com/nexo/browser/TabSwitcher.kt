@@ -335,6 +335,7 @@ object TabSwitcher {
             adapter.submit(items, TabManager.activeTab()?.id)
             closeAll.text = when (selectedGroup) { null -> "Cerrar todas"; "" -> "Cerrar pestañas sin grupo"; else -> "Cerrar grupo «$selectedGroup»" }
             closeAll.isEnabled = items.isNotEmpty()
+            WindowPrivacy.apply(dialog.window!!, showPrivate || activity.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0)
             title.text = if (items.size == 1) "1 pestaña" else "${items.size} pestañas"
             empty.text = if (showPrivate) {
                 "No hay pestañas privadas.\nLas pestañas privadas no guardan historial ni cookies."
@@ -462,6 +463,7 @@ private class TabCardAdapter(
     var items: List<BrowserTab> = emptyList()
         private set
     private var states: List<TabCardState> = emptyList()
+    private val stableIds = StableTabIds()
 
     init { setHasStableIds(true) }
 
@@ -479,6 +481,7 @@ private class TabCardAdapter(
             override fun areContentsTheSame(a: Int, b: Int) = old[a] == nextStates[b]
         })
         items = next
+        stableIds.retain(nextStates.mapTo(HashSet()) { it.id })
         states = nextStates
         diff.dispatchUpdatesTo(this)
     }
@@ -496,7 +499,7 @@ private class TabCardAdapter(
     }
 
     override fun getItemCount() = items.size
-    override fun getItemId(position: Int) = items[position].id.hashCode().toLong()
+    override fun getItemId(position: Int) = stableIds.id(items[position].id)
 
     class Holder(
         val card: LinearLayout,

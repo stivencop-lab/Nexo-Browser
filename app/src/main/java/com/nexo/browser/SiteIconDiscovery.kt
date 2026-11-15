@@ -2,6 +2,7 @@ package com.nexo.browser
 
 import java.net.URI
 import java.util.Locale
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Busca en el HTML de un sitio los iconos que declara (`apple-touch-icon`,
@@ -69,9 +70,14 @@ object SiteIconDiscovery {
         else resolved.toASCIIString()
     }.getOrNull()
 
-    /** Mismo sitio (último par de etiquetas): una redirección no lleva a otro dominio. */
+    /** Same registrable domain, using the Public Suffix List rather than guessing the last two labels. */
     fun sameSite(a: String?, b: String?): Boolean {
-        fun site(host: String?): String? = host?.lowercase(Locale.ROOT)?.trimEnd('.')?.split('.')?.takeLast(2)?.joinToString(".")
-        return site(a) != null && site(a) == site(b)
+        fun domain(host: String?): String? {
+            val canonical = host?.trimEnd('.')?.lowercase(Locale.ROOT) ?: return null
+            val url = "https://$canonical/".toHttpUrlOrNull() ?: return null
+            return url.topPrivateDomain() ?: url.host
+        }
+        val first = domain(a) ?: return false
+        return first == domain(b)
     }
 }

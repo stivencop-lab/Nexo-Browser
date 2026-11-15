@@ -168,6 +168,9 @@ class SettingsActivity : Activity() {
         }
         populate()
         applyTheme()
+        updateDependencies()
+        tracking.setOnCheckedChangeListener { _, _ -> updateDependencies() }
+        captionsEnabled.setOnCheckedChangeListener { _, _ -> updateDependencies() }
         findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }
         findViewById<Button>(R.id.clearDataButton).setOnClickListener { confirmClear() }
         findViewById<Button>(R.id.defaultBrowserButton).setOnClickListener { requestDefaultBrowser() }
@@ -267,6 +270,15 @@ class SettingsActivity : Activity() {
                 it.second == BrowserPrefs.translatorTarget(this)
             }.coerceAtLeast(0)
         )
+    }
+
+    private fun updateDependencies() {
+        strictTracking.isEnabled = tracking.isChecked
+        strictTracking.alpha = if (tracking.isChecked) 1f else 0.38f
+        listOf<View>(findViewById(R.id.configureCaptionsButton), findViewById(R.id.captionsSummary)).forEach {
+            it.isEnabled = captionsEnabled.isChecked
+            it.alpha = if (captionsEnabled.isChecked) 1f else 0.38f
+        }
     }
 
     private fun save() {

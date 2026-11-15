@@ -24,22 +24,26 @@ object ExternalApps {
 
     fun buildIntent(context: Context, url: String): Intent? {
         val scheme = UrlSafety.scheme(url) ?: return null
-        val intent = if (scheme == "intent") {
+        if (url.length > 16_384) return null
+        val parsed = if (scheme == "intent") {
             runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull() ?: return null
         } else {
             Intent(Intent.ACTION_VIEW, Uri.parse(url))
         }
 
-        intent.component = null
-        intent.selector = null
-        intent.addCategory(Intent.CATEGORY_BROWSABLE)
-        // Reemplazar flags: elimina FLAG_GRANT_* y similares que vinieran en el enlace.
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-
-        if (intent.`package` == context.packageName) return null
-        val dataScheme = intent.data?.scheme?.lowercase()
-        if (dataScheme != null && dataScheme in blockedDataSchemes) return null
-        return intent
+        val data = parsed.data ?: return null
+        val dataScheme = data.scheme?.lowercase(java.util.Locale.ROOT) ?: return null
+        if (dataScheme in blockedDataSchemes || dataScheme == "intent") return null
+        if (parsed.`package` == context.packageName) return null
+        // Build a new VIEW request. Clearing component/flags alone leaves attacker-supplied
+        // actions, categories, ClipData and arbitrary extras available to the receiving app.
+        return Intent(Intent.ACTION_VIEW, data).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            `package` = parsed.`package`
+            val fallback = runCatching { parsed.getStringExtra(FALLBACK_EXTRA) }.getOrNull()
+            if (fallback != null && UrlSafety.isWebUrl(fallback)) putExtra(FALLBACK_EXTRA, fallback)
+        }
     }
 
     /**

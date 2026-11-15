@@ -202,26 +202,27 @@ object NexoUi {
         onClick: () -> Unit
     ): LinearLayout {
         val p = ThemeManager.palette(activity)
-        val tint = if (danger) p.danger else if (p.isDark) p.text else p.accent
         return LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(activity, 60f)
-            setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 12f), dp(activity, 8f))
+            minimumHeight = dp(activity, 64f)
+            setPadding(dp(activity, 16f), dp(activity, 12f), dp(activity, 16f), dp(activity, 12f))
             background = ThemeManager.ripple(activity, null, 16f)
             isClickable = true
             isFocusable = true
-            contentDescription = title
+            contentDescription = listOfNotNull(title, subtitle).joinToString(". ")
             setOnClickListener { onClick() }
             addView(ImageView(activity).apply {
                 setImageResource(icon)
-                imageTintList = ColorStateList.valueOf(tint)
+                imageTintList = ColorStateList.valueOf(if (danger) p.error.onContainer else p.onAccentSoft)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
                 setPadding(dp(activity, 9f), dp(activity, 9f), dp(activity, 9f), dp(activity, 9f))
-                background = ThemeManager.rounded(activity, if (danger) ColorUtils.setAlphaComponent(p.danger, 30) else p.accentSoft, 13f)
-            }, LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f)).apply { marginEnd = dp(activity, 14f) })
+                background = ThemeManager.rounded(activity, if (danger) p.error.container else p.accentSoft, 13f)
+            }, LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f)).apply { marginEnd = dp(activity, 12f) })
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 addView(TextView(activity).apply {
                     text = title; textSize = 14.5f; maxLines = 2
                     setTextColor(if (danger) p.danger else p.text)
@@ -232,7 +233,11 @@ object NexoUi {
                     setTextColor(p.muted); setPadding(0, dp(activity, 2f), 0, 0)
                 })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(TextView(activity).apply { text = "›"; textSize = 22f; setTextColor(p.muted) })
+            addView(ImageView(activity).apply {
+                setImageResource(R.drawable.ic_nav_chevron)
+                imageTintList = ColorStateList.valueOf(p.muted)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(activity, 20f), dp(activity, 20f)))
         }
     }
 

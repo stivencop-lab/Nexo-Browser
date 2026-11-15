@@ -7,7 +7,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
 import java.io.File
-import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Locale
@@ -63,15 +62,18 @@ object SiteIconStore {
         val page = key(origin) ?: return
         memory.get(page)?.let { onIcon(it); return }
         // Varias tarjetas del mismo sitio comparten una sola búsqueda.
-        val waiting = inFlight.compute(page) { _, list -> (list ?: mutableListOf()).apply { add(onIcon) } }!!
-        if (waiting.size > 1) return
+        var first = false
+        inFlight.compute(page) { _, list ->
+            (list ?: mutableListOf<(Bitmap) -> Unit>().also { first = true }).apply { add(onIcon) }
+        }
+        if (!first) return
         val dir = File(context.applicationContext.cacheDir, "site-icons")
         val name = MessageDigest.getInstance("SHA-256").digest(page.toByteArray()).joinToString("") { "%02x".format(it) }
         worker.execute {
             val icon = runCatching { find(dir, name, page) }.getOrNull()
+            if (icon != null) memory.put(page, icon)
             val callbacks = inFlight.remove(page).orEmpty()
             if (icon != null) {
-                memory.put(page, icon)
                 main.post { callbacks.forEach { runCatching { it(icon) } } }
             }
         }
@@ -113,48 +115,8 @@ object SiteIconStore {
      * GET anónimo con límite de tamaño. Sigue hasta 3 redirecciones HTTPS
      * (del mismo sitio si [sameSiteOnly]). [truncate]: lee solo el principio.
      */
-    private fun fetch(start: String, limit: Int, accept: String, sameSiteOnly: Boolean, truncate: Boolean = false): Pair<String, ByteArray>? {
-        var current = start
-        val firstHost = runCatching { URI(start).host }.getOrNull()
-        repeat(4) {
-            if (!current.startsWith("https://")) return null
-            val connection = java.net.URL(current).openConnection() as HttpURLConnection
-            try {
-                connection.instanceFollowRedirects = false
-                connection.useCaches = false
-                connection.connectTimeout = 4000; connection.readTimeout = 4000
-                connection.setRequestProperty("Accept", accept)
-                connection.setRequestProperty("Cookie", "")
-                val status = connection.responseCode
-                if (status in 300..399) {
-                    val location = connection.getHeaderField("Location") ?: return null
-                    val next = SiteIconDiscovery.resolve(current, location) ?: return null
-                    if (sameSiteOnly && !SiteIconDiscovery.sameSite(firstHost, runCatching { URI(next).host }.getOrNull())) return null
-                    current = next
-                    return@repeat
-                }
-                if (status != 200) return null
-                if (!truncate && connection.contentLengthLong > limit) return null
-                val type = connection.contentType.orEmpty().lowercase(Locale.ROOT)
-                if (accept.startsWith("image") && (type.contains("svg") || type.startsWith("text/"))) return null
-                val bytes = connection.inputStream.use { input ->
-                    val out = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(8192)
-                    while (out.size() <= limit) {
-                        val read = input.read(buffer, 0, minOf(buffer.size, limit + 1 - out.size()))
-                        if (read < 0) break
-                        out.write(buffer, 0, read)
-                    }
-                    out.toByteArray()
-                }
-                if (bytes.size > limit && !truncate) return null
-                return current to bytes
-            } finally {
-                connection.disconnect()
-            }
-        }
-        return null
-    }
+    private fun fetch(start: String, limit: Int, accept: String, sameSiteOnly: Boolean, truncate: Boolean = false): Pair<String, ByteArray>? =
+        NativeImageNetwork.fetch(start, limit, accept, sameSiteOnly, truncate)?.let { it.url to it.bytes }
 
     private fun decode(bytes: ByteArray): Bitmap? {
         val payload = IconPayload.pngOrImage(bytes) ?: return null
@@ -165,5 +127,11 @@ object SiteIconStore {
         return BitmapFactory.decodeByteArray(payload, 0, payload.size, options)
     }
 
-    fun trimMemory() = memory.evictAll()
+    fun trimMemory(level: Int = 80) {
+        when (MemoryPressure.cacheAction(level)) {
+            MemoryPressure.CacheAction.CLEAR -> memory.evictAll()
+            MemoryPressure.CacheAction.REDUCE -> memory.trimToSize(memory.maxSize() / 2)
+            MemoryPressure.CacheAction.KEEP -> Unit
+        }
+    }
 }
