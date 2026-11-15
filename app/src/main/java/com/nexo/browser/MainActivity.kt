@@ -28,6 +28,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -141,6 +142,8 @@ class MainActivity :
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // El dock y el campo de dirección deben reacomodarse encima del IME.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         configureSystemInsets()
         // Historial e índice de sugerencias listos sin leer disco en el hilo principal.
         HistoryStore.prewarm(this)
