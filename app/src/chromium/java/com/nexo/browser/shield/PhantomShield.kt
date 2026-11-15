@@ -612,6 +612,9 @@ object PhantomShield {
         val content: String = buildString {
             append("(function(){'use strict';\n")
             append("if (!/^https?:$/.test(location.protocol)) return;\n")
+            // The media bridge must capture the WebMessage port before the
+            // extension shim hides it from page scripts.
+            append(ext("nexo/nexo-bridge.js")).append('\n')
             append(shim).append('\n')
             append("const browser = nexoPhantomShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n")
             append("if (!browser) return;\n")
