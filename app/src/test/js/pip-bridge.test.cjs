@@ -706,3 +706,9 @@ test('night mode switches background when the theme changes without reloading', 
   h.message({ type: 'browser_state', night: true, nightBackground: '#000000' });
   assert.deepEqual(calls.filter(c => c[0] === 'enable').map(c => c[1]), ['#0c1222', '#000000']);
 });
+
+
+test('media nudge does not rewrite currentTime', () => {
+  assert.match(source, /message.type === \"media_nudge\"/);
+  assert.doesNotMatch(source, /if (message.type === \"media_nudge\") nudgeMedia()/);
+});
