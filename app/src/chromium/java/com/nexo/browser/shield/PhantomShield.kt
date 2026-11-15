@@ -14,6 +14,8 @@ import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.nexo.browser.TabManager
+import com.nexo.browser.BrowserMediaController
+import com.nexo.browser.LiveCaptions
 import com.nexo.browser.engine.chromium.ChromiumEngineSession
 import okhttp3.OkHttpClient
 import okhttp3.Request
