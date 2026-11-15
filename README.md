@@ -103,6 +103,18 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Parcheador anti-bloqueo opcional, apagado inicialmente: modifica solo dos bibliotecas
   conocidas cuando sus bytes coinciden con un hash verificado.
 
+## Cambios recientes de estabilidad
+
+La versión actual incorpora las correcciones de estabilidad fusionadas en la PR [#33](https://github.com/stivencop414-bot/NavegadorGecko/pull/33):
+
+- Los botones de la barra inferior reciben sus toques correctamente; los gestos solo actúan sobre el fondo de la barra.
+- La captura de audio para subtítulos en vivo funciona de forma interna y no reposiciona ni reescribe currentTime del video.
+- El búfer de captura se mantiene alrededor de 250 ms para reducir la cola de audio sin eliminar el margen contra pérdidas.
+- Al volver a primer plano no se reinicia automáticamente el video únicamente por activar subtítulos.
+- El modo oscuro aplica un fondo base temprano mientras se cargan los estilos completos, evitando ocultar la página durante la carga.
+
+Estas correcciones no cambian los modelos, proveedores, endpoints ni la transcripción de subtítulos. La sincronización A/V debe seguir validándose en dispositivos Android físicos con el mismo contenido y con subtítulos activados y desactivados.
+
 ## Extensiones propias
 Los XPI instalados dinámicamente se validan por GeckoView y requieren firma de Mozilla.
 Una extensión privada/sin firma puede integrarse dentro de
