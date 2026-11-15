@@ -4,7 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.provider.Settings
-import org.mozilla.geckoview.GeckoSession
+import com.nexo.browser.engine.EngineSession
 
 /**
  * Opciones cuando un video no trae subtítulos de texto. Lo primero que se
@@ -13,7 +13,7 @@ import org.mozilla.geckoview.GeckoSession
  * app. Transcribir con Deepgram (envía el audio del video) solo si se elige.
  */
 object SystemCaptions {
-    fun showNoTextChoice(activity: MainActivity, session: GeckoSession, onChange: () -> Unit) {
+    fun showNoTextChoice(activity: MainActivity, session: EngineSession, onChange: () -> Unit) {
         if (activity.isFinishing || activity.isDestroyed) return
         val hasKey = BrowserPrefs.deepgramKey(activity).isNotBlank()
         val options = arrayOf(

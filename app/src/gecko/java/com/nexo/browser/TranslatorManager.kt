@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.content.Context
 import android.util.Log
 
+import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.gecko.gecko
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.TranslationsController
 import java.util.WeakHashMap
@@ -46,16 +48,18 @@ object TranslatorManager {
     private val preparing = Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
     private val pending = Collections.newSetFromMap(WeakHashMap<GeckoSession, Boolean>())
 
-    fun forget(session: GeckoSession) { states.remove(session); pending.remove(session); preparing.remove(session) }
+    fun forget(session: EngineSession) = forget(session.gecko)
 
-    fun bind(session: GeckoSession) {
-        session.setTranslationsSessionDelegate(object : TranslationsController.SessionTranslation.Delegate {
+    private fun forget(session: GeckoSession) { states.remove(session); pending.remove(session); preparing.remove(session) }
+
+    fun bind(engineSession: EngineSession) {
+        engineSession.gecko.setTranslationsSessionDelegate(object : TranslationsController.SessionTranslation.Delegate {
             override fun onTranslationStateChange(session: GeckoSession,
                 state: TranslationsController.SessionTranslation.TranslationState?) {
                 if (state == null) { forget(session); return }
                 val previous = states.put(session, state)
                 if (state.hasVisibleChange == true || state.error != null) pending.remove(session)
-                if (state.error != null && state.error != previous?.error && TabManager.activeSession() === session) {
+                if (state.error != null && state.error != previous?.error && TabManager.activeSession()?.gecko === session) {
                     TabManager.notifyMessage("No se pudo traducir. Comprueba el idioma y la conexión para descargarlo.")
                 }
             }
@@ -65,7 +69,7 @@ object TranslatorManager {
     fun translateActive(context: Context, callback: (Boolean, String) -> Unit) {
         val activity = context as? Activity
         val tab = TabManager.activeTab()
-        val session = tab?.session
+        val session = tab?.session?.gecko
         if (activity == null || activity.isFinishing || activity.isDestroyed || tab == null || session == null || !UrlSafety.isWebUrl(tab.url)) {
             callback(false, "Abre una página web para traducir."); return
         }
@@ -76,7 +80,7 @@ object TranslatorManager {
             AlertDialog.Builder(activity).setTitle("Traducción en curso")
                 .setMessage("Puedes volver al original sin abrir otra pestaña.")
                 .setNegativeButton("Seguir traduciendo",null).setPositiveButton("Cancelar y ver original") { _, _ ->
-                    if(TabManager.activeSession() === session && tab.navigationEpoch == epoch) {
+                    if(TabManager.activeSession()?.gecko === session && tab.navigationEpoch == epoch) {
                         session.sessionTranslation!!.restoreOriginalPage().accept(
                             { forget(session);callback(true,"Página original restaurada.") },
                             { callback(false,"No se pudo restaurar el original. Inténtalo de nuevo.") })
@@ -93,7 +97,7 @@ object TranslatorManager {
         val original = tab.url
         val navigationEpoch = tab.navigationEpoch
         fun current() = !activity.isFinishing && !activity.isDestroyed &&
-            TabManager.activeSession() === session && tab.url == original && tab.navigationEpoch == navigationEpoch
+            TabManager.activeSession()?.gecko === session && tab.url == original && tab.navigationEpoch == navigationEpoch
         preparing.add(session)
         TranslationsController.RuntimeTranslation.isTranslationsEngineSupported().accept({ supported ->
             if (!current()) { preparing.remove(session); return@accept }

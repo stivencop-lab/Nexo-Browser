@@ -13,6 +13,9 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.gecko.GeckoEngine
+import com.nexo.browser.engine.gecko.gecko
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -43,11 +46,11 @@ object ExtensionManager {
     private var promptActivity = WeakReference<Activity>(null)
     private var extensionPopup: Dialog? = null
     private var bridge: WebExtension? = null
-    private val captionOffers = java.util.WeakHashMap<GeckoSession, MutableMap<WebExtension.Port, Int>>()
-    private val captionOwners = java.util.WeakHashMap<GeckoSession, WebExtension.Port>()
+    private val captionOffers = java.util.WeakHashMap<EngineSession, MutableMap<WebExtension.Port, Int>>()
+    private val captionOwners = java.util.WeakHashMap<EngineSession, WebExtension.Port>()
     private val ports = mutableSetOf<WebExtension.Port>()
     private data class PipState(val resume: Boolean, val isolate: Boolean = true)
-    private val pipStates = java.util.WeakHashMap<GeckoSession, PipState>()
+    private val pipStates = java.util.WeakHashMap<EngineSession, PipState>()
     private var initialized = false
 
     /*
@@ -105,7 +108,7 @@ object ExtensionManager {
                     // ensureBuiltIn es asíncrono: si las pestañas ya existen,
                     // enlaza el puente también a esas sesiones.
                     TabManager.liveSessions().forEach { session ->
-                        bindBridgeToSession(extension, session)
+                        bindBridgeToSession(extension, session.gecko)
                     }
                 }
             },
@@ -168,18 +171,43 @@ object ExtensionManager {
     /** Estado real de la extensión incluida, también cuando está desactivada. */
     fun installedPhantom(): WebExtension? = known[PHANTOMSHIELD_ID]
 
+    // --- Vista neutral para la interfaz común (sin WebExtension) ---
+
+    private fun WebExtension.entry() = ExtensionEntry(id, metaData.name, metaData.enabled, metaData.optionsPageUrl)
+
+    fun phantomEntry(): ExtensionEntry? = installedPhantom()?.entry()
+
+    fun actionEntries(): List<ExtensionEntry> = actionableExtensions().map { it.entry() }
+
+    fun badgeFor(id: String): String? = known[id]?.let { badge(it) }
+
+    fun loadIconFor(id: String, sizePx: Int, onDone: (android.graphics.Bitmap?) -> Unit) {
+        known[id]?.let { loadIcon(it, sizePx, onDone) } ?: onDone(null)
+    }
+
+    fun runActionFor(id: String, onDone: (Boolean, String) -> Unit) {
+        known[id]?.let { runAction(it, onDone) } ?: onDone(false, "La extensión ya no está instalada.")
+    }
+
+    fun setEnabledFor(context: Context, id: String, enabled: Boolean, onDone: (Boolean, String) -> Unit) {
+        known[id]?.let { setEnabled(context, it, enabled, onDone) } ?: onDone(false, "La extensión ya no está instalada.")
+    }
+
+    /** Pantalla para añadir extensiones (tienda de addons.mozilla.org en Gecko). */
+    fun storeScreen(): Class<out Activity> = ExtensionStoreActivity::class.java
+
     /** Standard browser-action badge; no native messaging or page data is exposed. */
     fun phantomBadge(global: Boolean = false): String? {
         if (known[PHANTOMSHIELD_ID]?.metaData?.enabled == false) return "OFF"
         val raw = if (global) defaultActions[PHANTOMSHIELD_ID]?.badgeText
-        else TabManager.activeSession()?.let { sessionActions[it]?.get(PHANTOMSHIELD_ID)?.badgeText }
+        else TabManager.activeSession()?.let { sessionActions[it.gecko]?.get(PHANTOMSHIELD_ID)?.badgeText }
             ?: defaultActions[PHANTOMSHIELD_ID]?.badgeText?.takeIf { it == "OFF" }
         return raw?.takeIf { it == "OFF" || it == "PAUSE" || it.matches(Regex("""[0-9]{1,3}\+?""")) }
     }
 
     /** Insignia que la extensión muestra en su botón para la pestaña actual (o la general). */
     fun badge(extension: WebExtension): String? {
-        val session = TabManager.activeSession()
+        val session = TabManager.activeSession()?.gecko
         val text = session?.let { sessionActions[it]?.get(extension.id)?.badgeText }
             ?: defaultActions[extension.id]?.badgeText
         return text?.trim()?.take(4)?.takeIf { it.isNotEmpty() }
@@ -187,7 +215,7 @@ object ExtensionManager {
 
     /** Extensiones activas que tienen botón (browser_action/page_action). */
     fun actionableExtensions(): List<WebExtension> {
-        val session = TabManager.activeSession()
+        val session = TabManager.activeSession()?.gecko
         return known.values.filter { ext ->
             ext.metaData.enabled &&
                 (defaultActions.containsKey(ext.id) || session?.let { sessionActions[it]?.containsKey(ext.id) } == true)
@@ -195,7 +223,7 @@ object ExtensionManager {
     }
 
     fun setTabActive(
-        session: GeckoSession,
+        session: EngineSession,
         active: Boolean
     ) {
         runCatching {
@@ -203,7 +231,7 @@ object ExtensionManager {
                 .get(AppContext.get())
                 .webExtensionController
                 .setTabActive(
-                    session,
+                    session.gecko,
                     active
                 )
         }.onFailure {
@@ -223,7 +251,7 @@ object ExtensionManager {
             (Boolean, String) -> Unit
     ) {
         val session =
-            TabManager.activeSession()
+            TabManager.activeSession()?.gecko
 
         val sessionAction =
             session
@@ -313,7 +341,8 @@ object ExtensionManager {
         )
     }
 
-    fun bindSession(session: GeckoSession) {
+    fun bindSession(engineSession: EngineSession) {
+        val session = engineSession.gecko
         bridge?.let {
             bindBridgeToSession(it, session)
         }
@@ -1037,7 +1066,7 @@ object ExtensionManager {
      * página no se toca (YouTube reescribe clases y pausa al redimensionar).
      */
     fun setPipMode(
-        session: GeckoSession?,
+        session: EngineSession?,
         active: Boolean,
         resumePlayback: Boolean = false,
         isolateCss: Boolean = true
@@ -1060,7 +1089,7 @@ object ExtensionManager {
             put("isolate", isolate)
         }
 
-    fun sendPipCommand(session: GeckoSession?, command: String): Boolean {
+    fun sendPipCommand(session: EngineSession?, command: String): Boolean {
         if (session == null) return false
         if (pipStates.containsKey(session) && command in listOf("play", "pause")) {
             pipStates[session] = PipState(command == "play", pipStates[session]?.isolate ?: true)
@@ -1076,7 +1105,7 @@ object ExtensionManager {
      * Va a todos los marcos (el video puede estar en un iframe); devuelve
      * false si la página aún no tiene el puente conectado.
      */
-    fun setCaptions(session: GeckoSession?, active: Boolean, live: Boolean = false, language: String = "multi", target: String = ""): Boolean =
+    fun setCaptions(session: EngineSession?, active: Boolean, live: Boolean = false, language: String = "multi", target: String = ""): Boolean =
         postCaptions(session, JSONObject().apply {
             put("type", "captions")
             put("active", active)
@@ -1089,25 +1118,26 @@ object ExtensionManager {
         })
 
     /** Tras un corte de red: grabación nueva (con cabecera) para la conexión nueva. */
-    fun restartCaptions(session: GeckoSession?): Boolean =
+    fun restartCaptions(session: EngineSession?): Boolean =
         session?.let { captionOwners[it] }?.let {
             runCatching { it.postMessage(JSONObject().put("type", "captions_restart")) }.isSuccess
         } ?: false
 
-    private fun postCaptions(session: GeckoSession?, message: JSONObject): Boolean {
+    private fun postCaptions(session: EngineSession?, message: JSONObject): Boolean {
         if (session == null) return false
         if (message.optString("type") == "captions" && !message.optBoolean("active")) {
             captionOwners.remove(session)
             captionOffers.remove(session)
         }
         var delivered = false
-        ports.filter { it.sender.session === session }.toList().forEach {
+        val gecko = session.gecko
+        ports.filter { it.sender.session === gecko }.toList().forEach {
             if (runCatching { it.postMessage(message) }.isSuccess) delivered = true
         }
         return delivered
     }
 
-    private fun captionsOn(session: GeckoSession) = JSONObject().apply {
+    private fun captionsOn(session: EngineSession) = JSONObject().apply {
         put("type", "captions")
         put("active", true)
         put("live", LiveCaptions.audioAllowed(session))
@@ -1120,16 +1150,16 @@ object ExtensionManager {
      * punto). Gecko vuelve a crear su flujo de audio y Android lo enruta ya
      * por la vía que la captura puede oír.
      */
-    fun nudgeMedia(session: GeckoSession?) {
+    fun nudgeMedia(session: EngineSession?) {
         postCaptions(session, JSONObject().put("type", "media_nudge"))
     }
 
-    fun restoreCaptions(session: GeckoSession) {
+    fun restoreCaptions(session: EngineSession) {
         if (LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) postCaptions(session, captionsOn(session))
     }
 
     /** Avisa al puente de que la app pasa a segundo plano o vuelve (recuperación de video). */
-    fun sendLifecycle(session: GeckoSession?, foreground: Boolean) {
+    fun sendLifecycle(session: EngineSession?, foreground: Boolean) {
         postCaptions(session, JSONObject().apply {
             put("type", "lifecycle")
             put("state", if (foreground) "foreground" else "background")
@@ -1147,15 +1177,16 @@ object ExtensionManager {
         else -> "No se pudo captar el audio del video."
     }
 
-    fun hasMediaBridge(session: GeckoSession?): Boolean =
-        session != null && ports.any { it.sender.session === session && it.sender.isTopLevel() }
+    fun hasMediaBridge(session: EngineSession?): Boolean =
+        session != null && ports.any { it.sender.session === session.gecko && it.sender.isTopLevel() }
 
-    private fun postToTopLevel(session: GeckoSession?, message: JSONObject): Boolean {
+    private fun postToTopLevel(session: EngineSession?, message: JSONObject): Boolean {
         if (session == null) return false
 
         var delivered = false
+        val gecko = session.gecko
         ports.toList()
-            .filter { it.sender.session === session && it.sender.isTopLevel() }
+            .filter { it.sender.session === gecko && it.sender.isTopLevel() }
             .forEach { port ->
                 if (runCatching { port.postMessage(message) }.isSuccess) delivered = true
             }
@@ -1167,7 +1198,7 @@ object ExtensionManager {
         val night = NightMode.effective(context)
         (only?.let { listOf(it) } ?: ports.toList()).forEach { port ->
             // Por marco: la excepción depende del sitio principal de su pestaña.
-            val host = port.sender.session?.let { TabManager.tabForSession(it) }?.url?.let { SuggestionIndex.hostOf(it) }
+            val host = GeckoEngine.wrapperOf(port.sender.session)?.let { TabManager.tabForSession(it) }?.url?.let { SuggestionIndex.hostOf(it) }
             val message = JSONObject().apply {
                 put("type", "browser_state")
                 put("accent", BrowserPrefs.accent(context))
@@ -1254,7 +1285,7 @@ object ExtensionManager {
                     if (!tabBudgets.getOrPut(source.id) { TabCreationBudget() }.allow(android.os.SystemClock.elapsedRealtime())) {
                         return null
                     }
-                    if (!UrlSafety.isWebUrl(url)) return GeckoResult.fromValue(TabManager.createSessionForExtension(url,createDetails.active != false))
+                    if (!UrlSafety.isWebUrl(url)) return GeckoResult.fromValue(TabManager.createSessionForExtension(url,createDetails.active != false).gecko)
                     val activity = BrowserHosts.current()?.hostActivity ?: return null
                     if (!extensionTabPrompts.add(source.id)) return null
                     val result = GeckoResult<GeckoSession>()
@@ -1264,7 +1295,7 @@ object ExtensionManager {
                         .setMessage("${source.metaData.name ?: source.id} quiere abrir ${Uri.parse(url).host}.")
                         .setPositiveButton("Abrir") { _, _ ->
                             answered = true
-                            result.complete(TabManager.createSessionForExtension(url,createDetails.active != false))
+                            result.complete(TabManager.createSessionForExtension(url,createDetails.active != false).gecko)
                         }.setNegativeButton("Cancelar",null)
                         .setOnDismissListener {
                             extensionTabPrompts.remove(source.id)
@@ -1301,7 +1332,7 @@ object ExtensionManager {
             .forEach {
                 bindExtensionToSession(
                     extension,
-                    it
+                    it.gecko
                 )
             }
     }
@@ -1331,10 +1362,9 @@ object ExtensionManager {
                         source: WebExtension?,
                         session: GeckoSession
                     ): GeckoResult<AllowOrDeny> {
-                        TabManager
-                            .closeBySession(
-                                session
-                            )
+                        GeckoEngine.wrapperOf(session)?.let {
+                            TabManager.closeBySession(it)
+                        }
 
                         return GeckoResult.allow()
                     }
@@ -1347,14 +1377,14 @@ object ExtensionManager {
                                 .UpdateTabDetails
                     ): GeckoResult<AllowOrDeny> {
                         // Extension scripts must not steal focus from the user's current tab.
-                        if (details.active == true && session !== TabManager.activeSession()) return GeckoResult.deny()
+                        if (details.active == true && session !== TabManager.activeSession()?.gecko) return GeckoResult.deny()
                         return GeckoResult.allow()
                     }
                 }
             )
     }
 
-    fun forgetSession(session: GeckoSession) { sessionActions.remove(session) }
+    fun forgetSession(session: EngineSession) { sessionActions.remove(session.gecko) }
 
     private fun rememberAction(
         extension: WebExtension,
@@ -1611,7 +1641,7 @@ object ExtensionManager {
                         ) {
                             val json = (message as? JSONObject)?.takeIf { BridgeLimits.accept(it) }
                             if (json?.optString("type") == "video_state" && port.sender.isTopLevel()) {
-                                val tab = port.sender.session?.let { TabManager.tabForSession(it) }
+                                val tab = GeckoEngine.wrapperOf(port.sender.session)?.let { TabManager.tabForSession(it) }
                                 if (tab != null) {
                                     BrowserMediaController.onVideoState(
                                         tab.id,
@@ -1629,7 +1659,7 @@ object ExtensionManager {
                                 }
                                 return
                             }
-                            val session = port.sender.session
+                            val session = GeckoEngine.wrapperOf(port.sender.session)
                             // Con la captura de Android activa la página no participa: un marco nuevo
                             // (anuncio, reproductor recargado) no puede reiniciarla ni cancelarla.
                             if (json != null && session != null && LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) {
@@ -1644,7 +1674,7 @@ object ExtensionManager {
                                             if (captionOffers[session] !== offers) return@postDelayed
                                             captionOffers.remove(session)
                                             if (!LiveCaptions.isActive(session) || captionOwners[session] != null) return@postDelayed
-                                            val selected = offers.filterKeys { it in ports && it.sender.session === session }.maxByOrNull { it.value }?.key
+                                            val selected = offers.filterKeys { it in ports && it.sender.session === session.gecko }.maxByOrNull { it.value }?.key
                                             if (selected != null) {
                                                 captionOwners[session] = selected
                                                 runCatching { selected.postMessage(JSONObject().put("type", "captions_grant")) }
@@ -1681,7 +1711,7 @@ object ExtensionManager {
 
                         override fun onDisconnect(port: WebExtension.Port) {
                             ports -= port
-                            port.sender.session?.let { session ->
+                            GeckoEngine.wrapperOf(port.sender.session)?.let { session ->
                                 if (captionOwners[session] === port) {
                                     captionOwners.remove(session)
                                     LiveCaptions.onRecordingStopped(session)
@@ -1694,7 +1724,7 @@ object ExtensionManager {
                 // Solo al marco nuevo: los demás ya tienen el estado (antes se reenviaba a todos
                 // en cada conexión, y las páginas con muchos iframes lo multiplicaban).
                 sendBrowserState(AppContext.get(), port)
-                port.sender.session?.let { session ->
+                GeckoEngine.wrapperOf(port.sender.session)?.let { session ->
                     // Solo al marco nuevo: la orden pudo llegar antes de que conectara. Los
                     // demás marcos siguen como estaban (sin reiniciar a quien tiene los subtítulos).
                     if (LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) {

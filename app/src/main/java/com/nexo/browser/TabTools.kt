@@ -251,7 +251,7 @@ object TabTools {
             BrowserPrefs.setDnsCustom(activity, uri.text.toString().trim())
             BrowserPrefs.setDnsStrict(activity, strict)
             BrowserPrefs.setDnsProvider(activity, selected)
-            GeckoRuntimeHolder.applyRuntimePrefs(activity)
+            com.nexo.browser.engine.Engines.current.applySettings(activity)
             sheet.dismiss()
             Toastish.show(activity, "DNS guardado: " + dnsLabel(activity) + ".")
         }, NexoUi.buttonParams(activity, 14f))

@@ -184,7 +184,7 @@ object CaptionsUi {
         sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Traducir a", "${TARGETS.size - 1} idiomas"), list))
     }
 
-    private fun stateText(activity: Activity, session: org.mozilla.geckoview.GeckoSession): String = when {
+    private fun stateText(activity: Activity, session: com.nexo.browser.engine.EngineSession): String = when {
         LiveCaptions.isTrackMode(session) -> "Subtítulos del propio video · sin consumo de Deepgram"
         LiveCaptions.isDomMode(session) -> "Subtítulos del reproductor · sin consumo de Deepgram"
         LiveCaptions.state(session) == LiveCaptions.State.LISTENING -> "Escuchando · " + LiveCaptions.usageText(activity)
@@ -197,7 +197,7 @@ object CaptionsUi {
      * Hoja rápida con los subtítulos activos: idioma de destino, qué mostrar
      * e idioma del video. Los cambios se aplican al momento, sin cortar el audio.
      */
-    fun showQuick(activity: Activity, session: org.mozilla.geckoview.GeckoSession, onChange: () -> Unit, onOff: () -> Unit) {
+    fun showQuick(activity: Activity, session: com.nexo.browser.engine.EngineSession, onChange: () -> Unit, onOff: () -> Unit) {
         lateinit var sheet: Dialog
         val body = NexoUi.column(activity)
         val targetRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -485,7 +485,7 @@ object CaptionsUi {
             BrowserPrefs.setCaptionAudioAuto(activity, audioAuto)
             if (friendlyAudio != BrowserPrefs.captureFriendlyAudio(activity)) {
                 BrowserPrefs.setCaptureFriendlyAudio(activity, friendlyAudio)
-                GeckoRuntimeHolder.applyAudioPrefs(activity)
+                com.nexo.browser.engine.Engines.current.applyAudioSettings(activity)
             }
             BrowserPrefs.setAiTranslateProvider(activity, aiProvider)
             BrowserPrefs.setAiTranslateModel(activity, aiModelField.text.toString())

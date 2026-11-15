@@ -1,6 +1,6 @@
 package com.nexo.browser
 
-import org.mozilla.geckoview.GeckoSession
+import com.nexo.browser.engine.EngineSession
 import java.util.UUID
 
 data class BrowserTab(
@@ -21,7 +21,7 @@ data class BrowserTab(
     var navigationEpoch: Long = 0,
     var sessionState: String? = null,
     var isFullScreen: Boolean = false,
-    var session: GeckoSession? = null
+    var session: EngineSession? = null
 ) {
     init { require(burnerId == null || (isPrivate && burnerId.isNotBlank())) { "Burner requiere navegación privada." } }
 }

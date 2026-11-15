@@ -321,7 +321,7 @@ class SettingsActivity : Activity() {
             ].second
         )
 
-        GeckoRuntimeHolder.applyRuntimePrefs(this)
+        com.nexo.browser.engine.Engines.current.applySettings(this)
         TabManager.reapplySettings()
         ExtensionManager.sendBrowserState(this)
         MediaPlaybackService.sync(this)
@@ -357,7 +357,7 @@ class SettingsActivity : Activity() {
 
     private fun aboutText(): String {
         val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: ""
-        return "Nexo $version · motor Gecko ${org.mozilla.geckoview.BuildConfig.MOZILLA_VERSION}"
+        return "Nexo $version · motor ${com.nexo.browser.engine.Engines.current.displayName}"
     }
 
     private fun styleReadableTree(view: View) {

@@ -33,7 +33,7 @@ object ProfileTransfer {
         put("value", if (value is Set<*>) JSONArray(value) else value)
     }
     fun export(context: Context, stage: File) {
-        check(MigrationMode.cold && !MigrationMode.dataChanged && MigrationMode.ready(context) && !GeckoRuntimeHolder.started())
+        check(MigrationMode.cold && !MigrationMode.dataChanged && MigrationMode.ready(context) && !com.nexo.browser.engine.Engines.current.isStarted())
         require(!stage.exists()); stage.mkdirs()
         val profile = TransferSchema.profile(context.filesDir)
         val map = uuidMap(profile)
@@ -103,7 +103,7 @@ object ProfileTransfer {
         append("</map>")
     }
     fun prepare(context: Context, stage: File): Map<String, File?> {
-        check(MigrationMode.cold && !MigrationMode.dataChanged && MigrationMode.ready(context) && !GeckoRuntimeHolder.started())
+        check(MigrationMode.cold && !MigrationMode.dataChanged && MigrationMode.ready(context) && !com.nexo.browser.engine.Engines.current.isStarted())
         require(File(stage,"native.json").length() <= 8*1024*1024 && File(stage,"addons.json").length() <= 1024*1024)
         val addons = JSONObject(File(stage,"addons.json").readText())
         val map = addons.getJSONObject("uuids")

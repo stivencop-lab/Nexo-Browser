@@ -41,6 +41,8 @@ object BurnerMailbox {
     fun address(id: String?): String? = id?.let { accounts[it]?.address }
 
     fun open(activity: Activity) {
+        // Sin aislamiento del motor no se crea la cuenta de correo ni la pestaña.
+        if (!TabManager.isolatedTabsAvailable()) return
         val prefs = activity.getSharedPreferences("burner", Context.MODE_PRIVATE)
         fun create() {
             val id = "burner-" + java.util.UUID.randomUUID()

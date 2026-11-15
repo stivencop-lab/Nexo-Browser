@@ -41,8 +41,9 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import org.mozilla.geckoview.GeckoSession
-import org.mozilla.geckoview.GeckoView
+import com.nexo.browser.engine.EngineContextElement
+import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.EngineView
 
 class MainActivity :
     Activity(),
@@ -53,7 +54,9 @@ class MainActivity :
     private lateinit var captionsButton: Button
     private lateinit var captionView: TextView
     private var lastCaptionMessage: String? = null
-    private lateinit var geckoView: GeckoView
+    /** Vista de la página (la del motor activo) y su interfaz de motor. */
+    private lateinit var pageView: View
+    private lateinit var engineView: EngineView
     private lateinit var omnibox: EditText
     private lateinit var suggestions: OmniboxSuggestions
     private lateinit var progress: ProgressBar
@@ -78,7 +81,7 @@ class MainActivity :
     private lateinit var topBar: View
     private lateinit var navBar: View
     private lateinit var viewModel: BrowserViewModel
-    private var attachedSession: GeckoSession? = null
+    private var attachedSession: EngineSession? = null
     private var settingsFingerprint = ""
     private var themeKey = ""
     private var mediaNotificationPermissionAsked = false
@@ -127,7 +130,7 @@ class MainActivity :
                 }
             }
             // El estado real llega desde la página; refrescar el icono en breve.
-            geckoView.postDelayed({ updatePipParams() }, 350)
+            pageView.postDelayed({ updatePipParams() }, 350)
         }
     }
 
@@ -210,18 +213,31 @@ class MainActivity :
         ViewCompat.requestApplyInsets(content)
     }
 
+    /** Sustituye el hueco del layout por la vista de página del motor, en su mismo sitio. */
+    private fun installPageView(): View {
+        val placeholder = findViewById<View>(R.id.pageView)
+        val parent = placeholder.parent as android.view.ViewGroup
+        val index = parent.indexOfChild(placeholder)
+        val view = com.nexo.browser.engine.Engines.current.createView(this)
+        view.id = R.id.pageView
+        parent.removeViewAt(index)
+        parent.addView(view, index, placeholder.layoutParams)
+        return view
+    }
+
     private fun bindViews() {
         root = findViewById(R.id.rootView)
         topBar = findViewById(R.id.topBar)
         navBar = findViewById(R.id.navBar)
-        geckoView = findViewById(R.id.geckoView)
+        pageView = installPageView()
+        engineView = pageView as EngineView
         browserFrame = findViewById(R.id.browserFrame)
         startPage = StartPageView(
             this,
             onOpen = { url -> TabManager.navigate(url) },
             onPrivate = { viewModel.newTab(true) },
             onShield = { openShieldPanel() },
-            onExtensions = { openScreen(ExtensionStoreActivity::class.java) },
+            onExtensions = { openScreen(ExtensionManager.storeScreen()) },
             onAction = { action -> startPageAction(action) }
         ).apply { visibility = View.GONE }
         // Encima de la GeckoView y debajo del botón "Mini video".
@@ -405,19 +421,15 @@ class MainActivity :
             return
         }
         runCatching {
-            finder.displayFlags = GeckoSession.FINDER_DISPLAY_HIGHLIGHT_ALL or
-                GeckoSession.FINDER_DISPLAY_DRAW_LINK_OUTLINE
             // Repetir el mismo texto avanza al siguiente resultado.
             if (restart) finder.clear()
-            finder.find(term, if (backwards) GeckoSession.FINDER_FIND_BACKWARDS else 0).accept(
-                { result ->
-                    findCount.text = when {
-                        result == null || !result.found -> "0/0"
-                        else -> "${result.current}/${result.total}"
-                    }
-                },
-                { findCount.text = "" }
-            )
+            finder.find(term, backwards) { result ->
+                findCount.text = when {
+                    result == null -> ""
+                    !result.found -> "0/0"
+                    else -> "${result.current}/${result.total}"
+                }
+            }
         }
     }
 
@@ -505,8 +517,8 @@ class MainActivity :
      * fila deslizable con todas las demás (icono real e insignia de cada una).
      */
     private fun extensionShortcuts(dismiss: () -> Unit): View? {
-        val phantom = ExtensionManager.installedPhantom()
-        val others = ExtensionManager.actionableExtensions().filterNot { it.id == ExtensionManager.PHANTOMSHIELD_ID }
+        val phantom = ExtensionManager.phantomEntry()
+        val others = ExtensionManager.actionEntries().filterNot { it.id == ExtensionManager.PHANTOMSHIELD_ID }
         val items = listOfNotNull(phantom)
         val p = ThemeManager.palette(this)
         val d = resources.displayMetrics.density
@@ -535,7 +547,7 @@ class MainActivity :
                     setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
                     background = ThemeManager.rounded(this@MainActivity, if (isShield) p.success.container else p.accentSoft, 12f)
                 }
-                if (!isShield) ExtensionManager.loadIcon(extension, dp(40f)) { bitmap ->
+                if (!isShield) ExtensionManager.loadIconFor(extension.id, dp(40f)) { bitmap ->
                     if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
                 }
                 val row = LinearLayout(this@MainActivity).apply {
@@ -544,11 +556,11 @@ class MainActivity :
                     val surface = if (isShield) p.surfaceContainerHigh else p.elevated
                     background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 16f, p.outlineVariant), 16f)
                     isClickable = true; isFocusable = true
-                    contentDescription = "Abrir panel de ${extension.metaData.name ?: "extensión"}"
+                    contentDescription = "Abrir panel de ${extension.name ?: "extensión"}"
                     setOnClickListener {
                         dismiss()
-                        if (!extension.metaData.enabled) openScreen(ExtensionsActivity::class.java)
-                        else ExtensionManager.runAction(extension) { ok, message ->
+                        if (!extension.enabled) openScreen(ExtensionsActivity::class.java)
+                        else ExtensionManager.runActionFor(extension.id) { ok, message ->
                             if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
                         }
                     }
@@ -556,13 +568,13 @@ class MainActivity :
                     addView(LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         addView(TextView(this@MainActivity).apply {
-                            text = extension.metaData.name ?: "Extensión"; textSize = 12.5f
+                            text = extension.name ?: "Extensión"; textSize = 12.5f
                             typeface = android.graphics.Typeface.create(resources.getFont(R.font.inter_variable), android.graphics.Typeface.BOLD)
                             setTextColor(p.text); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                         })
                         addView(TextView(this@MainActivity).apply {
                             text = when {
-                                !extension.metaData.enabled -> "Extensión desactivada"
+                                !extension.enabled -> "Extensión desactivada"
                                 badge == "OFF" -> "Bloqueo pausado"
                                 badge == "PAUSE" -> "Pausada en esta página"
                                 badge != null -> "$badge bloqueos en esta página"
@@ -573,11 +585,11 @@ class MainActivity :
                         })
                     }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                     if (isShield) addView(android.widget.Switch(this@MainActivity).apply {
-                        isChecked = extension.metaData.enabled
+                        isChecked = extension.enabled
                         contentDescription = "Habilitar extensión PhantomShield"; ThemeManager.styleSwitch(this@MainActivity, this)
                         setOnCheckedChangeListener { _, enabled ->
                             dismiss()
-                            ExtensionManager.setEnabled(this@MainActivity, extension, enabled) { ok, message ->
+                            ExtensionManager.setEnabledFor(this@MainActivity, extension.id, enabled) { ok, message ->
                                 runOnUiThread {
                                     if (!ok) Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                                     TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
@@ -601,19 +613,19 @@ class MainActivity :
     }
 
     /** Botón de una extensión en el menú (null = añadir extensiones). */
-    private fun extensionTile(extension: org.mozilla.geckoview.WebExtension?, dismiss: () -> Unit): View {
+    private fun extensionTile(extension: ExtensionEntry?, dismiss: () -> Unit): View {
         val p = ThemeManager.palette(this)
         val d = resources.displayMetrics.density
         fun dp(value: Float) = (value * d).toInt()
-        val name = extension?.metaData?.name ?: "Añadir"
-        val badge = extension?.let { ExtensionManager.badge(it) }
+        val name = extension?.name ?: "Añadir"
+        val badge = extension?.let { ExtensionManager.badgeFor(it.id) }
         val icon = ImageView(this).apply {
             setImageResource(if (extension == null) R.drawable.ic_nav_add else R.drawable.ic_extension_placeholder)
             imageTintList = android.content.res.ColorStateList.valueOf(if (extension == null) p.muted else p.accent)
             setPadding(dp(9f), dp(9f), dp(9f), dp(9f))
             background = ThemeManager.rounded(this@MainActivity, if (extension == null) p.elevated else p.accentSoft, 14f, p.outline)
         }
-        if (extension != null) ExtensionManager.loadIcon(extension, dp(44f)) { bitmap ->
+        if (extension != null) ExtensionManager.loadIconFor(extension.id, dp(44f)) { bitmap ->
             if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
         }
         val square = android.widget.FrameLayout(this).apply {
@@ -637,8 +649,8 @@ class MainActivity :
             contentDescription = if (extension == null) "Añadir extensiones" else "Abrir $name" + (badge?.let { " · $it" } ?: "")
             setOnClickListener {
                 dismiss()
-                if (extension == null) openScreen(ExtensionStoreActivity::class.java)
-                else ExtensionManager.runAction(extension) { ok, message ->
+                if (extension == null) openScreen(ExtensionManager.storeScreen())
+                else ExtensionManager.runActionFor(extension.id) { ok, message ->
                     if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
                 }
             }
@@ -722,27 +734,22 @@ class MainActivity :
     /** Captura de la página visible, guardada como PNG en Descargas. */
     private fun saveScreenshot() {
         val tab = TabManager.activeTab() ?: return
-        if (BrowserPrefs.isNexoHome(tab.url) || geckoView.width <= 0 || geckoView.height <= 0) {
+        if (BrowserPrefs.isNexoHome(tab.url) || pageView.width <= 0 || pageView.height <= 0) {
             Toast.makeText(this, "Abre una página para capturarla", Toast.LENGTH_SHORT).show()
             return
         }
-        runCatching {
-            geckoView.capturePixels().accept(
-                { bitmap ->
-                    if (bitmap == null) {
-                        Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show()
-                    } else {
-                        DownloadStore.saveBitmap(this, bitmap, "Captura ${displayUrl(tab.url)}") { _, message ->
-                            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                        }
-                    }
-                },
-                { Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show() }
-            )
-        }.onFailure { Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show() }
+        engineView.capture { bitmap ->
+            if (bitmap == null) {
+                Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show()
+            } else {
+                DownloadStore.saveBitmap(this, bitmap, "Captura ${displayUrl(tab.url)}") { _, message ->
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
-    /** La página completa como PDF (motor de impresión de Gecko), en Descargas. */
+    /** La página completa como PDF (motor de impresión del motor web), en Descargas. */
     private fun savePageAsPdf() {
         val tab = TabManager.activeTab() ?: return
         val session = tab.session ?: return
@@ -750,31 +757,30 @@ class MainActivity :
             Toast.makeText(this, "Abre una página para guardarla", Toast.LENGTH_SHORT).show()
             return
         }
-        Toast.makeText(this, "Generando PDF…", Toast.LENGTH_SHORT).show()
         val name = FileNames.sanitize(tab.title.ifBlank { displayUrl(tab.url) }.take(80), "pagina") + ".pdf"
-        runCatching {
-            session.saveAsPdf().accept(
-                { stream ->
-                    if (stream == null) {
-                        Toast.makeText(this, "No se pudo generar el PDF", Toast.LENGTH_LONG).show()
-                    } else {
-                        DownloadStore.saveStream(this, stream, name, "application/pdf", tab.url) { _, message ->
-                            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                        }
-                    }
-                },
-                { error -> Toast.makeText(this, "No se pudo generar el PDF: ${error?.message ?: "error"}", Toast.LENGTH_LONG).show() }
-            )
-        }.onFailure { Toast.makeText(this, "Esta versión de Gecko no puede guardar PDF", Toast.LENGTH_LONG).show() }
+        // Motores sin PDF directo: diálogo del sistema con "Guardar como PDF".
+        suppressAutoPipOnce = true
+        if (session.printWithSystemDialog(this, name.removeSuffix(".pdf"))) return
+        suppressAutoPipOnce = false
+        Toast.makeText(this, "Generando PDF…", Toast.LENGTH_SHORT).show()
+        session.saveAsPdf { stream, error ->
+            when {
+                stream != null -> DownloadStore.saveStream(this, stream, name, "application/pdf", tab.url) { _, message ->
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+                error != null -> Toast.makeText(this, "No se pudo generar el PDF: ${error.message ?: "error"}", Toast.LENGTH_LONG).show()
+                else -> Toast.makeText(this, "No se pudo generar el PDF", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun openShieldPanel() {
-        val shield = ExtensionManager.actionableExtensions().firstOrNull { it.id == ExtensionManager.PHANTOMSHIELD_ID }
+        val shield = ExtensionManager.actionEntries().firstOrNull { it.id == ExtensionManager.PHANTOMSHIELD_ID }
         if (shield == null) {
             openScreen(ExtensionsActivity::class.java)
             return
         }
-        ExtensionManager.runAction(shield) { ok, message ->
+        ExtensionManager.runActionFor(shield.id) { ok, message ->
             if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
     }
@@ -801,23 +807,18 @@ class MainActivity :
             isInPictureInPictureMode ||
             startPage.visibility == View.VISIBLE ||
             (!force && BrowserMediaController.isPlaying(tab.id)) ||
-            geckoView.width <= 0 ||
-            geckoView.height <= 0
+            pageView.width <= 0 ||
+            pageView.height <= 0
         ) return
         val url = tab.url
-        runCatching {
-            geckoView.capturePixels().accept(
-                { bitmap ->
-                    if (bitmap == null) return@accept
-                    if (attachedSession === session && tab.session === session && tab.url == url) {
-                        TabPreviewStore.save(applicationContext, tab.id, bitmap)
-                        lastAutoPreview[tab.id] = url to android.os.SystemClock.elapsedRealtime()
-                    } else {
-                        bitmap.recycle()
-                    }
-                },
-                { _ -> Unit }
-            )
+        engineView.capture { bitmap ->
+            if (bitmap == null) return@capture
+            if (attachedSession === session && tab.session === session && tab.url == url) {
+                TabPreviewStore.save(applicationContext, tab.id, bitmap)
+                lastAutoPreview[tab.id] = url to android.os.SystemClock.elapsedRealtime()
+            } else {
+                bitmap.recycle()
+            }
         }
     }
 
@@ -826,11 +827,11 @@ class MainActivity :
      * siempre que cambia la página y, en la misma, como mucho una cada 30 s.
      */
     private fun scheduleIdlePreview(tab: BrowserTab) {
-        geckoView.removeCallbacks(idlePreview)
+        pageView.removeCallbacks(idlePreview)
         val (lastUrl, lastAt) = lastAutoPreview[tab.id] ?: ("" to 0L)
         val now = android.os.SystemClock.elapsedRealtime()
         if (lastUrl == tab.url && now - lastAt < 30_000L) return
-        geckoView.postDelayed(idlePreview, 1_200L)
+        pageView.postDelayed(idlePreview, 1_200L)
     }
 
     private fun showTabsDialog() {
@@ -839,7 +840,7 @@ class MainActivity :
     }
 
     /** Mantener pulsado un enlace o imagen: hoja con las acciones disponibles. */
-    override fun onContextElement(element: GeckoSession.ContentDelegate.ContextElement) {
+    override fun onContextElement(element: EngineContextElement) {
         val link = element.linkUri.orEmpty()
         val image = element.srcUri.orEmpty()
         if (link.isBlank() && image.isBlank()) return
@@ -956,7 +957,7 @@ class MainActivity :
         topBar.background = null
         navBar.background = null
         browserFrame.applyPalette(p.surface, p.accent, p.outlineVariant)
-        geckoView.setBackgroundColor(p.background)
+        pageView.setBackgroundColor(p.background)
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
         styleMiniPlayerChip()
@@ -1064,20 +1065,16 @@ class MainActivity :
         handleNavigationIntent(intent)
     }
 
-    override fun onActiveTabChanged(tab: BrowserTab, session: GeckoSession) {
+    override fun onActiveTabChanged(tab: BrowserTab, session: EngineSession) {
         if (attachedSession !== session) {
             hideFindBar()
             // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
             attachedSession?.let { LiveCaptions.stop(it) }
             // Un permiso pedido desde otra pestaña no se concede desde esta.
-            attachedSession?.let { SitePermissions.cancelFor(it) }
-            if (attachedSession != null) geckoView.releaseSession()
+            attachedSession?.let { SitePermissionPrompts.cancelFor(it) }
+            if (attachedSession != null) engineView.release()
             // Fondo del tema mientras la página pinta (evita el destello blanco).
-            runCatching {
-                session.compositorController.setClearColor(ThemeManager.palette(this).background)
-            }
-            geckoView.coverUntilFirstPaint(ThemeManager.palette(this).background)
-            geckoView.setSession(session)
+            engineView.attach(session, ThemeManager.palette(this).background)
             attachedSession = session
         }
         if (fullScreenActive != tab.isFullScreen) {
@@ -1191,7 +1188,7 @@ class MainActivity :
         if (!isInPictureInPictureMode) return
         val tab = TabManager.activeTab() ?: return
         val rect = BrowserMediaController.videoRect(tab.id) ?: return
-        if (!rect.intersect(0, 0, geckoView.width, geckoView.height)) return
+        if (!rect.intersect(0, 0, pageView.width, pageView.height)) return
         if (rect == current || rect.width() < 40 || rect.height() < 40) return
         pipCrop = rect
         applyPipCrop()
@@ -1235,9 +1232,9 @@ class MainActivity :
 
     private fun displayUrl(url: String): String {
         if (UrlSafety.scheme(url) == "moz-extension") {
-            val installedOptions = ExtensionManager.actionableExtensions().mapNotNull { candidate ->
-                val options = candidate.metaData.optionsPageUrl ?: return@mapNotNull null
-                val name = candidate.metaData.name ?: return@mapNotNull null
+            val installedOptions = ExtensionManager.actionEntries().mapNotNull { candidate ->
+                val options = candidate.optionsPageUrl ?: return@mapNotNull null
+                val name = candidate.name ?: return@mapNotNull null
                 options to name
             }
             return BrowserPagePresentation.extensionLabel(url, installedOptions) ?: "Página de extensión"
@@ -1276,7 +1273,7 @@ class MainActivity :
             TabManager.resumeActive()
             // La superficie de video se recrea al volver: el puente repara el reproductor si quedó congelado.
             val session = tab?.session
-            if (session != null && wasBackgrounded) geckoView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 250L)
+            if (session != null && wasBackgrounded) pageView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 250L)
         }
         wasBackgrounded = false
     }
@@ -1304,7 +1301,7 @@ class MainActivity :
         root.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
             LegacyImport.offerIfNeeded(this) {
-                GeckoRuntimeHolder.applyRuntimePrefs(this)
+                com.nexo.browser.engine.Engines.current.applySettings(this)
                 TabManager.reapplySettings()
                 recreate()
             }
@@ -1319,7 +1316,7 @@ class MainActivity :
         if (settingsFingerprint.isNotBlank() && settingsFingerprint != fingerprint()) {
             ThemeManager.applyWindow(this)
             applyTheme()
-            GeckoRuntimeHolder.applyRuntimePrefs(this)
+            com.nexo.browser.engine.Engines.current.applySettings(this)
             TabManager.reapplySettings()
             ExtensionManager.sendBrowserState(this)
             MediaPlaybackService.sync(this)
@@ -1330,7 +1327,7 @@ class MainActivity :
     override fun onStop() {
         if (MigrationMode.enabled(this)) { super.onStop(); return }
         // Sin captura aquí: al parar la superficie se destruye y la imagen sale en negro.
-        geckoView.removeCallbacks(idlePreview)
+        pageView.removeCallbacks(idlePreview)
 
         if (!isInPictureInPictureMode) {
             val tab = TabManager.activeTab()
@@ -1347,7 +1344,7 @@ class MainActivity :
              */
             if (backgroundPlaybackWasActive && BrowserPrefs.backgroundMedia(this) && tab != null) {
                 listOf(180L, 650L).forEach { delay ->
-                    geckoView.postDelayed(
+                    pageView.postDelayed(
                         { BrowserMediaController.resumeIfRecent(tab.id, 8_000L) },
                         delay
                     )
@@ -1416,7 +1413,7 @@ class MainActivity :
         refreshCaptionsUi()
     }
 
-    override fun onCaptionsChanged(session: GeckoSession) {
+    override fun onCaptionsChanged(session: EngineSession) {
         if (session !== attachedSession) return
         if (!captionRenderPending) {
             captionRenderPending = true
@@ -1545,7 +1542,7 @@ class MainActivity :
         if (isInPictureInPictureMode) return
         pendingPipEntry?.let { pending ->
             if (delayMs <= 0L) {
-                geckoView.removeCallbacks(pending)
+                pageView.removeCallbacks(pending)
                 pending.run()
             }
             return
@@ -1613,12 +1610,12 @@ class MainActivity :
          * Home / cambio de app: delay 0 para evitar carrera con onStop().
          */
         pendingPipEntry = enterPip
-        if (delayMs <= 0L) enterPip.run() else geckoView.postDelayed(enterPip, delayMs)
+        if (delayMs <= 0L) enterPip.run() else pageView.postDelayed(enterPip, delayMs)
     }
 
     private fun lockForNativePip(tab: BrowserTab): Boolean {
-        val w = geckoView.width
-        val h = geckoView.height
+        val w = pageView.width
+        val h = pageView.height
         if (w <= 0 || h <= 0) return false
 
         val rect = BrowserMediaController.videoRect(tab.id) ?: return false
@@ -1630,7 +1627,7 @@ class MainActivity :
         pipCrop = rect
         // Tamaño fijo: aunque la ventana se achique, Gecko sigue viendo la misma
         // vista y la página no recibe ningún "resize".
-        geckoView.layoutParams = android.widget.FrameLayout.LayoutParams(w, h)
+        pageView.layoutParams = android.widget.FrameLayout.LayoutParams(w, h)
         return true
     }
 
@@ -1642,22 +1639,22 @@ class MainActivity :
         if (fw <= 0f || fh <= 0f) return
 
         val scale = maxOf(fw / crop.width(), fh / crop.height())
-        geckoView.pivotX = 0f
-        geckoView.pivotY = 0f
-        geckoView.scaleX = scale
-        geckoView.scaleY = scale
-        geckoView.translationX = -crop.left * scale + (fw - crop.width() * scale) / 2f
-        geckoView.translationY = -crop.top * scale + (fh - crop.height() * scale) / 2f
+        pageView.pivotX = 0f
+        pageView.pivotY = 0f
+        pageView.scaleX = scale
+        pageView.scaleY = scale
+        pageView.translationX = -crop.left * scale + (fw - crop.width() * scale) / 2f
+        pageView.translationY = -crop.top * scale + (fh - crop.height() * scale) / 2f
     }
 
     private fun releaseNativePip() {
-        if (pipCrop == null && geckoView.scaleX == 1f && geckoView.translationY == 0f) return
+        if (pipCrop == null && pageView.scaleX == 1f && pageView.translationY == 0f) return
         pipCrop = null
-        geckoView.scaleX = 1f
-        geckoView.scaleY = 1f
-        geckoView.translationX = 0f
-        geckoView.translationY = 0f
-        geckoView.layoutParams = android.widget.FrameLayout.LayoutParams(
+        pageView.scaleX = 1f
+        pageView.scaleY = 1f
+        pageView.translationX = 0f
+        pageView.translationY = 0f
+        pageView.layoutParams = android.widget.FrameLayout.LayoutParams(
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT
         )
@@ -1671,14 +1668,14 @@ class MainActivity :
                 else pipAspectRatio(tabId)
             )
 
-        if (geckoView.width > 0 && geckoView.height > 0) {
+        if (pageView.width > 0 && pageView.height > 0) {
             // El hint debe ir en coordenadas de ventana: solo el video.
             val location = IntArray(2)
-            geckoView.getLocationInWindow(location)
+            pageView.getLocationInWindow(location)
             val hint = if (crop != null) {
                 Rect(crop).apply { offset(location[0], location[1]) }
             } else {
-                Rect().takeIf { geckoView.getGlobalVisibleRect(it) }
+                Rect().takeIf { pageView.getGlobalVisibleRect(it) }
             }
             hint?.let { builder.setSourceRectHint(it) }
         }
@@ -1845,13 +1842,13 @@ class MainActivity :
                 pipPlaybackWasActive = false
                 TabManager.resumeActive()
                 tab?.session?.let { session ->
-                    geckoView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 350L)
+                    pageView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 350L)
                 }
             }
         }
 
         runCatching {
-            attachedSession?.compositorController?.onPipModeChanged(isInPictureInPictureMode)
+            engineView.onPictureInPictureModeChanged(isInPictureInPictureMode)
         }
         applyChromeVisibility()
     }
@@ -1932,14 +1929,14 @@ class MainActivity :
         if (MigrationMode.enabled(this)) return
         // La Activity gestiona la rotación: Gecko debe enterarse para
         // actualizar screen.orientation y las media queries.
-        runCatching { GeckoRuntimeHolder.get(this).configurationChanged(newConfig) }
+        com.nexo.browser.engine.Engines.current.onConfigurationChanged(this, newConfig)
         ViewCompat.requestApplyInsets(findViewById(android.R.id.content))
         if (BrowserPrefs.isNexoHome(TabManager.activeTab()?.url)) startPage.render(TabManager.activeTab()?.isPrivate == true)
     }
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
-        pendingPipEntry?.let { geckoView.removeCallbacks(it) }
+        pendingPipEntry?.let { pageView.removeCallbacks(it) }
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
         BrowserMediaController.attach(null)
@@ -1951,11 +1948,11 @@ class MainActivity :
         filePickerCallback = null
         permissionCallbacks.values.forEach { it(false) }
         permissionCallbacks.clear()
-        geckoView.removeCallbacks(idlePreview)
+        pageView.removeCallbacks(idlePreview)
         captionView.removeCallbacks(captionHintExpiry)
         TabManager.attach(null)
         if (attachedSession != null) {
-            geckoView.releaseSession()
+            engineView.release()
             attachedSession = null
         }
         // No cerrar las GeckoSession al recrear o destruir solo la Activity.

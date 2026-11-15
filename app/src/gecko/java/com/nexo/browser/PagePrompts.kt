@@ -25,6 +25,9 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.gecko.GeckoEngine
+import com.nexo.browser.engine.gecko.gecko
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
@@ -60,7 +63,8 @@ object PagePrompts : PromptDelegate {
     private val popupNotified = WeakHashMap<GeckoSession, Boolean>()
 
     /** Una navegación nueva restablece los bloqueos de diálogos. */
-    fun onPageStart(session: GeckoSession) {
+    fun onPageStart(engineSession: EngineSession) {
+        val session = engineSession.gecko
         blockedDialogs.remove(session)
         recentDialogs.remove(session)
         popupNotified.remove(session)
@@ -129,7 +133,7 @@ object PagePrompts : PromptDelegate {
 
     /** Nombre del sitio que pide el diálogo; nunca el título que pone la página. */
     private fun origin(session: GeckoSession): String {
-        val url = TabManager.tabForSession(session)?.url.orEmpty()
+        val url = GeckoEngine.wrapperOf(session)?.let { TabManager.tabForSession(it) }?.url.orEmpty()
         val host = runCatching { Uri.parse(url).host }.getOrNull()
             ?.removePrefix("www.")
             ?.takeIf { it.isNotBlank() }
