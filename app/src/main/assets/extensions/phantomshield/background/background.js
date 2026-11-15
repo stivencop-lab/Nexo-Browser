@@ -10,6 +10,12 @@
   const listManager = globalThis.PhantomFilterListManager;
   const cosmetic = globalThis.PhantomCosmeticEngineInstance;
   const adDomains = globalThis.PhantomAdDomains;
+  const safety = globalThis.PhantomFunctionalSafety;
+
+  function learnedDomainBlocks(url, type, host) {
+    return adDomains && adDomains.isBlocked(host || hostOf(url)) &&
+      type !== 'media' && !safety.isProtectedUrl(url);
+  }
 
   const DEFAULT_SETTINGS = Object.freeze({
     adblockEnabled: true,
@@ -362,7 +368,7 @@
         // Ventana nueva hacia una red de "popunder" (reglas $popup de las listas o dominio
         // publicitario aprendido con la IA): se cierra sola.
         if (openedByPage && settings.popupBlockEnabled && engine && siteOfHost(hostOf(details.originUrl)) !== siteOfHost(parsedUrl.hostname) &&
-            (engine.shouldBlock(url, 'popup', details.originUrl, false) || (adDomains && adDomains.isBlocked(parsedUrl.hostname)))) {
+            (engine.shouldBlock(url, 'popup', details.originUrl, false) || learnedDomainBlocks(url, 'popup', parsedUrl.hostname))) {
           if (!details.incognito) engine.recordBlocked();
           countTabBlock(details.tabId);
           if (!details.incognito) scheduleCountPersist();
@@ -380,7 +386,7 @@
       }
 
       // Dominios publicitarios aprendidos: solo recursos de terceros (nunca los del propio sitio).
-      if (adDomains && adDomains.isBlocked(parsedUrl.hostname) && siteOfHost(parsedUrl.hostname) !== siteOfHost(topHost)) {
+      if (learnedDomainBlocks(url, details.type, parsedUrl.hostname) && siteOfHost(parsedUrl.hostname) !== siteOfHost(topHost)) {
         return block();
       }
 
@@ -450,7 +456,7 @@
       delete copy.localFrame;
       if (engine && Array.isArray(copy.signals) && !copy.signals.includes('ad-network') && urls.some(function(url) {
         return typeof url === 'string' && url.length <= 512 && /^https?:\/\//.test(url) &&
-          (engine.shouldBlock(url, 'sub_frame', documentUrl, false) || (adDomains && adDomains.isBlocked(hostOf(url))));
+          (engine.shouldBlock(url, 'sub_frame', documentUrl, false) || learnedDomainBlocks(url, 'sub_frame'));
       })) {
         copy.signals = copy.signals.concat('ad-network');
       }

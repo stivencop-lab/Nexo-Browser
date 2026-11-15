@@ -1,11 +1,12 @@
 # Nexo Browser
 
-> **Versión de desarrollo: v0.30.1** · `versionCode 60` · Paquete `com.nexo.browser`
+> **Versión de desarrollo: v0.30.2** · `versionCode 61` · Paquete `com.nexo.browser`
 >
 > La actualización está preparada para revisión; el APK publicado sigue disponible en
 > [la última release](https://github.com/stivencop414-bot/NavegadorGecko/releases/latest).
 > Consulta la [auditoría de interfaz de 0.30.0](docs/AUDITORIA-UI-0.30.0.md) y las
-> [mejoras de seguridad, recursos y organización de 0.30.1](docs/AUDITORIA-SKILLS-2-3-4.md).
+> [mejoras de seguridad, recursos y organización de 0.30.1](docs/AUDITORIA-SKILLS-2-3-4.md), y la
+> [revisión de Kotlin/XML y PhantomShield de 0.30.2](docs/AUDITORIA-BROWSER-SHIELD.md).
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
@@ -79,7 +80,7 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
   digitales, limpieza de parámetros de rastreo, borrar datos al salir y depuración remota.
 - Limpieza de datos.
 - Administrador de extensiones.
-- PhantomShield 9.2.0 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
+- PhantomShield 9.2.1 integrado: bloqueo de red, ocultación con reglas de EasyList/uBlock,
   eliminación de anuncios de YouTube, contadores reales y controles por sitio. IA opcional
   (tu propia API) para los anuncios que las reglas no reconocen; las señales inequívocas se
   resuelven en el dispositivo sin gastar tokens y el panel muestra lo revisado/ocultado en cada página.
@@ -110,17 +111,17 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 
 ## APK disponible
 
-La versión estable actual es **Nexo Browser v0.29.3** (`versionCode 56`) para Android, publicada desde `main` y firmada con la clave persistente del proyecto. El paquete de la aplicación es `com.nexo.browser`.
+La versión estable actual es **Nexo Browser v0.30.1** (`versionCode 60`) para Android, publicada desde `main` y firmada con la clave persistente del proyecto. El paquete de la aplicación es `com.nexo.browser`.
 
-- [Descargar APK arm64-v8a (recomendado para la mayoría de teléfonos)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.29.3/Nexo-v0.29.3-arm64-v8a.apk)
-- [Descargar APK armeabi-v7a (teléfonos Android de 32 bits)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.29.3/Nexo-v0.29.3-armeabi-v7a.apk)
-- [Descargar SHA256SUMS.txt](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.29.3/SHA256SUMS.txt)
-- [Ver release v0.29.3](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.29.3)
+- [Descargar APK arm64-v8a (recomendado para la mayoría de teléfonos)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.30.1/Nexo-v0.30.1-arm64-v8a.apk)
+- [Descargar APK armeabi-v7a (teléfonos Android de 32 bits)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.30.1/Nexo-v0.30.1-armeabi-v7a.apk)
+- [Descargar SHA256SUMS.txt](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.30.1/SHA256SUMS.txt)
+- [Ver release v0.30.1](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.30.1)
 
 Hashes SHA-256 publicados:
 
-- `Nexo-v0.29.3-arm64-v8a.apk`: `3baac7aace118915c0be2ea1909b0518215782d5683c9aeb9517c50a6ab6c065`
-- `Nexo-v0.29.3-armeabi-v7a.apk`: `a8d5732edaf9156b61b7b56c557a9061dc2c3fa6ef673c261cd45dfbe55ecc4f`
+- `Nexo-v0.30.1-arm64-v8a.apk`: `45d4fe9aa6da49f3d8d500482680e2cd47ba1c5127c4c913a72dabce364b198b`
+- `Nexo-v0.30.1-armeabi-v7a.apk`: `3f6deb73d22243d3a2649980f21cdc6ec3e38a3b9f0445cd9939bfa92a2eaf86`
 
 ## Cambios recientes de estabilidad
 

@@ -74,13 +74,21 @@ async function aiPage(visible = true) {
   let id = 0, walks = 0;
   const observers = [], timers = new Map(), nodes = [], messages = [];
   class Element {
-    constructor(tag = 'DIV') { this.tagName = tag; this.isConnected = true; this.className = 'ad-banner'; this.id = ''; }
-    closest() { return null; } querySelector() { return null; } querySelectorAll() { return []; }
+    constructor(tag = 'DIV', attrs = {}) {
+      this.tagName = tag; this.isConnected = true; this.className = 'ad-banner'; this.id = '';
+      this.attrs = attrs; this.frames = []; this.links = [];
+    }
+    closest() { return null; }
+    querySelector(selector) { return selector === 'iframe[src]' ? this.frames[0] || null : null; }
+    querySelectorAll(selector) {
+      if (selector === 'iframe[src]') return this.frames;
+      return selector === 'a[href]' ? this.links : [];
+    }
     contains(value) { return value === this; }
     getBoundingClientRect() { return { width: 100, height: 50 }; }
-    matches() { return this.tagName === 'DIV'; }
+    matches() { return ['DIV', 'IFRAME', 'A'].includes(this.tagName); }
     hasAttribute(name) { return name === 'data-ad-slot'; }
-    getAttribute() { return ''; }
+    getAttribute(name) { return this.attrs[name] || ''; }
   }
   const document = new EventTarget();
   Object.assign(document, { body: new Element('BODY'), activeElement: {}, visibilityState: visible ? 'visible' : 'hidden',
@@ -91,7 +99,7 @@ async function aiPage(visible = true) {
       { ok: true, decisions: request.candidates.map(x => ({ id: x.id, hide: false })) }
   }, storage: { onChanged: { addListener() {} } } };
   const window = new EventTarget(); window.top = window;
-  vm.runInNewContext(fs.readFileSync(path.join(content, 'ai-detector.js'), 'utf8'), {
+  const context = vm.createContext({
     document, window, browser, Element, URL, innerWidth: 1000, innerHeight: 800, NodeFilter: { SHOW_ELEMENT: 1, SHOW_TEXT: 4 },
     location: { hostname: 'news.example.com', href: 'https://news.example.com/' },
     getComputedStyle: () => ({ display: 'block' }),
@@ -101,13 +109,16 @@ async function aiPage(visible = true) {
       observe(target) { this.target = target; this.active = true; } disconnect() { this.active = false; }
     }
   });
+  for (const file of ['../data/functional-safety.js', 'ai-detector.js']) {
+    vm.runInContext(fs.readFileSync(path.join(content, file), 'utf8'), context);
+  }
   await Promise.resolve(); await Promise.resolve();
-  return { active: () => observers.filter(x => x.active && x.target === document.body).length,
+  return { Element, active: () => observers.filter(x => x.active && x.target === document.body).length,
     walks: () => walks, queued: () => timers.size,
     visibility: (value, notify = true) => { document.visibilityState = value; if (notify) document.dispatchEvent(new Event('visibilitychange')); },
     focus: () => window.dispatchEvent(new Event('focus')),
     mutate: () => observers.filter(x => x.active && x.target === document.body).forEach(x => x.fn([])),
-    scan: async () => { nodes.push(new Element()); return messages[0]({ type: 'AI_SCAN' }, { id: 'phantom' }); }
+    scan: async (element = new Element()) => { nodes.push(element); return messages[0]({ type: 'AI_SCAN' }, { id: 'phantom' }); }
   };
 }
 
@@ -137,6 +148,41 @@ test('AI scheduler checks hidden state independently and focus wakes it without 
   assert.equal(h.active(), 0); assert.equal(h.queued(), 0);
   h.visibility('visible', false); h.focus();
   assert.equal(h.active(), 1); assert.equal(h.queued(), 1);
+});
+
+test('AI does not classify functional iframes or subtitle links even with ad attributes', async () => {
+  const h = await aiPage();
+  for (const src of ['https://cinema.other.example/embed/abc', 'https://tenant.auth0.com/widget',
+    'https://js.hcaptcha.com/widget', 'https://pay.other.example/checkout/session']) {
+    const result = await h.scan(new h.Element('IFRAME', { src }));
+    assert.equal(result.analyzed, 0, src);
+  }
+  assert.equal((await h.scan(new h.Element('A', { href: '/subtitles/movie.vtt?adurl=x' }))).analyzed, 0);
+  assert.equal((await h.scan()).analyzed, 1, 'ordinary ad candidates remain classifiable');
+});
+
+test('AI checks functional sibling frames and ambiguous containers before sending them to the provider', async () => {
+  const h = await aiPage();
+  const mixed = new h.Element();
+  mixed.frames = [new h.Element('IFRAME', { src: 'https://ads.other.example/frame' }),
+    new h.Element('IFRAME', { src: '/player/abc' })];
+  assert.equal((await h.scan(mixed)).analyzed, 0);
+  const crowded = new h.Element();
+  crowded.frames = Array.from({ length: 17 }, () => new h.Element('IFRAME', { src: 'https://unknown.other.example/frame' }));
+  assert.equal((await h.scan(crowded)).analyzed, 0);
+  assert.equal((await h.scan()).analyzed, 1);
+});
+
+test('functional links beyond the signal sample still veto AI and large link collections remain bounded', async () => {
+  const h = await aiPage();
+  const card = new h.Element();
+  card.links = Array.from({ length: 8 }, () => new h.Element('A', { href: 'https://shop.other.example/item' }));
+  card.links.push(new h.Element('A', { href: 'https://cdn.other.example/manifest.mpd' }));
+  assert.equal((await h.scan(card)).analyzed, 0);
+  const large = new h.Element();
+  large.links = Array.from({ length: 33 }, () => new h.Element('A', { href: 'https://shop.other.example/item' }));
+  assert.equal((await h.scan(large)).analyzed, 0);
+  assert.equal((await h.scan()).analyzed, 1);
 });
 
 test('actual Nexo visibility protection and Phantom monitoring coexist without a stuck background scanner', () => {

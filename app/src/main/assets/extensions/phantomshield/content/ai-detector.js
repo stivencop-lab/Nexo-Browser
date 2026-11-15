@@ -4,6 +4,7 @@
   if (window.top !== window) return;
   // YouTube ya se limpia con reglas locales; analizar su DOM solo restaría fluidez al video.
   if (/(^|\.)(youtube\.com|youtube-nocookie\.com)$/.test(location.hostname)) return;
+  const safety = globalThis.PhantomFunctionalSafety;
   let enabled = false;
   let pausedForMemory = false;
   let rich = false;
@@ -111,8 +112,15 @@
   }
   function describe(element) {
     if (element.closest('form, nav, header, [role="dialog"], [contenteditable="true"], #phantomshield-ad-bait, #phantomshield-ai-toast, #nexo-pip-mask, .nexo-pip-video, .nexo-pip-ancestor') ||
-        element.querySelector('input, textarea, select, video, audio, canvas, [contenteditable="true"]') ||
+        /^(?:VIDEO|AUDIO|CANVAS|OBJECT|EMBED)$/.test(element.tagName) ||
+        element.closest('.video-js, .jwplayer, .plyr, .flowplayer, .artplayer, .dplayer') ||
+        element.querySelector('input, textarea, select, video, audio, canvas, object, embed, .video-js, .jwplayer, .plyr, .flowplayer, .artplayer, .dplayer, [contenteditable="true"]') ||
         element.contains(document.activeElement) || hidden.has(element)) return null;
+    // El vídeo o formulario vive dentro de otro documento: no basta con buscar <video> en este DOM.
+    // Revisar todos los marcos evita que un anuncio anterior oculte un reproductor hermano.
+    const frames = element.tagName === 'IFRAME' ? [element] : element.querySelectorAll('iframe[src]');
+    if (frames.length > 16 || Array.from(frames).some(frame =>
+      safety.isProtectedUrl(frame.getAttribute('src') || '', location.href))) return null;
     const rect = element.getBoundingClientRect();
     if (rect.width < 20 || rect.height < 10 || rect.width * rect.height > innerWidth * innerHeight * 0.7 ||
         getComputedStyle(element).display === 'none') return null;
@@ -152,7 +160,11 @@
     const adSized = isAdSize(rect.width, rect.height);
     if (adSized && (signals.length || element.tagName === 'IFRAME')) signals.push('ad-size');
 
-    const anchors = element.tagName === 'A' ? [element] : Array.from(element.querySelectorAll('a[href]')).slice(0, 8);
+    const links = element.tagName === 'A' ? [element] : element.querySelectorAll('a[href]');
+    if (links.length > 32) return null;
+    const allAnchors = Array.from(links);
+    if (allAnchors.some(anchor => safety.isProtectedUrl(anchor.getAttribute('href') || '', location.href))) return null;
+    const anchors = allAnchors.slice(0, 8);
     const linkHosts = [];
     const externalUrls = [];
     let adLink = false;
