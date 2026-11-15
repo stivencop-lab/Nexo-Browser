@@ -877,7 +877,6 @@ object LiveCaptions {
                 // Android no captura. Se reabre su audio una vez (un salto al mismo punto).
                 if (stream.deviceAudio && !stream.deviceNudged) {
                     stream.deviceNudged = true
-                    ExtensionManager.nudgeMedia(session)
                 }
                 deviceMessage(stream, SystemClock.uptimeMillis())
             }
