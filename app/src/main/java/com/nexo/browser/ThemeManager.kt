@@ -261,6 +261,7 @@ object ThemeManager {
         button.imageTintList = tint(if (active) p.accent else p.text)
         button.backgroundTintList = null
         button.stateListAnimator = null
+        button.alpha = if (button.isEnabled) 1f else 0.45f
         button.elevation = 0f
     }
 

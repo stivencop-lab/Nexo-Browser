@@ -28,6 +28,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -39,6 +40,8 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
 
@@ -139,6 +142,9 @@ class MainActivity :
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // El dock y el campo de dirección deben reacomodarse encima del IME.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        configureSystemInsets()
         // Historial e índice de sugerencias listos sin leer disco en el hilo principal.
         HistoryStore.prewarm(this)
         PerfLog.attach(this)
@@ -184,6 +190,29 @@ class MainActivity :
         // Al recrear la Activity (rotación, cambio de tema) no repetir la
         // navegación del intent original.
         if (savedInstanceState == null) handleNavigationIntent(intent)
+    }
+
+    /**
+     * Target SDK 35 dibuja la ventana bajo las barras del sistema. El dock
+     * contiene controles interactivos, así que no puede quedar debajo de la
+     * barra de navegación ni del teclado: se desplaza con el inset inferior.
+     */
+    private fun configureSystemInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.rootView)) { _, insets ->
+            val systemBottom = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+            val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val dock = findViewById<GestureDock>(R.id.browserDock)
+            (dock.layoutParams as? android.widget.LinearLayout.LayoutParams)?.let { params ->
+                val base = (8 * resources.displayMetrics.density).toInt()
+                val bottom = maxOf(base, systemBottom, imeBottom)
+                if (params.bottomMargin != bottom) {
+                    params.bottomMargin = bottom
+                    dock.layoutParams = params
+                }
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(findViewById(R.id.rootView))
     }
 
     private fun bindViews() {
