@@ -34,7 +34,7 @@ internal object ChromiumProfiles {
         if (!supported()) return
         val store = ProfileStore.getInstance()
         store.allProfileNames
-            .filter { it != Profile.DEFAULT_PROFILE_NAME }
+            .filter { it.startsWith(PRIVATE_PREFIX) || it.startsWith(BURNER_PREFIX) }
             .forEach { name -> runCatching { store.deleteProfile(name) } }
     }
 
