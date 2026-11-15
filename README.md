@@ -179,7 +179,7 @@ Requisitos: JDK 21, Gradle 9.8.2 y Android SDK con `platforms;android-37.2` y
 Hay dos variantes de motor (ver [migración a Chromium WebView](docs/MIGRACION-CHROMIUM-WEBVIEW.md)):
 
 - **`gecko`**: GeckoView, la versión publicada (`com.nexo.browser`).
-- **`chromium`**: Android System WebView, en migración (`com.nexo.browser.chromium`, se instala junto a la publicada).
+- **`chromium`**: Android System WebView, en migración. Mismo paquete (`com.nexo.browser`): firmada con la clave de release se instala como actualización de la versión Gecko y conserva sus datos. Con `-PnexoSideBySide` se instala aparte (`com.nexo.browser.chromium`).
 
 ```bash
 node --test app/src/test/js/*.test.cjs  # regresiones de extensiones y mini reproductor

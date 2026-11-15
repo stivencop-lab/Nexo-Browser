@@ -26,6 +26,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -40,6 +41,7 @@ import com.nexo.browser.TabRouting
 import com.nexo.browser.engine.EngineContextElement
 import com.nexo.browser.engine.EngineFinder
 import com.nexo.browser.engine.EngineLoadRequest
+import com.nexo.browser.shield.PhantomShield
 import com.nexo.browser.engine.EngineObserver
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.EngineSessionState
@@ -71,6 +73,9 @@ class ChromiumEngineSession internal constructor(
     internal val profileName: String? = ChromiumProfiles.nameFor(params.isPrivate, params.contextId)
 
     internal val webView: NexoWebView = adopted ?: ChromiumEngine.newWebView(appContext, profileName)
+
+    /** PhantomShield de esta pestaña (página principal y bloqueos). */
+    internal val shield: PhantomShield.ShieldTab = PhantomShield.newTab(params.isPrivate)
 
     override var observer: EngineObserver? = null
 
@@ -114,6 +119,8 @@ class ChromiumEngineSession internal constructor(
 
     init {
         applySettings()
+        // Scripts de PhantomShield antes de la primera navegación (solo valen para las siguientes).
+        PhantomShield.attach(webView, shield)
         webView.webViewClient = Client()
         webView.webChromeClient = ChromeClient()
         webView.setFindListener { ordinal, count, done ->
@@ -182,7 +189,7 @@ class ChromiumEngineSession internal constructor(
 
     override fun loadUrl(url: String) {
         heldUrl = null
-        webView.loadUrl(upgrade(url))
+        webView.loadUrl(PhantomShield.cleanNavigation(upgrade(url)))
     }
 
     override fun reload(bypassCache: Boolean) {
@@ -347,11 +354,17 @@ class ChromiumEngineSession internal constructor(
                 return true
             }
             val engineRequest = EngineLoadRequest(url, request.hasGesture(), isDirectNavigation = false, opensNewWindow = false)
-            return when (observer.onLoadRequest(this@ChromiumEngineSession, engineRequest) { allow -> if (allow && !closed) view.loadUrl(url) }) {
-                LoadDecision.DEFAULT, LoadDecision.ALLOW -> false
+            val cleaned = PhantomShield.cleanNavigation(url)
+            return when (observer.onLoadRequest(this@ChromiumEngineSession, engineRequest) { allow -> if (allow && !closed) view.loadUrl(cleaned) }) {
+                // Sin parámetros de rastreo (utm_*, gclid, fbclid…): se carga la dirección limpia.
+                LoadDecision.DEFAULT, LoadDecision.ALLOW -> if (cleaned != url) { view.loadUrl(cleaned); true } else false
                 LoadDecision.DENY, LoadDecision.PENDING -> true
             }
         }
+
+        /** Hilo de red de WebView: reglas de PhantomShield. */
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            PhantomShield.intercept(shield, request)
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             mainFrameError = false
@@ -360,6 +373,7 @@ class ChromiumEngineSession internal constructor(
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            shield.onLocation(url)
             val observer = observer ?: return
             observer.onLocationChange(this@ChromiumEngineSession, url, false)
             observer.onCanGoBack(this@ChromiumEngineSession, view.canGoBack())
@@ -515,6 +529,13 @@ private class PendingWindow(
                 view.stopLoading()
                 decide(url)
             }
+
+            /** El proceso de la ventana pendiente terminó: se descarta sin cerrar Nexo. */
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                decided = true
+                destroy()
+                return true
+            }
         }
         main.postDelayed(timeout, 1_000L)
     }
@@ -524,6 +545,11 @@ private class PendingWindow(
         decided = true
         main.removeCallbacks(timeout)
         val observer = opener.observer ?: return destroy()
+        // Ventana hacia una red de "popunder" (listas $popup o redes de ventanas emergentes).
+        if (PhantomShield.blocksPopup(opener.shield, url)) {
+            PagePrompts.popupBlocked(opener)
+            return destroy()
+        }
         val request = EngineLoadRequest(url, hasUserGesture = true, isDirectNavigation = false, opensNewWindow = true)
         when (observer.onLoadRequest(opener, request) { allow -> if (allow) adopt(url) else destroy() }) {
             LoadDecision.DENY -> destroy()

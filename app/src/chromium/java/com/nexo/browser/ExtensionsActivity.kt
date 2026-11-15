@@ -44,7 +44,12 @@ class ExtensionsActivity : Activity() {
         findViewById<ListView>(R.id.listView).adapter = ThemeManager.rowsAdapter(
             this,
             listOf(
-                ListRow("PhantomShield", "Bloqueo de anuncios y rastreadores con motor nativo", "Próxima fase de Nexo Chromium", "3"),
+                ListRow(
+                    "PhantomShield",
+                    "Bloqueo de anuncios y rastreadores con motor nativo",
+                    if (com.nexo.browser.shield.PhantomShield.isEnabled()) "Activo · se configura desde el escudo del menú" else "Desactivado desde el menú",
+                    "✓"
+                ),
                 ListRow("Puente de Nexo", "Subtítulos en vivo, mini video y modo nocturno de páginas", "Próxima fase de Nexo Chromium", "4"),
                 ListRow(
                     "Extensiones de escritorio",

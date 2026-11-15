@@ -17,6 +17,7 @@ import com.nexo.browser.engine.DownloadFetcher
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.EngineSessionState
 import com.nexo.browser.engine.SessionParams
+import com.nexo.browser.shield.PhantomShield
 
 /**
  * Motor Chromium: Android System WebView con `androidx.webkit`. Cada pestaña
@@ -40,6 +41,7 @@ object ChromiumEngine : BrowserEngine {
         runCatching { ChromiumProfiles.purgeStale() }
         // Actualización desde Nexo con Gecko: sus cookies antes de abrir la primera pestaña.
         GeckoProfileImport.runOnce(context)
+        PhantomShield.initialize(context)
         applySettings(context)
     }
 

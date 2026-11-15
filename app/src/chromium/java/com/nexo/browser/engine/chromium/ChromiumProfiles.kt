@@ -51,7 +51,9 @@ internal object ChromiumProfiles {
     /** Debe llamarse en el hilo principal. */
     fun profile(name: String): Profile =
         ProfileStore.getInstance().getOrCreateProfile(name).also { profile ->
-            cookieManagers[name] = profile.cookieManager
+            if (cookieManagers.put(name, profile.cookieManager) == null) {
+                com.nexo.browser.shield.PhantomShield.attachProfileWorkers(profile.serviceWorkerController)
+            }
         }
 
     /**

@@ -411,7 +411,7 @@ Funciona en la variante chromium (pendiente de probar en teléfono):
 
 Pendiente en la variante chromium (fases siguientes):
 
-- Fase 3: PhantomShield nativo (sin bloqueo de anuncios todavía; `setTrackingProtection` no hace nada).
+- ~~Fase 3: PhantomShield nativo~~ → hecho, ver [§12](#12-estado-de-la-fase-3).
 - Fase 4: puente de páginas (subtítulos, mini video con recorte, modo nocturno, controles
   multimedia y reproducción en segundo plano), traducción en la nube, proxy global, retardo,
   ubicación simulada y variación de huella. Hasta entonces una pestaña con proxy **no se abre**
@@ -425,10 +425,71 @@ guarda como archivo una respuesta de error HTTP) y los permisos usan `SitePermis
 
 Prueba en teléfono (lista mínima antes de publicar la variante chromium):
 
-1. Instalar `app-chromium-*-debug.apk` junto a la versión publicada.
+1. Instalar la APK chromium firmada con la clave de release encima de la versión publicada
+   (o `-PnexoSideBySide` para tenerla aparte).
 2. Navegar, volver atrás, recargar, cerrar Nexo y comprobar que las pestañas se restauran.
 3. Pestaña privada: iniciar sesión, cerrar todas las privadas y comprobar que la sesión no sigue.
 4. Burner con un WebView sin `MULTI_PROFILE` (Android System WebView antiguo): debe avisar.
 5. Inicio de sesión de Google o GitHub por ventana emergente (`window.opener`).
 6. Video a pantalla completa, subir un archivo, cámara en una videollamada, descargar un archivo grande.
 7. Buscar en la página, captura de pantalla y "Guardar como PDF".
+
+## 12. Estado de la fase 3
+
+### 12.1 Actualizar de Gecko a Chromium sin perder datos
+
+La variante `chromium` usa el mismo paquete (`com.nexo.browser`). Firmada con la clave de release
+se instala **como actualización** de la versión Gecko:
+
+| Dato | Qué pasa |
+| --- | --- |
+| Historial, accesos rápidos, pestañas normales, ajustes, claves de servicios (Keystore) | Se conservan: son datos de Nexo, no del motor |
+| Estado atrás/adelante de cada pestaña | El formato de Gecko no sirve en WebView: la pestaña recarga su URL (y al revés) |
+| Cookies de pestañas normales (sesiones iniciadas) | `GeckoProfileImport` las copia una vez de `cookies.sqlite` al perfil de WebView, antes de abrir pestañas (caducidad en s o ms, `Domain`, `Secure`, `HttpOnly`, `SameSite`, prefijos `__Host-`/`__Secure-`, máximo 400 días) |
+| Cookies privadas, Burner o particionadas | No se copian (`originAttributes` con valor) |
+| localStorage/IndexedDB de los sitios, extensiones externas, ajustes de PhantomShield guardados por Gecko | No se pueden trasladar a WebView. Se avisa una vez al abrir |
+| Perfil de Gecko en disco | Se conserva 30 días (por si se vuelve a instalar la versión Gecko) y luego se borra |
+
+`-PnexoSideBySide` vuelve a instalar la variante aparte (`com.nexo.browser.chromium`) para probarla.
+
+### 12.2 PhantomShield nativo
+
+| Pieza de la extensión | En Chromium |
+| --- | --- |
+| `network-engine.js`, `filter-lists.js`, `cosmetic-engine.js` | Traducidos a Kotlin (`shield/NetworkEngine.kt`, `FilterLists.kt`, `CosmeticEngine.kt`). Las listas incluidas se leen de los mismos archivos `data/*.js` sin ejecutar JavaScript |
+| `onBeforeRequest` (YouTube, sustitutos, ventanas emergentes, parámetros de rastreo) | `ShieldPolicy.kt` en `shouldInterceptRequest` de cada pestaña y en los service workers (perfil normal y aislados). Los parámetros `utm_*`, `gclid`, `fbclid`… se quitan al navegar |
+| `$popup` y redes de ventanas emergentes | En `PendingWindow`: la ventana no llega a abrirse y se avisa |
+| `updater.js` | Kotlin con OkHttp: cada 24 h, mismos espejos, 15 MB y 20 s por lista, sin páginas HTML; resultados con las mismas claves (`phantom_update_results`…) |
+| `storage.local` | `ShieldStore` (JSON privado; las listas en archivos aparte) |
+| `content-script.js`, `cosmetic-filter.js`, `heuristic-vision.js` | Sin cambios, con `phantom-shim.js` (`browser.runtime/storage/tabs` mínimos) en un **mundo aislado** cuando el WebView lo admite (`JS_INJECTION_IN_FRAME_AND_WORLD`); si no, en el de la página |
+| `page-hooks.js` (MAIN) | Sin cambios, `addDocumentStartJavaScript` en todos los marcos |
+| `tabs.insertCSS` | No existe en WebView: la extensión ya usa su ruta `inline` (`injected: false`) |
+| Popup | El mismo `popup/popup.html` en una hoja, servido desde los recursos en `https://phantomshield.nexo.invalid` (solo dentro de ese WebView, sin red) |
+| Escudo del menú, interruptor, insignia por pestaña | `ExtensionManager` de Chromium sobre `PhantomShield` |
+
+Lo que puede pedir cada lado del puente lo decide Kotlin según el origen real (`sourceOrigin`):
+las páginas solo leen los tres ajustes de bloqueo, su estado y sus selectores; `POPUP_BLOCKED`
+cuenta como mucho uno por segundo. Estadísticas, ajustes, listas y recarga solo desde el panel.
+
+Diferencias con Gecko que hay que asumir:
+
+- WebView no dice el tipo de recurso: se deduce de `Sec-Fetch-Dest`, `Accept` y la extensión. Si
+  no se puede, las reglas que dependen del tipo (`$script`, `$~image`…) **no** se aplican
+  (más vale no bloquear que romper); las de dominio y patrón sí.
+- El documento de una petición es la página principal: `domain=` dentro de iframes es menos preciso.
+- WebSocket no pasa por `shouldInterceptRequest`.
+- Pendiente: IA (clasificador, memoria, dominios aprendidos), parcheador anti-bloqueo
+  (`filterResponseData`) y página de opciones. El panel lo explica al tocar esas opciones.
+
+Pruebas: `ShieldParityTest` (17 casos de `phantom-blocking.test.cjs`; mismos totales de reglas
+que el motor JS: 322 de red y 113 cosméticas con la lista de prueba), `GeckoCookiesTest` (8) y
+`phantom-chromium-shim.test.cjs` (el shim con el `content-script.js` real).
+
+Prueba en teléfono, además de la lista de §11:
+
+1. Instalar la APK chromium firmada encima de Nexo Gecko: historial, accesos, pestañas y
+   sesiones iniciadas siguen ahí; aparece el aviso una vez.
+2. Una página con anuncios (periódico): el escudo cuenta bloqueos y no quedan huecos.
+3. YouTube en m.youtube.com: sin anuncios antes ni durante el video.
+4. Panel del escudo: pausar el sitio recarga sin bloqueo; «Actualizar listas» descarga las 6.
+5. Un enlace con `?utm_source=` llega sin el parámetro.
