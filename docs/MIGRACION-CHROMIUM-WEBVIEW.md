@@ -1,8 +1,7 @@
 # Auditoría y plan: migración de Nexo a Chromium WebView
 
-> Estado: **propuesta, pendiente de decisiones** (ver [§7](#7-decisiones-pendientes)).
+> Estado: **decisiones tomadas; fase 1 implementada** (ver [§7](#7-decisiones) y [§10](#10-estado-de-la-fase-1)).
 > Base revisada: `main` en v0.30.2 (`versionCode 61`), commit `9bcb1ca`.
-> Nada de este documento cambia todavía el código de la app.
 
 ## 1. Resumen
 
@@ -10,9 +9,9 @@
   un APK universal estimado de menos de 10 MB, sin `libxul.so` ni división por ABI), arranque en
   frío y compatibilidad web, pero **no es 1:1**. Hay cuatro funciones que Android WebView no
   ofrece y que requieren decisión de producto antes de empezar:
-  1. tienda AMO e instalación de XPI de terceros;
-  2. proxy SOCKS5/HTTP **por pestaña** (WebView solo admite proxy para toda la app);
-  3. traducción local de Gecko (Firefox Translations);
+  1. tienda AMO e instalación de XPI de terceros → **runtime de extensiones propio** ([§9](#9-runtime-de-extensiones-de-nexo-nxr));
+  2. proxy SOCKS5/HTTP **por pestaña** (WebView solo admite proxy para toda la app) → **proxy global**;
+  3. traducción local de Gecko (Firefox Translations) → **traducción en la nube** con los proveedores ya configurados;
   4. DNS sobre HTTPS configurable, ETP de Gecko, protección de huellas y aislamiento total de
      cookies (FPI/TCP).
 - La *skill* entregada (`Chromium_WebView_Migration_Master_Skill.md`, v4.0.0) sirve como
@@ -151,8 +150,8 @@ Leyenda: ✅ equivalente directo · 🟡 parcial / con trabajo · ❌ sin equiva
 | `GeckoSession` + `GeckoView` | Un `WebView` por pestaña viva, reasignado al marco del navegador | ✅ |
 | Sesiones LRU (`trimSessions`, `onTrimMemory`) | Destruir WebView y guardar `saveState(Bundle)` | ✅ |
 | `SessionState` persistido entre reinicios (`TabStore`) | `saveState` no está pensado para persistir en disco | 🟡 guardar URL + lista atrás/adelante (`copyBackForwardList`) y restaurar la URL |
-| `usePrivateMode` | `ProfileStore` + `WebViewCompat.setProfile` (`MULTI_PROFILE`) | 🟡 🔎 versión mínima de WebView |
-| `contextId` (Burner) | Un perfil por identidad Burner, borrado al cerrar su última pestaña | 🟡 mismo requisito |
+| `usePrivateMode` | `ProfileStore` + `WebViewCompat.setProfile` (`MULTI_PROFILE`) con **perfiles rotativos** (ver §8) | 🟡 |
+| `contextId` (Burner) | Un perfil por identidad Burner; al cerrar su última pestaña se vacían cookies y almacenamiento y el perfil se borra en el siguiente arranque | 🟡 |
 | `onCrash`/`onKill` | `onRenderProcessGone` (`didCrash()`), recrear todas las afectadas | ✅ |
 | `setActive`/`setPriorityHint`/`setFocused` | `onPause/onResume`, `setRendererPriorityPolicy` | ✅ |
 | `onLoadRequest`/`onLocationChange`/`onCanGoBack` | `shouldOverrideUrlLoading`, `doUpdateVisitedHistory`, `canGoBack()` | ✅ |
@@ -274,27 +273,99 @@ WebSocket no pasan por `shouldInterceptRequest`.
 | 4 | `nexo_bridge` (subtítulos, PiP, modo nocturno, medios) y simulaciones de `nexo_network` | Subtítulos y PiP probados en dispositivo físico |
 | 5 | Retirar Gecko, AMO/XPI (según decisión), `compileSdk 37.2`, ABI splits; actualizar CI (`useMultiprocess`, `loadUri("javascript:` → reglas WebView), README y docs | APK universal firmado; CI verde |
 
-## 7. Decisiones pendientes
+## 7. Decisiones
 
-1. **Extensiones de terceros (AMO/XPI)**: Android WebView no ejecuta WebExtensions.
-   Opciones: retirarlas y dejar solo los módulos integrados portados; o mantener dos *flavors*
-   (Gecko con extensiones, Chromium ligero) de forma permanente.
-2. **Proxy por pestaña / Burner con proxy**: convertirlo en un proxy global de la app
-   (`ProxyController`, afecta a todas las pestañas mientras está activo), o retirarlo.
-   Pasar solo los subrecursos por OkHttp **no** es seguro (POST, WebSocket y WebRTC escaparían).
-3. **Traducción de páginas**: ML Kit en el dispositivo (descarga modelos de Google; el texto no
-   sale del teléfono), traducción en la nube, o retirarla temporalmente.
-4. **Teléfonos sin `MULTI_PROFILE`**: desactivar pestañas privadas y Burner con aviso
-   (recomendado) o permitirlas compartiendo cookies.
-5. **Permisos de trabajo**: consulta de documentación oficial (developer.android.com,
-   versiones en maven.google.com) e instalación del Android SDK en el contenedor para compilar.
+Tomadas por el propietario del proyecto el 15-11-2026:
 
-## 8. Puntos a verificar antes de implementar
+| Tema | Decisión |
+| --- | --- |
+| Extensiones de terceros | Crear un **runtime de extensiones propio** sobre WebView que instale extensiones de escritorio (Chrome Web Store, AMO y archivos) — diseño en [§9](#9-runtime-de-extensiones-de-nexo-nxr) |
+| Proxy por pestaña / Burner con proxy | **Proxy global** de la app (`ProxyController`) con aviso visible; retardo, ubicación simulada y variación Canvas siguen por pestaña |
+| Traducción de páginas | **En la nube**, con el proveedor ya configurado para subtítulos (Google sin clave, DeepL o IA) |
+| Permisos de trabajo | Documentación oficial, instalación del Android SDK en el contenedor y comienzo de la fase 1 |
+| Teléfonos sin `MULTI_PROFILE` | Pendiente de confirmar; propuesta: desactivar pestañas privadas y Burner con aviso |
 
-- Versión mínima de WebView y de `androidx.webkit` para `MULTI_PROFILE`,
-  `DOCUMENT_START_SCRIPT` y `WEB_MESSAGE_LISTENER`; versión estable actual de `androidx.webkit`.
-- Si `WebResourceRequest.getRequestHeaders()` incluye `Sec-Fetch-Dest`.
-- Comportamiento de `adoptedStyleSheets` frente a CSP `style-src`.
-- Si `ProfileStore.deleteProfile` acepta perfiles cuyos WebView ya se destruyeron.
-- Captura de audio de la reproducción de WebView y continuidad de audio en segundo plano
-  (prueba en dispositivo físico).
+## 8. Verificaciones
+
+Documentación oficial consultada el 15-11-2026 (developer.android.com):
+
+| Punto | Resultado | Consecuencia |
+| --- | --- | --- |
+| Versión de `androidx.webkit` | Estable **1.18.0** (21-10-2026); `minSdk` 24 desde 1.16.0 | Compatible con `minSdk 26` |
+| `ProfileStore.deleteProfile` | Lanza `IllegalStateException` si hay WebView vivos con ese perfil **o si el perfil se cargó en memoria** con `getOrCreateProfile`/`getProfile`; no se puede borrar `Default` | El perfil privado **no se puede borrar en el mismo proceso**. Diseño: un perfil privado con nombre aleatorio por sesión privada; al cerrar la última pestaña privada se vacían cookies y almacenamiento, la siguiente usa un perfil nuevo y los antiguos se borran al arrancar la app antes de cargarlos |
+| `WebViewCompat.setProfile` | Antes de cualquier otro uso del WebView (salvo añadirlo a la vista); falla si ya navegó o ejecutó JS | Se asigna en el constructor de la pestaña |
+| Objetos por perfil | `CookieManager`, `WebStorage`, `GeolocationPermissions`, `ServiceWorkerController`, caché HTTP, precarga | Borrado y permisos por perfil |
+| `addDocumentStartJavaScript` | Todos los marcos cuyo **origen** cumple las reglas (sin rutas); solo marcos que empiezan a cargar después de la llamada | Los patrones `matches` de las extensiones se comprueban dentro del script |
+| Mundos aislados | Existe `addJavaScriptOnEvent` con `JavaScriptExecutionWorld` (1.16.0) | 🔎 comprobar en 1.18.0 si permite mundos aislados por extensión |
+| `addWebMessageListener` con `*` | Se inyecta en todos los marcos; la documentación exige tratar los mensajes como no fiables | Validar `sourceOrigin`, `isMainFrame` y un secreto por pestaña |
+| `onRenderProcessGone` | Varios WebView pueden compartir proceso; se llama para cada uno afectado | Recuperar cada pestaña afectada |
+| `shouldInterceptRequest` | Fuera del hilo principal; en redirecciones solo se llama para la URL inicial | Los bloqueos por URL final no son posibles |
+
+Pendiente de comprobar en dispositivo: si `getRequestHeaders()` incluye `Sec-Fetch-Dest`,
+`adoptedStyleSheets` frente a CSP, captura de audio de WebView y audio en segundo plano.
+
+## 9. Runtime de extensiones de Nexo (NXR)
+
+### 9.1 Por qué no Kiwi
+
+[Kiwi Browser](https://github.com/kiwibrowser/src) (BSD-3) es un *fork* completo de Chromium: su
+soporte de extensiones es el subsistema C++ de Chrome compilado dentro del navegador. **No se
+puede cargar en el WebView del sistema.** Usarlo implicaría compilar y publicar un Chromium propio
+(cientos de GB de código, horas de compilación por versión, APK de 80–100 MB y rebase mensual de
+parches de seguridad). El proyecto se archivó en enero de 2025 y su código de extensiones pasó a
+Microsoft Edge Canary (código cerrado). Se descarta.
+
+### 9.2 Referencia usada
+
+[WebToApp](https://github.com/shiaho777/web-to-app) (dominio público, *Unlicense*) implementa
+un runtime MV3 sobre WebView (~9 500 líneas): página de fondo en un WebView oculto, *polyfill*
+`chrome.*`, motor `declarativeNetRequest`, descarga de CRX desde Chrome Web Store y registro de
+`content_scripts`. Sirve como guía, pero es una app de una sola vista: no tiene pestañas, usa
+`addJavascriptInterface` (síncrono y visible para la página) y su `webRequest` bloquea por patrón
+sin consultar al oyente. NXR toma la idea, no el código.
+
+### 9.3 Diseño
+
+| Pieza | Diseño |
+| --- | --- |
+| Formatos | CRX3 (Chrome Web Store), XPI (AMO), ZIP y carpeta. CRX3: se valida la cabecera *protobuf*, la firma y que el ID salga de la clave pública |
+| Instalación | Chrome Web Store por el *endpoint* de actualización `update2`, AMO con `AmoClient`, archivo con los validadores actuales (rutas, nº de entradas, tamaño descomprimido) |
+| Almacenamiento | `files/extensions/<id>/<versión>/` descomprimido; servido por `shouldInterceptRequest` en `https://<id>.extension.nexo.invalid/` (`.invalid` nunca resuelve si la interceptación fallara) |
+| Fondo | Un WebView oculto por extensión con perfil propio: páginas MV2 y *service worker* MV3 emulado como página de eventos |
+| Scripts de contenido | `document_start/end/idle`, `all_frames`, `match_about_blank`, `world: MAIN`; mundo aislado si `JavaScriptExecutionWorld` lo permite, si no clausura con intrínsecos capturados al inicio |
+| Mensajería | `WebMessageListener` propio; cada pestaña recibe un secreto aleatorio dentro del script inyectado (la página no puede leerlo) y Kotlin rechaza mensajes sin él, de otro origen o de marcos no permitidos |
+| Red | Una sola tubería en `shouldInterceptRequest` y `ServiceWorkerClient`: PhantomShield nativo → reglas `declarativeNetRequest` (Kotlin) → oyentes `webRequest` bloqueantes con tiempo límite |
+| Páginas de extensión | *Popup* en hoja inferior, opciones en pestaña, CSP de MV3 añadida a las respuestas |
+| Seguridad | Diálogo de permisos al instalar, "permitida en privado" desactivado por defecto, sin acceso a páginas internas de Nexo, actualizaciones con verificación de firma |
+
+### 9.4 APIs por niveles
+
+| Nivel | APIs |
+| --- | --- |
+| 1 | `runtime`, `storage` (`local`, `sync` local, `session`, `onChanged`), `tabs`, `scripting`, `i18n`, `action`/`browserAction`, `alarms`, `permissions`, `declarativeNetRequest`, `webRequest` (bloqueo con límite de tiempo), `webNavigation`, `contextMenus` (en el menú de pulsación larga), `notifications`, `extension` |
+| 2 | `cookies` (sin cookies `HttpOnly` de lectura directa), `downloads`, `history`, `bookmarks` (accesos de inicio), `windows` (una ventana), `offscreen`, `sidePanel` (hoja), `userScripts` |
+| No | `debugger`, `devtools`, `nativeMessaging`, `proxy` por extensión, `privacy`, `management` completo |
+
+Límites inherentes a WebView: sin cuerpo de las peticiones (`requestBody`), sin cambiar
+cabeceras de respuesta salvo repitiendo la petición con OkHttp, redirecciones de marco principal
+solo en `shouldOverrideUrlLoading`, sin WebSocket en `webRequest`. Al instalar, Nexo compara el
+manifiesto con esta tabla y muestra la compatibilidad esperada (completa, parcial o no compatible).
+
+PhantomShield y el puente de Nexo no pasan por NXR: son módulos integrados con motor nativo
+(§5.1); sus páginas (panel y opciones) sí usan el alojamiento de páginas de NXR.
+
+## 10. Estado de la fase 1
+
+Hecho en la rama de trabajo, sin cambios de comportamiento:
+
+- Paquete `engine/`: `BrowserEngine`, `EngineSession`, `EngineObserver`, `EngineView`,
+  `EngineFinder`, `EngineMedia`, `EngineDownload` y `SessionParams`.
+- `engine/gecko/GeckoEngine.kt`: GeckoView detrás de la interfaz; traduce sus delegados a
+  `EngineObserver` y mantiene una única envoltura por sesión.
+- `BrowserTab`, `TabManager`, `MainActivity`, `LiveCaptions`, `CaptionsUi`, `SystemCaptions`,
+  `PlaybackAudioCapture`, `PerfLog`, `BrowserMediaController` y `BrowsingData` ya no importan
+  GeckoView. `TabManager` recibe los eventos en un `TabObserver` por pestaña.
+- Siguen ligados a Gecko, como módulos del motor que la fase 2 sustituye: `ExtensionManager`,
+  `TabRouting`, `TranslatorManager`, `PagePrompts`, `SitePermissions`, `DownloadStore` y la
+  interfaz de extensiones. Su API pública ya recibe `EngineSession`.
+- La vista de página se llama `pageView` en el *layout*.
