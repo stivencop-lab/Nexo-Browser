@@ -15,7 +15,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONArray
-import org.mozilla.geckoview.GeckoSession
+import com.nexo.browser.engine.EngineSession
 import java.util.WeakHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -34,7 +34,7 @@ object LiveCaptions {
     enum class State { OFF, WAITING, CONNECTING, LISTENING, ERROR }
 
     interface Listener {
-        fun onCaptionsChanged(session: GeckoSession)
+        fun onCaptionsChanged(session: EngineSession)
     }
 
     private data class Cue(
@@ -45,7 +45,7 @@ object LiveCaptions {
         var failures: Int = 0
     )
 
-    private class Stream(val session: GeckoSession) {
+    private class Stream(val session: EngineSession) {
         @Volatile var stopped = false
         val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<okhttp3.Call>()
         var deviceAudio = false
@@ -110,7 +110,7 @@ object LiveCaptions {
     private val io = Executors.newSingleThreadExecutor()
     // Peticiones rápidas (Google): anticipadas y respaldo mientras responde el modelo de IA.
     private val fast = Executors.newSingleThreadExecutor()
-    private val active = WeakHashMap<GeckoSession, Stream>()
+    private val active = WeakHashMap<EngineSession, Stream>()
     private var listener: Listener? = null
     private val cache = object : LinkedHashMap<String, String>(256, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 800
@@ -153,16 +153,16 @@ object LiveCaptions {
 
     fun attach(value: Listener?) { listener = value }
 
-    fun isActive(session: GeckoSession?): Boolean = session != null && active.containsKey(session)
+    fun isActive(session: EngineSession?): Boolean = session != null && active.containsKey(session)
 
-    fun state(session: GeckoSession?): State = session?.let { active[it]?.state } ?: State.OFF
+    fun state(session: EngineSession?): State = session?.let { active[it]?.state } ?: State.OFF
 
-    fun message(session: GeckoSession?): String? = session?.let { active[it]?.message }
+    fun message(session: EngineSession?): String? = session?.let { active[it]?.message }
 
-    fun isTrackMode(session: GeckoSession?): Boolean = session?.let { active[it]?.trackMode } == true
+    fun isTrackMode(session: EngineSession?): Boolean = session?.let { active[it]?.trackMode } == true
 
     /** Subtítulos leídos del reproductor de la página (sin Deepgram). */
-    fun isDomMode(session: GeckoSession?): Boolean = session?.let { active[it]?.domMode } == true
+    fun isDomMode(session: EngineSession?): Boolean = session?.let { active[it]?.domMode } == true
 
     /**
      * Línea de estado cuando aún no hay texto. Los diagnósticos concretos
@@ -184,7 +184,7 @@ object LiveCaptions {
     }
 
     /** Hay un aviso de estado que caduca: la interfaz debe volver a mirar pasado [HINT_MS]. */
-    fun statusExpires(session: GeckoSession?): Boolean =
+    fun statusExpires(session: EngineSession?): Boolean =
         session?.let { active[it] }?.let { it.message == null && it.state != State.ERROR } == true
 
     private fun setState(stream: Stream, state: State, message: String? = stream.message) {
@@ -194,7 +194,7 @@ object LiveCaptions {
     }
 
     /** Qué mostrar ahora según el modo elegido (original, traducido o ambos). */
-    fun display(context: Context, session: GeckoSession?): CaptionDisplay? {
+    fun display(context: Context, session: EngineSession?): CaptionDisplay? {
         val stream = session?.let { active[it] } ?: return null
         if (stream.state == State.ERROR) return CaptionDisplay(stream.message ?: "Error de subtítulos", "", status = true)
         val mode = BrowserPrefs.captionMode(context)
@@ -232,7 +232,7 @@ object LiveCaptions {
     }
 
     /** Activa o apaga los subtítulos del video de esta pestaña. */
-    fun toggle(context: Context, session: GeckoSession): Boolean {
+    fun toggle(context: Context, session: EngineSession): Boolean {
         if (active.containsKey(session)) {
             stop(session)
             return false
@@ -275,7 +275,7 @@ object LiveCaptions {
      * Un marco de la página conectó y ya recibió la orden: la página está lista.
      * No se reinicia nada (los iframes de anuncios conectan a menudo).
      */
-    fun onBridgeConnected(session: GeckoSession) {
+    fun onBridgeConnected(session: EngineSession) {
         val stream = active[session] ?: return
         if (stream.delivered) return
         stream.delivered = true
@@ -284,7 +284,7 @@ object LiveCaptions {
     }
 
     /** Idioma preferido del video (para elegir la pista del reproductor). */
-    fun language(session: GeckoSession): String = active[session]?.language ?: "multi"
+    fun language(session: EngineSession): String = active[session]?.language ?: "multi"
 
     private fun resetSource(stream: Stream) {
         main.removeCallbacksAndMessages(stream)
@@ -299,7 +299,7 @@ object LiveCaptions {
         stream.pendingCueIds.clear()
     }
 
-    fun stop(session: GeckoSession) {
+    fun stop(session: EngineSession) {
         val stream = active.remove(session) ?: return
         PlaybackAudioCapture.cancel(session)
         main.removeCallbacksAndMessages(stream)
@@ -371,7 +371,7 @@ object LiveCaptions {
         return try { call.execute().use(block) } finally { stream.calls.remove(call) }
     }
 
-    fun retarget(context: Context, session: GeckoSession?) {
+    fun retarget(context: Context, session: EngineSession?) {
         val stream = session?.let { active[it] } ?: return
         val app = context.applicationContext
         synchronized(stream) { stream.translationGeneration++; stream.calls.forEach { it.cancel() }; stream.calls.clear() }
@@ -389,7 +389,7 @@ object LiveCaptions {
     }
 
     /** Cambia el idioma del audio: nueva conexión con Deepgram (grabación nueva). */
-    fun relisten(context: Context, session: GeckoSession?) {
+    fun relisten(context: Context, session: EngineSession?) {
         val stream = session?.let { active[it] } ?: return
         stream.language = BrowserPrefs.captionLanguage(context)
         if (stream.deviceAudio) { close(stream); connect(context.applicationContext,stream,CaptionProtocol.modelFor(stream.language)) }
@@ -405,7 +405,7 @@ object LiveCaptions {
         stream.speculating = false
     }
 
-    fun onRecordingStarted(context: Context, session: GeckoSession, mime: String) {
+    fun onRecordingStarted(context: Context, session: EngineSession, mime: String) {
         val stream = active[session] ?: return
         val app = context.applicationContext
         stream.delivered = true
@@ -432,19 +432,19 @@ object LiveCaptions {
         connect(app, stream, stream.model.ifBlank { CaptionProtocol.modelFor(stream.language) })
     }
 
-    fun captureToken(session: GeckoSession): Any? = active[session]
-    fun matchesCapture(session: GeckoSession, token: Any): Boolean = active[session] === token
-    fun usingDeviceAudio(session: GeckoSession?): Boolean = session?.let { active[it]?.deviceAudio } == true
+    fun captureToken(session: EngineSession): Any? = active[session]
+    fun matchesCapture(session: EngineSession, token: Any): Boolean = active[session] === token
+    fun usingDeviceAudio(session: EngineSession?): Boolean = session?.let { active[it]?.deviceAudio } == true
 
     /** La página no participa: captura de Android activa o pidiendo permiso. */
-    fun pageSuspended(session: GeckoSession?): Boolean =
+    fun pageSuspended(session: EngineSession?): Boolean =
         session?.let { active[it] }?.let { it.deviceAudio || it.deviceRequested } == true
 
     /**
      * El usuario aceptó la captura de Android: se apaga la captura de la
      * página (sus errores ya no llegan) mientras Android pide permiso.
      */
-    fun beginDeviceRequest(session: GeckoSession, token: Any): Boolean {
+    fun beginDeviceRequest(session: EngineSession, token: Any): Boolean {
         val stream = active[session] ?: return false
         if (stream !== token) return false
         stream.deviceRequested = true
@@ -457,7 +457,7 @@ object LiveCaptions {
     }
 
     /** Android no llegó a capturar (permiso denegado, cancelado…): se explica y la página vuelve a buscar texto. */
-    fun endDeviceRequest(context: Context, session: GeckoSession, message: String) {
+    fun endDeviceRequest(context: Context, session: EngineSession, message: String) {
         val stream = active[session] ?: return
         if (!stream.deviceRequested || stream.deviceAudio) return
         stream.deviceRequested = false
@@ -470,7 +470,7 @@ object LiveCaptions {
     }
 
     /** Etapas de los subtítulos para la hoja de CC: qué funciona y dónde se corta. */
-    fun stages(session: GeckoSession?): List<Pair<String, Boolean?>> {
+    fun stages(session: EngineSession?): List<Pair<String, Boolean?>> {
         val stream = session?.let { active[it] } ?: return emptyList()
         val text = stream.lastResultAt > 0L || !stream.text.isEmpty || stream.cues.isNotEmpty()
         val textSource = stream.trackMode || stream.domMode
@@ -492,7 +492,7 @@ object LiveCaptions {
         return list
     }
 
-    fun startDeviceAudio(session: GeckoSession, token: Any): Boolean {
+    fun startDeviceAudio(session: EngineSession, token: Any): Boolean {
         val stream = active[session] ?: return false
         if (stream !== token || limitReached(AppContext.get())) return false
         stream.deviceRequested = false
@@ -512,7 +512,7 @@ object LiveCaptions {
      * Diagnóstico de la captura de Android, una vez por segundo: [peak] es el
      * pico PCM16 (0–32767) del último segundo y [playing] si el video suena.
      */
-    fun onDeviceLevel(session: GeckoSession, peak: Int, playing: Boolean) {
+    fun onDeviceLevel(session: EngineSession, peak: Int, playing: Boolean) {
         val stream = active[session] ?: return
         if (!stream.deviceAudio || stream.state == State.ERROR) return
         val level = (peak * 100 / 32767).coerceIn(0, 100).let { if (peak > 120 && it == 0) 1 else it }
@@ -542,14 +542,14 @@ object LiveCaptions {
         }
     }
 
-    fun onDeviceAudio(session: GeckoSession, bytes: ByteArray) {
+    fun onDeviceAudio(session: EngineSession, bytes: ByteArray) {
         val stream = active[session] ?: return
         if (!stream.deviceAudio) return
         if (!stream.signal && PlaybackPcm.hasSignal(bytes)) onStatus(session,"signal")
         acceptAudio(session,stream,bytes)
     }
 
-    fun onAudio(session: GeckoSession, base64: String) {
+    fun onAudio(session: EngineSession, base64: String) {
         val stream = active[session] ?: return
         if (stream.state == State.ERROR || stream.startedAt == 0L || base64.length > 350000) return
         val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return
@@ -564,7 +564,7 @@ object LiveCaptions {
         acceptAudio(session,stream,bytes)
     }
 
-    private fun acceptAudio(session: GeckoSession, stream: Stream, bytes: ByteArray) {
+    private fun acceptAudio(session: EngineSession, stream: Stream, bytes: ByteArray) {
         if (stream.state == State.ERROR || stream.startedAt == 0L || bytes.isEmpty() || bytes.size > 256*1024) return
         stream.receivedBytes += bytes.size
         val now = System.currentTimeMillis()
@@ -587,7 +587,7 @@ object LiveCaptions {
         }
     }
 
-    fun onRecordingStopped(session: GeckoSession) {
+    fun onRecordingStopped(session: EngineSession) {
         val stream = active[session] ?: return
         // La captura de Android no depende de la página: que un marco se desconecte no la corta.
         if (stream.deviceAudio || stream.deviceRequested) return
@@ -608,10 +608,10 @@ object LiveCaptions {
         BrowserPrefs.deepgramKey(AppContext.get()).isNotBlank() &&
             (stream.audioAllowed || BrowserPrefs.captionAudioAuto(AppContext.get()))
 
-    fun audioAllowed(session: GeckoSession): Boolean = active[session]?.let { audioAllowed(it) } == true
+    fun audioAllowed(session: EngineSession): Boolean = active[session]?.let { audioAllowed(it) } == true
 
     /** El usuario eligió transcribir el audio de este video con Deepgram. */
-    fun allowAudio(context: Context, session: GeckoSession?) {
+    fun allowAudio(context: Context, session: EngineSession?) {
         val stream = session?.let { active[it] } ?: return
         stream.audioAllowed = true
         stream.pageFailure = null
@@ -624,7 +624,7 @@ object LiveCaptions {
      * true una sola vez por activación cuando el video no trae ningún texto y
      * el audio no está permitido: la interfaz pregunta qué hacer.
      */
-    fun takeNoTextChoice(session: GeckoSession?): Boolean {
+    fun takeNoTextChoice(session: EngineSession?): Boolean {
         val stream = session?.let { active[it] } ?: return false
         if (stream.offeredChoice || stream.pageFailure != "need_key" || audioAllowed(stream)) return false
         stream.offeredChoice = true
@@ -638,7 +638,7 @@ object LiveCaptions {
      * true una sola vez por activación cuando la página no pudo dar su audio:
      * la interfaz ofrece entonces la captura de Android en un toque.
      */
-    fun takeDeviceSuggestion(session: GeckoSession?): Boolean {
+    fun takeDeviceSuggestion(session: EngineSession?): Boolean {
         val stream = session?.let { active[it] } ?: return false
         if (stream.offeredDevice || stream.deviceAudio || stream.pageFailure !in DEVICE_FIXABLE) return false
         stream.offeredDevice = true
@@ -648,7 +648,7 @@ object LiveCaptions {
     /** Errores que vienen de la captura de Android o de Deepgram (no de la página). */
     private val NATIVE_ERRORS = setOf("android_capture", "deepgram", "closed", "limit", "buffer", "need_deepgram", "header", "mime")
 
-    fun onPageError(context: Context, session: GeckoSession, code: String, message: String) {
+    fun onPageError(context: Context, session: EngineSession, code: String, message: String) {
         val stream = active[session] ?: return
         // Con Android capturando o pidiendo permiso, un error de la página no cancela nada.
         if ((stream.deviceAudio || stream.deviceRequested) && code !in NATIVE_ERRORS) return
@@ -677,7 +677,7 @@ object LiveCaptions {
      * El video trae su propia pista ("track") o el reproductor dibuja el texto
      * en la página ("dom"): se usa eso en lugar de Deepgram.
      */
-    fun onTrack(session: GeckoSession, source: String = "track") {
+    fun onTrack(session: EngineSession, source: String = "track") {
         val stream = active[session] ?: return
         stream.delivered = true
         close(stream)
@@ -691,7 +691,7 @@ object LiveCaptions {
     }
 
     /** Texto visible en el reproductor de la página (vacío cuando desaparece). */
-    fun onDomText(context: Context, session: GeckoSession, raw: String) {
+    fun onDomText(context: Context, session: EngineSession, raw: String) {
         val stream = active[session] ?: return
         if (!stream.domMode) return
         val app = context.applicationContext
@@ -723,7 +723,7 @@ object LiveCaptions {
         }
     }
 
-    fun onCues(context: Context, session: GeckoSession, cues: JSONArray) {
+    fun onCues(context: Context, session: EngineSession, cues: JSONArray) {
         val stream = active[session] ?: return
         if (!stream.trackMode) return
         for (i in 0 until cues.length()) {
@@ -737,7 +737,7 @@ object LiveCaptions {
         queueAhead(context.applicationContext, stream)
     }
 
-    fun onActiveCues(context: Context, session: GeckoSession, ids: JSONArray) {
+    fun onActiveCues(context: Context, session: EngineSession, ids: JSONArray) {
         val stream = active[session] ?: return
         if (!stream.trackMode) return
         stream.activeCues = (0 until ids.length()).map { ids.optInt(it, -1) }.filter { it >= 0 }.take(4)
@@ -860,7 +860,7 @@ object LiveCaptions {
         })
     }
 
-    fun onStatus(session: GeckoSession, code: String) {
+    fun onStatus(session: EngineSession, code: String) {
         val stream = active[session] ?: return
         if (code in setOf("signal", "quiet", "paused", "muted", "meter_unavailable")) stream.videoFound = true
         if (code == "signal") stream.signal = true
@@ -886,7 +886,7 @@ object LiveCaptions {
     }
 
     /** La app concedió el video de un marco a los subtítulos (diagnóstico). */
-    fun onVideoGranted(session: GeckoSession) {
+    fun onVideoGranted(session: EngineSession) {
         active[session]?.videoFound = true
     }
 
@@ -1210,7 +1210,7 @@ object LiveCaptions {
         return "$winner · ${"%.1f".format(lastAiMs / 1000.0)} s$wins"
     }
 
-    private fun notifyChanged(session: GeckoSession) {
+    private fun notifyChanged(session: EngineSession) {
         listener?.onCaptionsChanged(session)
     }
 }

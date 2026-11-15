@@ -2,9 +2,11 @@ package com.nexo.browser
 
 import android.os.Handler
 import android.os.Looper
+import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.gecko.GeckoEngine
+import com.nexo.browser.engine.gecko.gecko
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
-import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
 
 /** A local extension page binds the native session before any target network request. */
@@ -12,12 +14,12 @@ object TabRouting {
     const val ID = "nexo_network@com.ejemplo.navegador"
     private val main = Handler(Looper.getMainLooper())
     private var extension: GeckoResult<WebExtension>? = null
-    private val pending = java.util.WeakHashMap<GeckoSession, Boolean>()
-    private val failed = java.util.WeakHashMap<GeckoSession, Boolean>()
-    private val timeouts = java.util.WeakHashMap<GeckoSession, Runnable>()
-    private val awaiting = java.util.WeakHashMap<GeckoSession, Boolean>()
-    private val bootstrapUrls = java.util.WeakHashMap<GeckoSession, String>()
-    private val purge = java.util.WeakHashMap<GeckoSession, Boolean>()
+    private val pending = java.util.WeakHashMap<EngineSession, Boolean>()
+    private val failed = java.util.WeakHashMap<EngineSession, Boolean>()
+    private val timeouts = java.util.WeakHashMap<EngineSession, Runnable>()
+    private val awaiting = java.util.WeakHashMap<EngineSession, Boolean>()
+    private val bootstrapUrls = java.util.WeakHashMap<EngineSession, String>()
+    private val purge = java.util.WeakHashMap<EngineSession, Boolean>()
     fun initialize() {
         if(extension != null) return
         val result=GeckoResult<WebExtension>();extension=result
@@ -44,15 +46,15 @@ object TabRouting {
         return tab.burnerId != null &&
             (profile == null || (profile.type == "direct" && profile.latency == 0 && profile.latitude == null))
     }
-    fun blocked(session: GeckoSession) = failed.containsKey(session)
-    fun preparing(session: GeckoSession) = pending.containsKey(session) || failed.containsKey(session)
-    fun synthetic(session: GeckoSession) = preparing(session) || awaiting.containsKey(session)
-    fun reserve(session: GeckoSession) { pending[session] = true; awaiting[session] = true }
-    fun bootstrap(session: GeckoSession, url: String) = !failed.containsKey(session) && bootstrapUrls[session] == url
-    fun targetStarted(session: GeckoSession) { awaiting.remove(session) }
-    fun targetFinished(session: GeckoSession) { if(purge.remove(session) == true) session.purgeHistory() }
-    fun forget(session: GeckoSession) { timeouts.remove(session)?.let { main.removeCallbacks(it) }; failed.remove(session); pending.remove(session); awaiting.remove(session); bootstrapUrls.remove(session); purge.remove(session) }
-    fun prepare(tab: BrowserTab, session: GeckoSession, preserveHistory: Boolean = false, ready: () -> Unit) {
+    fun blocked(session: EngineSession) = failed.containsKey(session)
+    fun preparing(session: EngineSession) = pending.containsKey(session) || failed.containsKey(session)
+    fun synthetic(session: EngineSession) = preparing(session) || awaiting.containsKey(session)
+    fun reserve(session: EngineSession) { pending[session] = true; awaiting[session] = true }
+    fun bootstrap(session: EngineSession, url: String) = !failed.containsKey(session) && bootstrapUrls[session] == url
+    fun targetStarted(session: EngineSession) { awaiting.remove(session) }
+    fun targetFinished(session: EngineSession) { if(purge.remove(session) == true) session.purgeHistory() }
+    fun forget(session: EngineSession) { timeouts.remove(session)?.let { main.removeCallbacks(it) }; failed.remove(session); pending.remove(session); awaiting.remove(session); bootstrapUrls.remove(session); purge.remove(session) }
+    fun prepare(tab: BrowserTab, session: EngineSession, preserveHistory: Boolean = false, ready: () -> Unit) {
         if(tab.networkProfile == null && tab.burnerId == null) { ready(); return }
         initialize(); reserve(session); tab.canGoBack=false;tab.canGoForward=false; purge[session] = !preserveHistory; tab.networkState = "Preparando ruta"
         fun fail() {
@@ -77,9 +79,9 @@ object TabRouting {
             if(ext == null || !pending.containsKey(session) || tab.session !== session) return@accept
             val bootstrap = ext.metaData.baseUrl + "bootstrap.html"
             bootstrapUrls[session] = bootstrap
-            session.webExtensionController.setMessageDelegate(ext,object : WebExtension.MessageDelegate {
+            session.gecko.webExtensionController.setMessageDelegate(ext,object : WebExtension.MessageDelegate {
                 override fun onMessage(app: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
-                    if(app != "nexo_network" || sender.webExtension.id != ID || sender.session !== session || !sender.isTopLevel() || sender.url != bootstrap || !pending.containsKey(session)) return null
+                    if(app != "nexo_network" || sender.webExtension.id != ID || GeckoEngine.wrapperOf(sender.session) !== session || !sender.isTopLevel() || sender.url != bootstrap || !pending.containsKey(session)) return null
                     val data = message as? JSONObject ?: return null
                     if(data.optString("phase") == "profile") return GeckoResult.fromValue((tab.networkProfile ?: TabNetworkProfile()).json()
                         .put("burner",tab.burnerId != null).put("seed",tab.burnerSeed.toLong() and 0xffffffffL))
@@ -95,7 +97,7 @@ object TabRouting {
                     return null
                 }
             },"nexo_network")
-            session.loadUri(bootstrap)
+            session.loadUrl(bootstrap)
         },{ fail() })
     }
 }

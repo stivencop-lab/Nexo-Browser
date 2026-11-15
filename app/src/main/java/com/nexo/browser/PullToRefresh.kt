@@ -10,6 +10,9 @@ import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
+import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.EngineView
+import com.nexo.browser.engine.gecko.gecko
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.PanZoomController
 import kotlin.math.abs
@@ -22,7 +25,28 @@ import kotlin.math.min
 class NexoGeckoView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
-) : GeckoView(context, attrs) {
+) : GeckoView(context, attrs), EngineView {
+    override fun attach(session: EngineSession, background: Int) {
+        val gecko = session.gecko
+        // Fondo del tema mientras la página pinta (evita el destello blanco).
+        runCatching { gecko.compositorController.setClearColor(background) }
+        coverUntilFirstPaint(background)
+        setSession(gecko)
+    }
+
+    override fun release() {
+        releaseSession()
+    }
+
+    override fun onPictureInPictureModeChanged(inPictureInPicture: Boolean) {
+        runCatching { session?.compositorController?.onPipModeChanged(inPictureInPicture) }
+    }
+
+    override fun capture(onResult: (android.graphics.Bitmap?) -> Unit) {
+        runCatching { capturePixels().accept({ onResult(it) }, { onResult(null) }) }
+            .onFailure { onResult(null) }
+    }
+
     /** true solo cuando un deslizamiento hacia abajo debe recargar la página. */
     @Volatile var canPullToRefresh = false
         private set

@@ -4,6 +4,9 @@ import android.Manifest
 import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.net.Uri
+import com.nexo.browser.engine.EngineSession
+import com.nexo.browser.engine.gecko.GeckoEngine
+import com.nexo.browser.engine.gecko.gecko
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSession.PermissionDelegate
@@ -34,26 +37,30 @@ object SitePermissions : PermissionDelegate {
     private val pending = mutableListOf<Pending>()
 
     private fun topOrigin(session: GeckoSession): String? =
-        TabManager.tabForSession(session)?.url?.let { PermissionScope.origin(it) }
+        tabOf(session)?.url?.let { PermissionScope.origin(it) }
 
     /** La pestaña sigue en la misma página que pidió el permiso y es la visible. */
     private fun stillValid(session: GeckoSession, epoch: Long, origin: String): Boolean {
-        val tab = TabManager.tabForSession(session) ?: return false
-        return TabManager.activeSession() === session && tab.navigationEpoch == epoch &&
+        val tab = tabOf(session) ?: return false
+        return TabManager.activeSession()?.gecko === session && tab.navigationEpoch == epoch &&
             PermissionScope.origin(tab.url) == origin
     }
 
     /** Al abandonar la página o la pestaña: cierra (rechaza) sus solicitudes pendientes. */
-    fun cancelFor(session: GeckoSession) {
+    fun cancelFor(engineSession: EngineSession) {
+        val session = engineSession.gecko
         pending.filter { it.session === session }.forEach { runCatching { it.dialog.dismiss() } }
         pending.removeAll { it.session === session }
     }
 
+    private fun tabOf(session: GeckoSession): BrowserTab? =
+        GeckoEngine.wrapperOf(session)?.let { TabManager.tabForSession(it) }
+
     /** Muestra el diálogo registrado; [onAllow]/[onDeny] solo se llaman una vez. */
     private fun ask(activity: android.app.Activity, session: GeckoSession, message: String, onAllow: () -> Unit, onDeny: () -> Unit): Boolean {
-        val tab = TabManager.tabForSession(session) ?: return false
+        val tab = tabOf(session) ?: return false
         val origin = topOrigin(session) ?: return false
-        if (TabManager.activeSession() !== session) return false
+        if (TabManager.activeSession()?.gecko !== session) return false
         val epoch = tab.navigationEpoch
         var answered = false
         lateinit var entry: Pending
@@ -92,7 +99,7 @@ object SitePermissions : PermissionDelegate {
             return
         }
         // Solo para la pestaña visible: una pestaña de fondo no abre permisos de Android.
-        if (host == null || TabManager.activeSession() !== session) {
+        if (host == null || TabManager.activeSession()?.gecko !== session) {
             callback.reject()
             return
         }

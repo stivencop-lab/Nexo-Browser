@@ -9,7 +9,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.view.FrameMetrics
 import org.json.JSONArray
-import org.mozilla.geckoview.GeckoSession
+import com.nexo.browser.engine.EngineSession
 
 /**
  * Mediciones de rendimiento en el propio teléfono, para comparar versiones
@@ -25,7 +25,7 @@ object PerfLog {
     private const val MAX = 50
     val KINDS = listOf("arranque" to "ms", "carga" to "ms", "memoria" to "MB", "fluidez" to "% lentos")
 
-    private val pageStarts = java.util.WeakHashMap<GeckoSession, Long>()
+    private val pageStarts = java.util.WeakHashMap<EngineSession, Long>()
     @Volatile private var startupRecorded = false
     private val frameThread by lazy { HandlerThread("NexoFrames").apply { start() } }
 
@@ -96,9 +96,9 @@ object PerfLog {
         }
     }
 
-    fun onPageStart(session: GeckoSession) { pageStarts[session] = SystemClock.elapsedRealtime() }
+    fun onPageStart(session: EngineSession) { pageStarts[session] = SystemClock.elapsedRealtime() }
 
-    fun onPageStop(context: Context, session: GeckoSession, success: Boolean) {
+    fun onPageStop(context: Context, session: EngineSession, success: Boolean) {
         val start = pageStarts.remove(session) ?: return
         if (!success) return
         record(context, "carga", (SystemClock.elapsedRealtime() - start).toDouble())

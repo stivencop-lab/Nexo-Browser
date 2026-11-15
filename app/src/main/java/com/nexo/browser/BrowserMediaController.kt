@@ -3,7 +3,7 @@ package com.nexo.browser
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import org.mozilla.geckoview.MediaSession
+import com.nexo.browser.engine.EngineMedia
 
 object BrowserMediaController {
     interface Listener {
@@ -17,7 +17,7 @@ object BrowserMediaController {
     )
 
     private class Entry(
-        val mediaSession: MediaSession,
+        val mediaSession: EngineMedia,
         title: String,
         val isPrivate: Boolean,
         var playing: Boolean = false
@@ -133,7 +133,7 @@ object BrowserMediaController {
 
     fun onActivated(
         tab: BrowserTab,
-        media: MediaSession
+        media: EngineMedia
     ) {
         val previous = entries[tab.id]
 
@@ -150,7 +150,7 @@ object BrowserMediaController {
 
     fun onDeactivated(
         tabId: String,
-        media: MediaSession
+        media: EngineMedia
     ) {
         val entry = entries[tabId]
 
@@ -170,7 +170,7 @@ object BrowserMediaController {
 
     fun onPlay(
         tab: BrowserTab,
-        media: MediaSession
+        media: EngineMedia
     ) {
         val entry = entries[tab.id]
 
@@ -195,7 +195,7 @@ object BrowserMediaController {
 
     fun onPause(
         tabId: String,
-        media: MediaSession
+        media: EngineMedia
     ) {
         entries[tabId]
             ?.takeIf { it.mediaSession === media }
@@ -206,7 +206,7 @@ object BrowserMediaController {
 
     fun onStop(
         tabId: String,
-        media: MediaSession
+        media: EngineMedia
     ) {
         val entry = entries[tabId]
 
@@ -227,7 +227,7 @@ object BrowserMediaController {
 
     fun updateMetadata(
         tabId: String,
-        media: MediaSession,
+        media: EngineMedia,
         title: String?
     ) {
         val entry = entries[tabId] ?: return

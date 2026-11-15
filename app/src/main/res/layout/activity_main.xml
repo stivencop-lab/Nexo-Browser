@@ -97,7 +97,7 @@
         android:layout_weight="1">
 
         <com.nexo.browser.NexoGeckoView
-            android:id="@+id/geckoView"
+            android:id="@+id/pageView"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 

@@ -221,6 +221,22 @@ object DownloadStore {
         callback: (Boolean, String) -> Unit
     ) = saveResponse(context, response, null, callback)
 
+    /** Respuesta que el motor no puede mostrar (`Content-Disposition`, tipos binarios…). */
+    fun saveDownload(
+        context: Context,
+        download: com.nexo.browser.engine.EngineDownload,
+        source: DownloadSource?,
+        callback: (Boolean, String) -> Unit
+    ) {
+        val response = (download as? com.nexo.browser.engine.gecko.GeckoDownload)?.response
+        if (response == null) {
+            download.discard()
+            callback(false, "Este motor aún no admite esta descarga.")
+            return
+        }
+        saveResponse(context, response, source, callback)
+    }
+
     fun saveResponse(
         context: Context,
         response: WebResponse,

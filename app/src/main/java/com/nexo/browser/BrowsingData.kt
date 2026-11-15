@@ -1,7 +1,7 @@
 package com.nexo.browser
 
 import android.content.Context
-import org.mozilla.geckoview.StorageController
+import com.nexo.browser.engine.Engines
 
 /** Borrado de datos de navegación compartido por Ajustes y "Borrar datos al salir". */
 object BrowsingData {
@@ -10,8 +10,6 @@ object BrowsingData {
         TabManager.closeAllSessionsKeepingState()
         HistoryStore.clear(app)
         TabPreviewStore.clear(app)
-        GeckoRuntimeHolder.get(app).storageController
-            .clearData(StorageController.ClearFlags.ALL)
-            .accept({ onDone(true, null) }, { error -> onDone(false, error?.message) })
+        Engines.current.clearAllData(app, onDone)
     }
 }

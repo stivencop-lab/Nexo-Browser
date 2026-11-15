@@ -10,14 +10,14 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.*
-import org.mozilla.geckoview.GeckoSession
+import com.nexo.browser.engine.EngineSession
 
 /** Explicit audio-only MediaProjection consent. Never uses a microphone AudioSource. */
 object PlaybackAudioCapture {
     const val REQUEST = 9844
-    private data class Request(val session: GeckoSession, val token: Any, val at: Long = SystemClock.uptimeMillis())
+    private data class Request(val session: EngineSession, val token: Any, val at: Long = SystemClock.uptimeMillis())
     private var pending: Request? = null
-    internal data class Grant(val session: GeckoSession, val token: Any, val data: Intent)
+    internal data class Grant(val session: EngineSession, val token: Any, val data: Intent)
     private var grant: Grant? = null
     internal var service: PlaybackCaptureService? = null
     fun awaitingConsent(): Boolean = pending != null
@@ -97,7 +97,7 @@ object PlaybackAudioCapture {
         }
     }
     internal fun takeGrant(): Grant? = grant.also { grant = null }
-    fun cancel(session: GeckoSession) {
+    fun cancel(session: EngineSession) {
         if (pending?.session === session) pending = null
         if (grant?.session === session) grant = null
         service?.takeIf { it.session === session }?.finishCapture()
@@ -110,7 +110,7 @@ private object ToastMessage {
 
 /** Foreground lifetime is bound to one caption stream, not to a saved permission token. */
 class PlaybackCaptureService : Service() {
-    internal var session: GeckoSession? = null
+    internal var session: EngineSession? = null
         private set
     private var projection: MediaProjection? = null
     private var recorder: AudioRecord? = null

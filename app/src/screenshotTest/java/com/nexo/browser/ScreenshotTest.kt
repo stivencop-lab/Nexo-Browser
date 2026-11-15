@@ -109,7 +109,7 @@ class ScreenshotTest {
         ThemeManager.styleFlatButton(activity, root.findViewById(R.id.menuButton))
         listOf(R.id.backButton, R.id.forwardButton, R.id.homeButton, R.id.reloadButton, R.id.newTabButton)
             .forEach { ThemeManager.styleIconButton(activity, root.findViewById(it)) }
-        root.findViewById<View>(R.id.geckoView).setBackgroundColor(p.surface)
+        root.findViewById<View>(R.id.pageView).setBackgroundColor(p.surface)
         activity.setContentView(root)
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         save(activity.window.decorView, name)
@@ -163,7 +163,7 @@ class ScreenshotTest {
         val p = ThemeManager.palette(activity)
         val root = activity.layoutInflater.inflate(R.layout.activity_main, null)
         root.setBackgroundColor(p.background)
-        root.findViewById<View>(R.id.geckoView).setBackgroundColor(0xFF1F2937.toInt())
+        root.findViewById<View>(R.id.pageView).setBackgroundColor(0xFF1F2937.toInt())
         activity.setContentView(root)
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         val frame = root.findViewById<View>(R.id.browserFrame)
@@ -187,7 +187,7 @@ class ScreenshotTest {
         val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
         activity.setContentView(FrameLayout(activity))
         BrowserPrefs.setCaptionTranslateTo(activity, "ko")
-        val session = org.mozilla.geckoview.GeckoSession()
+        val session = com.nexo.browser.engine.FakeEngineSession()
         CaptionsUi.showQuick(activity, session, onChange = {}) {}
         dialogShot(null, "captions-quick-dark")
         CaptionsUi.pickLanguage(activity, "ko") {}
