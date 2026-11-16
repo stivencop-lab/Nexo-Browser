@@ -8,7 +8,7 @@ final class CefriumMediaController {
     private final CefriumBrowser browser;
     private final Consumer<MediaInfo> onMedia;
 
-    CefrumMediaController(CefriumBrowser browser, Consumer<MediaInfo> onMedia) {
+    CefriumMediaController(CefriumBrowser browser, Consumer<MediaInfo> onMedia) {
         this.browser = browser;
         this.onMedia = onMedia;
         browser.setChromeClient(new CefriumChromeClient() {
