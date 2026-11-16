@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+        El plugin de Cefrium declara renderizadores nativos de Android 17+
+        (android:nativeService="true"): Android los arranca desde libcef.so y no
+        tienen clase Java, así que lint no la encuentra. Solo esos servicios.
+    -->
+    <issue id="MissingClass">
+        <ignore regexp="com\.cefrium\.ChildServices\$NativeSandboxed\d+" />
+    </issue>
+</lint>

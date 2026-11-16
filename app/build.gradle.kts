@@ -1,9 +1,11 @@
 plugins {
     id("com.android.application")
+    // Cefrium (Chromium embebido): genera los R de Chromium y el manifiesto
+    // de sus procesos aislados. Exige compilar con JDK 25.
+    id("com.cefrium")
 }
 android {
     namespace = "com.nexo.browser"
-    // GeckoView 159 exige compilar contra Android 37.2 (versión menor de API).
     compileSdk {
         version = release(37) {
             minorApiLevel = 2
@@ -11,33 +13,13 @@ android {
     }
     defaultConfig {
         applicationId = if (project.hasProperty("nexoTransition")) "com.ejemplo.navegador" else "com.nexo.browser"
-        minSdk = 26
+        // Cefrium 0.21.0 (Chromium 156) exige Android 10.
+        minSdk = 29
         targetSdk = 35
         versionCode = 61
         versionName = "0.30.2"
         // Solo la actualización de transición (paquete anterior) entrega sus datos a Nexo nuevo.
         manifestPlaceholders["legacyExport"] = project.hasProperty("nexoTransition").toString()
-    }
-    /*
-     * Motor web: "gecko" (GeckoView, la versión publicada) y "chromium"
-     * (Android System WebView, en migración). Las dos usan el mismo paquete:
-     * la de Chromium, firmada con la misma clave, se instala como
-     * actualización de la de Gecko y conserva historial, accesos, pestañas,
-     * ajustes y claves (y trae las cookies de Gecko, ver GeckoProfileImport).
-     * Con -PnexoSideBySide se instala aparte (sufijo .chromium) para probarla
-     * junto a la publicada.
-     */
-    flavorDimensions += "engine"
-    productFlavors {
-        create("gecko") {
-            dimension = "engine"
-            isDefault = true
-        }
-        create("chromium") {
-            dimension = "engine"
-            if (project.hasProperty("nexoSideBySide")) applicationIdSuffix = ".chromium"
-            versionNameSuffix = "-chromium"
-        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -59,10 +41,12 @@ android {
     }
     packaging {
         jniLibs {
-            // Como Firefox para Android: el motor Gecko (libxul.so, ~150 MB)
-            // va comprimido dentro del APK. El APK pasa de ~216 MB a ~100 MB;
-            // Android extrae las librerías una sola vez al instalar.
+            // El motor (libcef.so) va comprimido dentro del APK; Android
+            // extrae las librerías una sola vez al instalar.
             useLegacyPackaging = true
+            // Nexo solo publica ARM: Cefrium no trae libcef.so para x86/x86_64 y
+            // su plugin rechaza un APK con esas ABI (las aporta androidx.datastore).
+            excludes += listOf("lib/x86/**", "lib/x86_64/**")
         }
     }
     splits {
@@ -108,9 +92,11 @@ kotlin {
 
 dependencies {
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
-    "geckoImplementation"("org.mozilla.geckoview:geckoview-omni:159.0.20261102144711")
-    // Perfiles aislados, scripts de inicio de documento y puente de mensajes de WebView.
-    "chromiumImplementation"("androidx.webkit:webkit:1.18.0")
+    // Motor web: Chromium 156 embebido (Cefrium, LGPL-3.0). Hashes verificados
+    // en gradle/cefrium-0.21.0.sha256. Un módulo nativo por ABI publicada.
+    implementation("com.cefrium:cefrium-sdk-core:0.21.0")
+    implementation("com.cefrium:cefrium-native-codecs-arm64-v8a:0.21.0")
+    implementation("com.cefrium:cefrium-native-codecs-armeabi-v7a:0.21.0")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
     // Selector de pestañas: tarjetas recicladas y deslizar para cerrar.

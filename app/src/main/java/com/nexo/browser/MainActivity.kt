@@ -1860,6 +1860,9 @@ class MainActivity :
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_MEDIA_NOTIFICATIONS) MediaPlaybackService.sync(this)
+        // Permisos que pidió el propio Chromium (p. ej. la cámara para un selector de archivos).
+        if (requestCode !in permissionCallbacks &&
+            com.nexo.browser.engine.Engines.current.onRequestPermissionsResult(requestCode, permissions, grantResults)) return
         permissionCallbacks.remove(requestCode)?.invoke(
             grantResults.isNotEmpty() && grantResults.any { it == PackageManager.PERMISSION_GRANTED }
         )
@@ -1910,7 +1913,11 @@ class MainActivity :
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == PlaybackAudioCapture.REQUEST) { PlaybackAudioCapture.result(this,resultCode,data); return }
-        if (requestCode != REQUEST_FILE_PICKER) return
+        if (requestCode != REQUEST_FILE_PICKER) {
+            // Intents que abrió Chromium (cámara, documentos): MainActivity no es una ComponentActivity.
+            com.nexo.browser.engine.Engines.current.onActivityResult(requestCode, resultCode, data)
+            return
+        }
         val callback = filePickerCallback ?: return
         filePickerCallback = null
 

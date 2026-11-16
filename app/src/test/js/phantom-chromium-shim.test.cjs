@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const shimSource = fs.readFileSync(path.join(__dirname, '../../chromium/assets/nexo/phantom-shim.js'), 'utf8');
+const shimSource = fs.readFileSync(path.join(__dirname, '../../main/assets/nexo/phantom-shim.js'), 'utf8');
 const assets = path.join(__dirname, '../../main/assets/extensions/phantomshield');
 const read = file => fs.readFileSync(path.join(assets, file), 'utf8');
 

@@ -21,7 +21,7 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w360dp-h800dp-xhdpi")
 class SkillPracticeRegressionTest {
-    @Test @Config(sdk = [26, 33, 35])
+    @Test @Config(sdk = [29, 33, 35])
     fun privateClipboardMarksSensitivityAndPreservesTheCopiedText() {
         val privateClip = ClipboardPrivacy.plainText("Enlace", "https://example.com/private", sensitive = true)
         assertEquals("https://example.com/private", privateClip.getItemAt(0).text.toString())

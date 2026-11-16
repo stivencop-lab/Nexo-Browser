@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Variante Gecko: tienda de extensiones de addons.mozilla.org. -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
-        <activity android:name="com.nexo.browser.ExtensionStoreActivity" android:exported="false" />
-    </application>
-</manifest>

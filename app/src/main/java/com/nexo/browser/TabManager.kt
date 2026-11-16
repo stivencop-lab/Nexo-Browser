@@ -22,8 +22,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 object TabManager {
     private const val PRIVATE_LIVE_LIMIT = 8
     private const val ISOLATION_UNAVAILABLE =
-        "Este teléfono no puede abrir pestañas privadas ni Burner aisladas: su Android System WebView no admite perfiles " +
-            "separados y compartirían cookies con las normales. Actualiza «Android System WebView» desde Google Play."
+        "Este teléfono no puede abrir pestañas privadas ni Burner aisladas: el motor no admite perfiles separados " +
+            "y compartirían cookies con las normales."
     interface Listener {
         fun onActiveTabChanged(tab: BrowserTab, session: EngineSession)
         fun onTabChanged(tab: BrowserTab)

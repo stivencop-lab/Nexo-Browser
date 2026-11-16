@@ -40,6 +40,11 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <!--
+        Chromium (Cefrium) respeta la política de red de Android: sin
+        usesCleartextTraffic no abriría ningún sitio http:// (net::ERR_CLEARTEXT_NOT_PERMITTED).
+        Los servicios propios de Nexo siguen usando solo direcciones https validadas.
+    -->
     <application
         android:name="com.nexo.browser.NexoApplication"
         android:allowBackup="false"
@@ -49,7 +54,7 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Nexo.Light.Violet"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
         <!-- Solo activo en la actualización de transición (paquete anterior). -->
         <provider
             android:name="com.nexo.browser.LegacyProfileProvider"
