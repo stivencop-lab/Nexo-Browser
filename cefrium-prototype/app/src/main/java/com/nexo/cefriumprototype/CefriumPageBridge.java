@@ -9,7 +9,15 @@ final class CefriumPageBridge implements CefriumBrowser.QueryHandler {
     private final Listener listener;
     CefriumPageBridge(Listener listener) { this.listener = listener; }
 
+    @Override public boolean onQuery(long id, String request, String origin, CefriumBrowser.QueryCallback callback) {
+        return handle(id, request, origin, true, callback);
+    }
+
     @Override public boolean onQuery(long id, String request, String origin, boolean mainFrame, CefriumBrowser.QueryCallback callback) {
+        return handle(id, request, origin, mainFrame, callback);
+    }
+
+    private boolean handle(long id, String request, String origin, boolean mainFrame, CefriumBrowser.QueryCallback callback) {
         if (!mainFrame || listener == null) { callback.failure(-403, "main frame required"); return true; }
         try {
             JSONObject message = new JSONObject(request);
