@@ -44,6 +44,9 @@ android {
             // El motor (libcef.so) va comprimido dentro del APK; Android
             // extrae las librerías una sola vez al instalar.
             useLegacyPackaging = true
+            // Nexo solo publica ARM: Cefrium no trae libcef.so para x86/x86_64 y
+            // su plugin rechaza un APK con esas ABI (las aporta androidx.datastore).
+            excludes += listOf("lib/x86/**", "lib/x86_64/**")
         }
     }
     splits {

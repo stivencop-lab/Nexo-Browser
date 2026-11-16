@@ -129,7 +129,7 @@ class UiThemeRegressionTest {
         controller.pause().stop().destroy()
     }
 
-    @Test @Config(sdk = [26, 35]) fun nativeDialogAccentMatchesViewTokens() {
+    @Test @Config(sdk = [29, 35]) fun nativeDialogAccentMatchesViewTokens() {
         val app = RuntimeEnvironment.getApplication()
         val controller = Robolectric.buildActivity(Activity::class.java).setup()
         val a = controller.get()

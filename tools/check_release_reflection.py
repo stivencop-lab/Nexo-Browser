@@ -30,24 +30,35 @@ def manifest_classes(aapt2, apk):
     package = package.group(1) if package else ""
 
     classes = set()
+    native_services = set()
     element = None
+    component = None
     for line in dump.splitlines():
         tag = re.match(r"\s*E: ([\w-]+)", line)
         if tag:
             element = tag.group(1)
+            if element in COMPONENT_TAGS:
+                component = None
+            continue
+        # Servicio nativo (android:nativeService, Android 17+): Android lo arranca
+        # desde una librería .so, no tiene clase Java (renderizadores de Cefrium).
+        if element == "service" and component and re.match(
+                r"\s*A: http://schemas.android.com/apk/res/android:nativeService\([^)]*\)=true", line):
+            native_services.add(component)
             continue
         name = re.match(r'\s*A: http://schemas.android.com/apk/res/android:name\([^)]*\)="([^"]+)"', line)
         if not name or element is None:
             continue
         value = name.group(1)
         if element in COMPONENT_TAGS:
-            classes.add(package + value if value.startswith(".") else value)
+            component = package + value if value.startswith(".") else value
+            classes.add(component)
         elif element == "meta-data":
             if value.startswith(REGISTRAR_PREFIX):
                 classes.add(value[len(REGISTRAR_PREFIX):])
             elif value.startswith("androidx.") and value.endswith("Initializer"):
                 classes.add(value)
-    return classes
+    return classes - native_services
 
 
 def dex_constructors(dexdump, apk):
