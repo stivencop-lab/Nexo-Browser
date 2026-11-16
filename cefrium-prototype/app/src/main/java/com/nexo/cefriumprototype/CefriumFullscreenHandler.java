@@ -3,6 +3,8 @@ package com.nexo.cefriumprototype;
 import com.cefrium.CefriumBrowser;
 import com.cefrium.CefriumChromeClient;
 
+import java.util.function.Consumer;
+
 final class CefriumFullscreenHandler {
     private final Consumer<Boolean> onFullscreen;
 

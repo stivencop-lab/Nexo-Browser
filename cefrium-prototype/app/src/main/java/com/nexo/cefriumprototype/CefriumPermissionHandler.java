@@ -1,9 +1,11 @@
-package com.necko.cefriumprototype;
+package com.nexo.cefriumprototype;
 
 import com.cefrium.CefriumBrowser;
 import com.cefrium.CefriumChromeClient;
 import com.cefrium.CefriumPermission;
 import com.cefrium.CefriumPermissionRequest;
+
+import java.util.function.Consumer;
 
 final class CefriumPermissionHandler {
     private final CefriumChromeClient chromeClient;
