@@ -14,8 +14,28 @@ final class CefriumSession {
     private final CefriumBrowser browser;
     private final ViewGroup surface;
     private String currentUrl = "";
-    private CefriumSession(CefriumBrowser browser, ViewGroup surface) { this.browser = browser; this.surface = surface; browser.setNavigationClient(new CefriumNavigationClient() { @Override public void onUrlChanged(CefriumBrowser ignored, String url) { currentUrl = url == null ? "" : url; } }); }
-    static CefriumSession create(Activity activity, boolean incognito) { CefriumProfile profile = incognito ? CefriumProfile.incognito() : CefriumProfile.getDefault(); CefriumBrowser browser = CefriumBrowser.createWithSurface(activity, profile); View surface = browser.getSurfaceContainer(); FrameLayout container = new FrameLayout(activity); container.addView(surface, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)); return new CefriumSession(browser, container); }
+
+    private CefriumSession(CefriumBrowser browser, ViewGroup surface) {
+        this.browser = browser;
+        this.surface = surface;
+        browser.setNavigationClient(new CefriumNavigationClient() {
+            @Override public void onUrlChanged(CefriumBrowser ignored, String url) { currentUrl = url == null ? "" : url; }
+        });
+        browser.setResourceInterceptor(new CefriumShieldInterceptor());
+        browser.setQueryHandler(
+                CefriumBrowser.QueryOriginPolicy.exactly("https://example.com"),
+                new CefriumPageBridge((type, payload) -> { }));
+    }
+
+    static CefriumSession create(Activity activity, boolean incognito) {
+        CefriumProfile profile = incognito ? CefriumProfile.incognito() : CefriumProfile.getDefault();
+        CefriumBrowser browser = CefriumBrowser.createWithSurface(activity, profile);
+        View surface = browser.getSurfaceContainer();
+        FrameLayout container = new FrameLayout(activity);
+        container.addView(surface, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return new CefriumSession(browser, container);
+    }
+
     ViewGroup view() { return surface; }
     String url() { return currentUrl; }
     void loadUrl(String url) { browser.loadUrl(url); }
@@ -25,6 +45,6 @@ final class CefriumSession {
     boolean canGoForward() { return browser.canGoForward(); }
     void goForward() { browser.goForward(); }
     Bundle saveState() { return browser.saveState(); }
-    void restoreState(Bundle state) { browser.restoreState(state); }
+    void restoreState(Bundle state) { if (state != null) browser.restoreState(state); }
     void close() { browser.close(); }
 }
