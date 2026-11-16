@@ -13,18 +13,21 @@ final class CefriumPermissionHandler {
     CefriumPermissionHandler(Consumer<PermissionPrompt> onPrompt) {
         this.chromeClient = new CefriumChromeClient() {
             @Override public void onPermissionRequest(CefriumBrowser browser, CefriumPermissionRequest request) {
-                String[] perms = request.getPermissions();
-                boolean[] granted = new boolean[perms.length];
-                onPrompt.accept(new PermissionPrompt(request, granted));
+                Set<CefriumPermission> perms = request.getPermissions();
+                boolean[] granted = new boolean[perms.size()];
+                int idx = 0;
+                for (CefriumPermission p : perms) {
+                    onPrompt.accept(new PermissionPrompt(request, idx, granted));
+                    idx++;
+                }
             }
         };
     }
 
     CefriumChromeClient chromeClient() { return chromeClient; }
 
-    record PermissionPrompt(CefriumPermissionRequest request, boolean[] response) {
-        void grant(int index) { response[index] = true; }
-        void deny(int index) { response[index] = false; }
-        void answer() { request.grant(response); }
+    record PermissionPrompt(CefriumPermissionRequest request, int index, boolean[] granted) {
+        void grant() { request.grant(granted); }
+        void deny() { request.deny(granted); }
     }
 }

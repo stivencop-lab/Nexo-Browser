@@ -2,7 +2,6 @@ package com.nexo.cefriumprototype;
 
 import com.cefrium.CefriumBrowser;
 import com.cefrium.CefriumChromeClient;
-import com.cefrium.CefriumWindow;
 
 import java.util.function.Consumer;
 
