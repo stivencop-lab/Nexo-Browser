@@ -11,11 +11,13 @@
 
 El POM es agregador; los AAR reales son core y tres artefactos de codecs por ABI. Sus SHA-256, además del SHA del POM, están en gradle/cefrium-0.21.0.sha256. Los sidecars .sha256 del Maven fueron descargados y coincidieron con los hashes calculados localmente.
 
-## Verificación pendiente
+## Verificación completada
 
-Las URLs Maven comprobadas no expusieron un .asc junto a los AAR. La release oficial declara SHA256SUMS.asc; antes de integrar hay que descargarlo desde la release 0.21.0, verificarlo con la huella pública del mantenedor y comparar sus hashes.
+La release oficial de Codeberg `v0.21.0` aporta `SHA256SUMS-0.21.0`, `SHA256SUMS-0.21.0.asc`, SBOM SPDX y NOTICE. La firma detached se verificó localmente con GnuPG contra la huella pública `2A84 0ED0 0DE6 69F4 219B 8B33 02A7 9E3B 8215 1695`; GnuPG reportó `GOODSIG` y `VALIDSIG` de la clave `5B639D9BFE995C6418CEFA8970CB7258A38E268F`.
 
-Hasta entonces no se integran AARs, no se cambia Engines.current y no se elimina Gecko/WebView.
+Los hashes oficiales de los cuatro AAR por ABI coinciden con Maven y con los hashes locales. El SBOM y NOTICE fueron descargados y quedan registrados en `gradle/cefrium-0.21.0.sha256`.
+
+La integración de código sigue bloqueada hasta preparar el build aislado JDK 25/AGP 9.4/Gradle 9.7.1; no se cambia `Engines.current` ni se elimina Gecko/WebView en esta fase.
 
 ## Siguiente paso
 
