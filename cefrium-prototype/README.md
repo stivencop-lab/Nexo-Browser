@@ -4,13 +4,10 @@ Standalone arm64 smoke project for Cefrium 0.21.0 (Chromium 156.0.8078.96). It i
 
 ## Build
 
-Use Linux or a JDK 25 environment, then run `gradle :app:assembleDebug --no-daemon` from this directory. Install the generated arm64 APK on Android 10+ and verify that `https://example.com/` renders.
+Use the checked-in wrapper:
 
-The project uses only the public `com.cefrium.*` API. Do not import `org.chromium.*` or `GEN_JNI`.
+    gradlew :app:assembleDebug --no-daemon
 
-Before distributing an artifact, verify it against `gradle/cefrium-0.21.0.sha256` and the official signed Codeberg release sums, SBOM and NOTICE.
+Install the generated arm64 APK on Android 10+ and verify that https://example.com/ renders.
 
-
-## Local smoke result
-
-The arm64 debug prototype compiled successfully on Windows with JDK 25.0.5, Gradle 9.7.1, Android platform 37.2 and build-tools 37.0.0. Generated APK: `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`; local SHA-256: `D7AF44C747B854E0305852B7951EAE84E6C3EB4E2E449C44668A5C14FFF4F871`. The APK is a temporary build artifact and is not committed. Device rendering is still pending on an Android 10+ arm64 device.
+The prototype includes CefriumSession, a public-API-only adapter covering surface creation, navigation, back/forward, incognito profile selection and state hooks. Do not import org.chromium.* or GEN_JNI.
