@@ -16,11 +16,20 @@ class NexoApplication : Application() {
      */
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
-        CrashLog.install(this)
+        if (isMainProcess()) CrashLog.install(this)
     }
+
+    /**
+     * Chromium dibuja las páginas en procesos aislados (renderizadores) y usa
+     * otros para GPU y red; Android crea esta Application también en ellos.
+     * Un proceso aislado no puede leer los archivos de la app: Nexo solo se
+     * inicia en su proceso principal y deja los demás a Chromium.
+     */
+    private fun isMainProcess(): Boolean = Application.getProcessName() == packageName
 
     override fun onCreate() {
         super.onCreate()
+        if (!isMainProcess()) return
         AppContext.initialize(this)
         CrashLog.install(this)
         MigrationMode.initialize(this)
@@ -45,6 +54,7 @@ class NexoApplication : Application() {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        if (!isMainProcess()) return
         TabManager.onTrimMemory(level)
         SiteIconStore.trimMemory(level)
         RemoteImageLoader.trimMemory(level)

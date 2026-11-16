@@ -34,24 +34,61 @@ function nativeSide(answer) {
   };
 }
 
-function page(native) {
+function page(native, { top = true, media = [], mediaSession } = {}) {
   const timers = [];
   const document = new EventTarget();
   document.visibilityState = 'visible';
-  document.querySelectorAll = () => [];
+  document.querySelectorAll = (selector) => selector.includes('audio') ? media : media.filter(m => m.tagName === 'VIDEO');
   document.querySelector = () => null;
   document.documentElement = { toggleAttribute() {} };
   const context = vm.createContext({
     console, JSON, Promise, Map, Object, Error, Array, WeakMap, Math, document,
     setInterval: (fn) => { timers.push(fn); return timers.length; },
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
     addEventListener() {},
     devicePixelRatio: 1,
+    navigator: { mediaSession },
     cefriumQuery: (options) => native.query(options)
   });
   context.globalThis = context;
   context.window = context;
+  context.top = top ? context : {};
   return { context, tick: () => timers.forEach(fn => fn()) };
 }
+
+const element = (tagName, props) => Object.assign({
+  tagName, paused: true, ended: false, muted: false, volume: 1, currentSrc: 'https://media.example/a',
+  videoWidth: 640, videoHeight: 360, clientWidth: 320, clientHeight: 180,
+  getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 180 })
+}, props);
+
+const bridgeMessages = (native, type) => native.received.filter(m => m.kind === 'bridge' && m.payload.type === type).map(m => m.payload);
+
+test('a subframe without media stays silent so it cannot clear the video of another frame', async () => {
+  const native = nativeSide(() => undefined);
+  const { context, tick } = page(native, { top: false });
+  vm.runInContext(portSource + '\nnexoCefriumPort(false);\n' + bridgeSource, context);
+  tick();
+  await flush();
+  assert.deepEqual(bridgeMessages(native, 'video_state'), []);
+  assert.deepEqual(bridgeMessages(native, 'media_state'), []);
+});
+
+test('audible media is reported once per change; muted background loops are ignored', async () => {
+  const audio = element('AUDIO', { paused: false });
+  const loop = element('VIDEO', { paused: false, muted: true });
+  const native = nativeSide(() => undefined);
+  const { context, tick } = page(native, { media: [loop, audio], mediaSession: { playbackState: 'none', metadata: { title: 'Canción' } } });
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + bridgeSource, context);
+  tick();
+  tick();
+  await flush();
+  assert.deepEqual(bridgeMessages(native, 'media_state'), [{ type: 'media_state', active: true, playing: true, title: 'Canción' }]);
+  audio.paused = true;
+  tick();
+  await flush();
+  assert.deepEqual(bridgeMessages(native, 'media_state').at(-1), { type: 'media_state', active: true, playing: false, title: 'Canción' });
+});
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 

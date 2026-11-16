@@ -64,10 +64,11 @@ function nexoCefriumPort(isTop) {
   if (isTop) {
     try { Object.defineProperty(globalThis, '__nexoWake', { value: poll, configurable: true }); } catch (_) {}
   }
-  // Marcos visibles: cada segundo la página principal, cada tres los marcos internos.
+  // Respaldo para marcos visibles: Nexo despierta al principal al publicar
+  // (__nexoWake), así que basta con consultar cada 2 s; los internos, cada 4 s.
   setInterval(function() {
     if (document.visibilityState !== 'hidden') poll();
-  }, isTop ? 1000 : 3000);
+  }, isTop ? 2000 : 4000);
   poll();
   return true;
 }

@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.util.Log
 import android.view.KeyEvent
 import android.view.ViewGroup
 import com.cefrium.Cefrium
@@ -33,11 +34,13 @@ import com.nexo.browser.TabRouting
 import com.nexo.browser.engine.EngineContextElement
 import com.nexo.browser.engine.EngineFinder
 import com.nexo.browser.engine.EngineLoadRequest
+import com.nexo.browser.engine.EngineMedia
 import com.nexo.browser.engine.EngineObserver
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.EngineSessionState
 import com.nexo.browser.engine.FindResult
 import com.nexo.browser.engine.LoadDecision
+import com.nexo.browser.engine.MediaEvent
 import com.nexo.browser.engine.ProcessExit
 import com.nexo.browser.engine.SessionParams
 import com.nexo.browser.shield.PhantomShield
@@ -97,6 +100,25 @@ class CefriumEngineSession internal constructor(
     private var pendingUrl: String? = null
     private var pendingState: CefriumState? = null
 
+    /** El interceptor actual filtra cookies (la política de Ajustes lo exige). */
+    private var cookieFiltering: Boolean? = null
+
+    /** Medios con sonido de la página (los informa el puente): notificación y segundo plano. */
+    private var mediaActive = false
+    private var mediaPlaying = false
+    private var mediaTitle: String? = null
+
+    /**
+     * Controles de la notificación: Chromium pausa y reanuda en el proceso del
+     * navegador, así que funcionan aunque la página esté en segundo plano.
+     */
+    private val media = object : EngineMedia {
+        override val isActive: Boolean get() = mediaActive
+        override fun play() { runCatching { browser?.resumeMedia() } }
+        override fun pause() { runCatching { browser?.suspendMedia() } }
+        override fun stop() { runCatching { browser?.suspendMedia() } }
+    }
+
     override val isOpen: Boolean get() = opened && !closed
 
     private val stateTask = Runnable { emitState() }
@@ -147,9 +169,11 @@ class CefriumEngineSession internal constructor(
             releaseBrowser()
         }
         val created = runCatching { CefriumBrowser.createWithSurface(activity, profile) }.getOrElse {
+            Log.e(CefriumEngine.TAG, "createWithSurface falló (perfil ${profile.name}, privado=${profile.isIncognito})", it)
             TabManager.notifyMessage("Chromium no pudo abrir la pestaña: ${it.message ?: it.javaClass.simpleName}")
             return null
         }
+        Log.i(CefriumEngine.TAG, "navegador creado (perfil ${profile.name}, privado=${profile.isIncognito})")
         setUp(created, activity)
         val state = pendingState
         val url = pendingUrl
@@ -170,6 +194,7 @@ class CefriumEngineSession internal constructor(
         target.setNavigationClient(Navigation())
         target.setChromeClient(Chrome())
         target.setDownloadClient(Downloads())
+        cookieFiltering = PhantomShield.filtersCookies()
         target.setResourceInterceptor(PhantomShield.interceptor(shield))
         PhantomShield.attach(target, shield)
         ExtensionManager.bindSession(this)
@@ -187,6 +212,8 @@ class CefriumEngineSession internal constructor(
             (target.surfaceContainer.parent as? ViewGroup)?.removeView(target.surfaceContainer)
             target.close()
         }
+        // Chromium puede dejar vivo el proceso del navegador cerrado: liberarlo (nunca toca uno en uso).
+        runCatching { CefriumBrowser.reapUnusedRenderers() }
     }
 
     /** Ajustes de la pestaña según las preferencias (también al cambiarlas). */
@@ -203,7 +230,12 @@ class CefriumEngineSession internal constructor(
             target.setDarkMode(CefriumEngine.darkPages(context))
             applyUserAgent(target)
         }
-        PhantomShield.cookieMode = BrowserPrefs.cookieMode(context)
+        // El filtro de cookies cuesta en cada cookie: el interceptor cambia solo si cambia la política.
+        val filtering = PhantomShield.filtersCookies()
+        if (filtering != cookieFiltering) {
+            cookieFiltering = filtering
+            target.setResourceInterceptor(PhantomShield.interceptor(shield))
+        }
     }
 
     private fun applyUserAgent(target: CefriumBrowser) {
@@ -347,6 +379,31 @@ class CefriumEngineSession internal constructor(
 
     // --- Ayudas ---
 
+    /** Estado de los medios con sonido que informa el puente de la página (hilo principal). */
+    internal fun onMediaState(active: Boolean, playing: Boolean, title: String?) {
+        val observer = observer ?: return
+        if (!active) {
+            if (!mediaActive) return
+            mediaActive = false
+            mediaPlaying = false
+            mediaTitle = null
+            observer.onMedia(this, MediaEvent.DEACTIVATED, media, null)
+            return
+        }
+        if (!mediaActive) {
+            mediaActive = true
+            observer.onMedia(this, MediaEvent.ACTIVATED, media, null)
+        }
+        if (!title.isNullOrBlank() && title != mediaTitle) {
+            mediaTitle = title
+            observer.onMedia(this, MediaEvent.METADATA, media, title)
+        }
+        if (playing != mediaPlaying) {
+            mediaPlaying = playing
+            observer.onMedia(this, if (playing) MediaEvent.PLAY else MediaEvent.PAUSE, media, null)
+        }
+    }
+
     internal fun clearCache() {
         runCatching { browser?.clearCache() }
     }
@@ -456,6 +513,8 @@ class CefriumEngineSession internal constructor(
         override fun onLoadStart(browser: CefriumBrowser, url: String?) {
             mainFrameError = false
             sslNoticeFor = null
+            // Documento nuevo: sus medios los volverá a informar el puente.
+            onMediaState(active = false, playing = false, title = null)
             observer?.onPageStart(this@CefriumEngineSession, url ?: currentUrl.orEmpty())
         }
 
@@ -479,6 +538,9 @@ class CefriumEngineSession internal constructor(
 
         override fun onLoadError(browser: CefriumBrowser, error: CefriumLoadError) {
             mainFrameError = true
+            // Solo el host: la URL completa puede llevar datos personales.
+            val host = error.failedUrl?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"
+            Log.w(CefriumEngine.TAG, "error de carga ${error.errorCode} (${error.description}) en $host")
         }
 
         /**
@@ -490,6 +552,7 @@ class CefriumEngineSession internal constructor(
                 CefriumRendererTerminationStatus.KILLED, CefriumRendererTerminationStatus.OOM -> ProcessExit.KILL
                 else -> ProcessExit.CRASH
             }
+            Log.w(CefriumEngine.TAG, "el proceso de la página terminó: $status (código $errorCode)")
             main.post { observer?.onProcessExit(this@CefriumEngineSession, exit) }
         }
 
@@ -575,11 +638,26 @@ class CefriumEngineSession internal constructor(
         override fun shouldOverrideKeyEvent(browser: CefriumBrowser, event: KeyEvent): Boolean = false
     }
 
-    /** Las descargas las hace el gestor de Nexo: Chromium la cancela y Nexo la pide de nuevo. */
+    /**
+     * Las descargas las hace el gestor de Nexo: Chromium la cancela y Nexo la
+     * pide de nuevo con las cookies del perfil. Lo que genera la propia página
+     * (`blob:`, `data:`) no se puede volver a pedir: Chromium lo guarda en la
+     * caché de la app y, al terminar, pasa al gestor de Nexo como un archivo.
+     */
     private inner class Downloads : CefriumDownloadClient {
+        private val pageFiles = HashMap<Int, PageGeneratedDownload>()
+
         override fun onBeforeDownload(
             browser: CefriumBrowser, item: CefriumBrowser.DownloadItem, callback: CefriumBrowser.BeforeDownloadCallback
         ) {
+            val url = item.url.orEmpty()
+            if (url.startsWith("blob:") || url.startsWith("data:")) {
+                val target = runCatching { PageGeneratedDownload.reserve(appContext, item.id) }.getOrNull()
+                if (target == null || observer == null) { callback.cancel(); return }
+                pageFiles[item.id] = PageGeneratedDownload(url, target, item.suggestedName, item.mimeType)
+                callback.allow(target.path)
+                return
+            }
             callback.cancel()
             val observer = observer ?: return
             observer.onDownload(
@@ -589,6 +667,21 @@ class CefriumEngineSession internal constructor(
                     currentUrl, profile, if (desktopMode) UserAgents.desktop() else null
                 )
             )
+        }
+
+        override fun onDownloadUpdated(browser: CefriumBrowser, item: CefriumBrowser.DownloadItem) {
+            val pending = pageFiles[item.id] ?: return
+            when {
+                item.isComplete -> {
+                    pageFiles.remove(item.id)
+                    val observer = observer
+                    if (observer == null || closed) pending.discard() else observer.onDownload(this@CefriumEngineSession, pending)
+                }
+                item.isCanceled || item.isInterrupted -> {
+                    pageFiles.remove(item.id)
+                    pending.discard()
+                }
+            }
         }
     }
 }
