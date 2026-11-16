@@ -40,7 +40,7 @@ así que reenvía `onActivityResult` y `onRequestPermissionsResult` al motor.
 `window.cefriumQuery` solo admite respuestas inmediatas y un manejador por navegador. Cada
 pestaña tiene un `PageChannel`: las páginas envían `{m, s}` y reciben la respuesta más los
 eventos que Nexo publicó desde `s` (ajustes, órdenes de mini video y subtítulos, respuestas
-tardías del panel). Los marcos consultan cada 1 s (principal) o 3 s (internos) mientras la
+tardías del panel). Los marcos consultan cada 2 s (principal) o 4 s (internos) mientras la
 página es visible, y Nexo despierta al marco principal al publicar. `phantom-shim.js` y
 `nexo-bridge.js` no cambian: reciben el mismo puerto `__nexoShield` que en WebView.
 
@@ -59,7 +59,11 @@ Igual o mejor:
   respaldo).
 - PhantomShield recibe el tipo exacto de cada petición y la página principal desde Chromium.
 - Historial atrás/adelante restaurado tras reiniciar la app.
-- PDF directo (`printToPdf`) y política de cookies (todas, propias, ninguna) en el interceptor.
+- PDF directo (`printToPdf`) y política de cookies (todas, propias, ninguna) en el interceptor; el
+  filtro de cookies solo se activa cuando la política lo necesita.
+- Notificación multimedia y reproducción en segundo plano: el puente informa los medios con sonido
+  (y el título de `navigator.mediaSession`); pausa y reanudación las hace Chromium en el proceso
+  del navegador, también con la página en segundo plano.
 
 Pendiente (la interfaz lo explica al usuario):
 
@@ -73,7 +77,8 @@ Pendiente (la interfaz lo explica al usuario):
 5. **Puente completo de `nexo_bridge`** (Dark Reader para páginas, protección de la
    reproducción en segundo plano): el puente reducido cubre mini video y subtítulos.
 6. **IA de PhantomShield, parcheador anti-bloqueo**: como en la variante WebView.
-7. Descargas `blob:`/`data:` y resultado de un POST: Nexo vuelve a pedir la URL, como con WebView.
+7. Descargas resultado de un POST: Nexo vuelve a pedir la URL (las `blob:`/`data:` que genera la
+   página sí funcionan: Chromium las guarda y pasan al gestor de Nexo).
 8. Política de cookies "equilibrada": hoy es la de Chromium (sin bloqueo de cookies de rastreo
    de terceros como hacía la protección estándar de Gecko).
 

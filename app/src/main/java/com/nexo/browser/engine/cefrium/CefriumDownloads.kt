@@ -53,6 +53,49 @@ internal object CefriumDownloads {
     }
 }
 
+/**
+ * Archivo que generó la página (`blob:`, `data:`): Chromium lo dejó en la
+ * caché de la app y el gestor de Nexo lo copia a Descargas. El temporal se
+ * borra al terminar de leerlo o al descartarlo.
+ */
+internal class PageGeneratedDownload(
+    override val uri: String,
+    private val file: java.io.File,
+    private val suggestedName: String?,
+    private val mimeType: String?
+) : EngineDownload {
+    override fun discard() {
+        file.delete()
+    }
+
+    override fun open(): DownloadResponse {
+        if (!file.isFile) throw IOException("La página no terminó de generar el archivo")
+        val headers = mutableMapOf("Content-Length" to file.length().toString())
+        val name = suggestedName?.replace("\"", "")?.takeIf { it.isNotBlank() }
+        if (name != null) headers["Content-Disposition"] = "attachment; filename=\"$name\""
+        if (!mimeType.isNullOrBlank()) headers["Content-Type"] = mimeType
+        val body = object : java.io.FileInputStream(file) {
+            override fun close() {
+                super.close()
+                file.delete()
+            }
+        }
+        return DownloadResponse(uri, 200, headers, body)
+    }
+
+    companion object {
+        private const val FOLDER = "page-downloads"
+
+        /** Archivo temporal para la descarga [id]; los que quedaron de otra sesión se borran. */
+        fun reserve(context: android.content.Context, id: Int): java.io.File {
+            val folder = java.io.File(context.cacheDir, FOLDER).apply { mkdirs() }
+            val day = 24L * 3600 * 1000
+            folder.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > day }?.forEach { it.delete() }
+            return java.io.File(folder, "${System.currentTimeMillis()}-$id.part")
+        }
+    }
+}
+
 /** Descarga que Chromium iba a guardar: se cancela allí y la hace el gestor de Nexo. */
 internal class CefriumDownload(
     override val uri: String,
@@ -65,9 +108,6 @@ internal class CefriumDownload(
     override fun discard() = Unit
 
     override fun open(): DownloadResponse {
-        if (uri.startsWith("blob:") || uri.startsWith("data:")) {
-            throw IOException("Las descargas generadas por la página (blob/data) todavía no están disponibles en esta versión")
-        }
         val response = CefriumDownloads.request(uri, emptyMap(), referrer, profile, userAgent)
         // El nombre y el tipo que Chromium ya conoce sirven si el servidor no los repite.
         val headers = response.headers.toMutableMap()

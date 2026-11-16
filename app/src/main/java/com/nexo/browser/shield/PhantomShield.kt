@@ -98,6 +98,12 @@ object PhantomShield {
         val channel = PageChannel()
         internal var lastPopupReport = 0L
 
+        /** Marco que tiene el video de la pestaña (`top` o el origen del marco interno). */
+        @Volatile internal var videoFrame: String? = null
+
+        /** Marco que tiene los medios con sonido de la pestaña. */
+        @Volatile internal var mediaFrame: String? = null
+
         /** Respuestas propias pendientes: el hilo de red decide, otro hilo responde. */
         internal val answers = ConcurrentHashMap<String, ShieldDecision>()
 
@@ -106,6 +112,8 @@ object PhantomShield {
             topHost = UrlParts.host(url)
             blocked.set(0)
             channel.reset()
+            videoFrame = null
+            mediaFrame = null
         }
 
         /** Navegación sin petición de red (atrás/adelante en caché, cambios de historial). */
@@ -143,10 +151,14 @@ object PhantomShield {
         io.scheduleWithFixedDelay({ updateIfDue() }, 5, 3600, TimeUnit.SECONDS)
     }
 
-    /** Peticiones de los service workers de un perfil (no pertenecen a ninguna pestaña). */
+    /** Peticiones de los service workers de un perfil (no pertenecen a ninguna pestaña); una vez por perfil. */
     fun attachProfile(profile: CefriumProfile) {
+        if (!attachedProfiles.add(profile.name + "|" + profile.isIncognito)) return
         runCatching { profile.setResourceInterceptor(Interceptor(null)) }
+            .onFailure { attachedProfiles.remove(profile.name + "|" + profile.isIncognito) }
     }
+
+    private val attachedProfiles = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
     private fun readAsset(path: String): String =
         appContext.assets.open(ASSET_ROOT + path).use { it.readBytes().toString(Charsets.UTF_8) }
@@ -276,16 +288,26 @@ object PhantomShield {
         return ShieldPolicy.stripTrackingParams(url) ?: url
     }
 
-    /** Interceptor de red de una pestaña ([tab]) o de los service workers (`null`). */
-    fun interceptor(tab: ShieldTab?): CefriumResourceInterceptor = Interceptor(tab)
+    /**
+     * Interceptor de red de una pestaña ([tab]) o de los service workers (`null`).
+     * Cefrium solo pasa cada cookie por Java si el interceptor implementa el
+     * filtro: se usa la variante con filtro únicamente cuando hace falta.
+     */
+    fun interceptor(tab: ShieldTab?): CefriumResourceInterceptor =
+        if (tab != null && filtersCookies()) CookieInterceptor(tab) else Interceptor(tab)
 
-    private class Interceptor(private val tab: ShieldTab?) : CefriumResourceInterceptor {
+    /** La política de cookies necesita ver cada cookie (todas = la de Chromium, sin filtro). */
+    fun filtersCookies(): Boolean = cookieMode == BrowserPrefs.COOKIES_NONE || cookieMode == BrowserPrefs.COOKIES_FIRST_PARTY
+
+    private open class Interceptor(protected val tab: ShieldTab?) : CefriumResourceInterceptor {
+        private val answers get() = tab?.answers ?: workerAnswers
+
         /** Hilo de red, sincrónico: true cancela la petición. */
         override fun shouldBlockRequest(request: CefriumBrowser.ResourceRequest): Boolean {
             val url = request.url ?: return false
             if (!url.startsWith("http://") && !url.startsWith("https://")) return false
             if (request.isMainFrame) tab?.onMainFrame(url)
-            if (!started || !enabled) return false
+            if (!started || !enabled) return forget(url)
             val type = ShieldPolicy.typeFromEngine(request.type?.name.orEmpty(), url)
             val top = request.topLevelUrl?.takeIf { it.isNotEmpty() } ?: tab?.topUrl ?: url
             val document = request.documentUrl?.takeIf { it.isNotEmpty() } ?: top
@@ -293,29 +315,40 @@ object PhantomShield {
                 ShieldPolicy.decide(rules.network, settings, popupDomains, url, type, UrlParts.host(top), document)
             }.getOrDefault(ShieldDecision.Allow)
             return when (decision) {
-                ShieldDecision.Allow -> false
-                ShieldDecision.Block -> { recordBlocked(tab); true }
+                ShieldDecision.Allow -> forget(url)
+                ShieldDecision.Block -> { forget(url); recordBlocked(tab); true }
                 else -> {
                     // Script de sustitución o página de aviso: la responde shouldInterceptRequest.
-                    val answers = tab?.answers ?: workerAnswers
-                    if (answers.size > 256) answers.clear()
+                    // La respuesta no se consume: dos peticiones a la vez reciben la misma.
+                    if (answers.size > MAX_ANSWERS) answers.clear()
                     answers[url] = decision
                     false
                 }
             }
         }
 
-        /** Hilo de fondo: solo responde lo que [shouldBlockRequest] marcó. */
+        /** La URL ya no lleva respuesta propia (otra decisión, sitio pausado, escudo apagado). */
+        private fun forget(url: String): Boolean {
+            if (!answers.isEmpty()) answers.remove(url)
+            return false
+        }
+
+        /** Hilo de fondo: solo responde lo que [shouldBlockRequest] marcó; el resto pasa enseguida. */
         override fun shouldInterceptRequest(request: CefriumContentRequest): CefriumContentResponse? {
-            val decision = (tab?.answers ?: workerAnswers).remove(request.url ?: return null) ?: return null
+            if (answers.isEmpty()) return null
+            val decision = answers[request.url ?: return null] ?: return null
             recordBlocked(tab)
             return respond(decision)
         }
+    }
 
+    /** Con "solo propias" o "ninguna": cada cookie pasa por la política de Nexo. */
+    private class CookieInterceptor(tab: ShieldTab) : Interceptor(tab) {
         override fun onCanSendCookie(url: String?, name: String?, value: String?): Boolean = cookieAllowed(tab, url)
         override fun onCanSaveCookie(url: String?, name: String?, value: String?): Boolean = cookieAllowed(tab, url)
     }
 
+    private const val MAX_ANSWERS = 256
     private val workerAnswers = ConcurrentHashMap<String, ShieldDecision>()
 
     /** Política de cookies: "propias" compara el sitio de la cookie con el de la página principal. */
@@ -328,9 +361,14 @@ object PhantomShield {
         else -> true
     }
 
+    /** Scripts de sustitución ya leídos (son cuatro archivos pequeños). */
+    private val surrogates = ConcurrentHashMap<String, ByteArray>()
+
     private fun respond(decision: ShieldDecision): CefriumContentResponse? = when (decision) {
         is ShieldDecision.Surrogate -> {
-            val bytes = runCatching { appContext.assets.open(ASSET_ROOT + decision.asset).use { it.readBytes() } }.getOrDefault(ByteArray(0))
+            val bytes = surrogates.getOrPut(decision.asset) {
+                runCatching { appContext.assets.open(ASSET_ROOT + decision.asset).use { it.readBytes() } }.getOrDefault(ByteArray(0))
+            }
             CefriumContentResponse("application/javascript", ByteArrayInputStream(bytes))
                 .setCharset("utf-8").setContentLength(bytes.size.toLong())
                 .setHeader("Cache-Control", "no-store").setHeader("Access-Control-Allow-Origin", "*")
@@ -422,7 +460,7 @@ object PhantomShield {
     /** Mensajes de las páginas: solo estado de bloqueo y selectores; ni estadísticas ni ajustes. */
     private fun onPageMessage(tab: ShieldTab, message: String, origin: String, isMainFrame: Boolean): String? {
         val call = parse(message) ?: return null
-        if (call.kind == "bridge") { handleBridge(tab, call.payload); return null }
+        if (call.kind == "bridge") { handleBridge(tab, call.payload, if (isMainFrame) "top" else origin); return null }
         return when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })
@@ -449,19 +487,33 @@ object PhantomShield {
         channel.push(JSONObject().put("event", "native").put("message", message).toString())
         return channel.connected
     }
-    private fun handleBridge(tab: ShieldTab, payload: Any?) {
+    private fun handleBridge(tab: ShieldTab, payload: Any?, frame: String) {
         val message = payload as? JSONObject ?: return
         val session = tab.session?.get() ?: return
         when (message.optString("type")) {
             "video_state" -> {
+                // Un marco sin video no borra el video que tiene otro marco de la pestaña.
+                val present = message.optBoolean("present")
+                val owner = tab.videoFrame
+                if (!present && owner != null && owner != frame) return
+                tab.videoFrame = if (present) frame else null
+                // La interfaz consulta el video por la pestaña de Nexo, no por la del escudo.
+                val tabId = TabManager.tabForSession(session)?.id ?: return
                 val rect = if (message.optInt("rw", 0) > 0) android.graphics.Rect(
                     message.optInt("rx"), message.optInt("ry"),
                     message.optInt("rx") + message.optInt("rw"), message.optInt("ry") + message.optInt("rh")
                 ) else null
                 BrowserMediaController.onVideoState(
-                    tab.id.toString(), message.optBoolean("present"), message.optBoolean("playing"),
+                    tabId, present, message.optBoolean("playing"),
                     message.optInt("width"), message.optInt("height"), rect
                 )
+            }
+            "media_state" -> {
+                val active = message.optBoolean("active")
+                val owner = tab.mediaFrame
+                if (!active && owner != null && owner != frame) return
+                tab.mediaFrame = if (active) frame else null
+                session.onMediaState(active, message.optBoolean("playing"), message.optString("title").take(200))
             }
             "captions_track" -> LiveCaptions.onTrack(session, message.optString("source", "track"))
             "captions_text" -> LiveCaptions.onDomText(appContext, session, message.optString("text"))
