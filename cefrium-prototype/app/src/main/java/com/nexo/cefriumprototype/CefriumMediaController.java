@@ -5,6 +5,7 @@ import com.cefrium.CefriumChromeClient;
 
 import java.util.function.Consumer;
 
+/** Media session wrapper using Cefrium's media callbacks. */
 final class CefriumMediaController {
     private final CefriumBrowser browser;
     private final Consumer<MediaInfo> onMedia;
