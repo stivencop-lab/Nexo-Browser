@@ -1,0 +1,18 @@
+# Cefrium 0.21.0 artifact manifest
+
+status: candidate-not-integrated
+sdk: 0.21.0
+chromium: 156.0.8078.96
+min_sdk: 29
+license: LGPL-3.0-or-later
+source: https://codeberg.org/cefrium/cef-android
+repository: https://maven.cefrium.com
+
+# SHA-256 values from Maven .sha256 sidecars.
+com.cefrium:cefrium-sdk-core:0.21.0: 7080a90be0ba3f4890e152bfe2df74471de25132402cc9dDBCAD107D1BD6453B
+com.cefrium:cefrium-native-codecs-arm64-v8a:0.21.0: 1aa3ba8a2780638b5c147206f5287e6f4600852c4e62f4a22a01b257a5e1ca1e
+com.cefrium:cefrium-native-codecs-armeabi-v7a:0.21.0: a159f0671910205e6f1d308cd447a8d7e678adbdef59f8948770bb95278a1549
+com.cefrium:cefrium-native-codecs-x86_64:0.21.0: ee23324da1ac0122edb5d218e494cdfd152055bdc2be30acabb38b88a163f97c
+com.cefrium:cefrium-sdk:0.21.0:pom: 724b39ed5bc4da6d7b2756411e9e3a961b39ea765b51398cc273dd058b2ed101
+
+# Maven sidecars matched downloaded AARs locally. Detached GPG release signature remains pending.
