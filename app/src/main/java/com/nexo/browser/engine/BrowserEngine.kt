@@ -1,6 +1,7 @@
 package com.nexo.browser.engine
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.view.View
 
@@ -57,4 +58,10 @@ interface BrowserEngine {
 
     /** Detiene el motor antes de transferir el perfil; [done] se llama al terminar. */
     fun shutdownForTransfer(done: () -> Unit)
+
+    /** Resultado de una Activity que abrió una página (archivos, cámara); true si era del motor. */
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean = false
+
+    /** Resultado de permisos de Android que pidió el motor; true si era suyo. */
+    fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean = false
 }

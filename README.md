@@ -15,7 +15,8 @@ Esta versión se instala como una app nueva junto a las anteriores; no transfier
 automáticamente historial, pestañas, extensiones ni ajustes. Consulta
 [el cambio de identidad](docs/IDENTIDAD-NEXO.md) antes de instalarla.
 
-Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
+Navegador Android en Kotlin/XML con Chromium 156 embebido ([Cefrium](https://cefrium.com) 0.21.0, LGPL-3.0), desde Android 10.
+Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración](docs/CHROMIUM-NATIVE-MIGRATION.md)).
 
 ## Incluye
 - **Paso desde la app anterior** (`com.ejemplo.navegador`): los releases ya solo publican la app nueva
@@ -33,12 +34,12 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
   pulsación larga en Recargar = recarga sin caché, en "+" = pestaña privada, en el contador = acciones
   rápidas. Todas las hojas y los paneles de extensiones se cierran arrastrándolos hacia abajo.
   Los gestos de la barra y las descargas en varias conexiones se pueden desactivar en Ajustes.
-- Herramientas en la barra de direcciones (hoja inferior): grupo, proxy SOCKS5/HTTP por pestaña,
-  Orbot externo, retardo de solicitudes y geolocalización simulada. DNS DoH configurable para todo el navegador.
+- Herramientas en la barra de direcciones (hoja inferior): grupo, proxy SOCKS5/HTTP por pestaña
+  (en pestañas Burner, que tienen perfil propio), Orbot externo. DNS DoH configurable para todo el navegador.
 - Burner (menú › Burner): contenedor privado aislado, correo temporal de mail.tm con buzón que se
   actualiza solo, códigos de verificación copiables y limpieza al cerrar la última pestaña de la
   identidad. La franja superior muestra la dirección y abre el buzón. Variación experimental de
-  Canvas/WebGL; si ese componente falla, un Burner sin proxy abre igualmente (aislado por Gecko).
+  Canvas/WebGL; cada identidad tiene su propio perfil de Chromium, borrado del disco al siguiente arranque.
 - Modo escritorio: User-Agent + viewport.
 - Temas Midnight, OLED y claro.
 - Siete acentos HCT con cobalto por defecto y color del sistema (Material You) opcional desde Android 12.
@@ -101,9 +102,8 @@ Navegador Android en Kotlin/XML con GeckoView 159 (Firefox 159).
 - Puede ser el navegador predeterminado y recibir enlaces/texto compartido de otras apps.
 - Buscar en la página.
 - Sitios en modo oscuro cuando Nexo usa un tema oscuro.
-- Tienda Android de addons.mozilla.org.
-- Importación de XPI firmado e instalación por URL.
-- Traducción dentro de la página con Gecko, sin recargar ni abrir otra pestaña, con descarga de idiomas confirmada por el usuario.
+- Comprobación de compatibilidad de extensiones de escritorio (CRX, XPI, ZIP) con el runtime NXR;
+  la instalación de extensiones de terceros llegará con ese runtime.
 - Mini reproductor (Picture-in-Picture) con título del video, botón flotante translúcido (pulsación
   larga lo oculta en esa página) y reproducción en segundo plano.
 - Parcheador anti-bloqueo opcional, apagado inicialmente: modifica solo dos bibliotecas
@@ -136,9 +136,9 @@ La versión actual incorpora las correcciones de estabilidad fusionadas en la PR
 Estas correcciones no cambian los modelos, proveedores, endpoints ni la transcripción de subtítulos. La sincronización A/V debe seguir validándose en dispositivos Android físicos con el mismo contenido y con subtítulos activados y desactivados.
 
 ## Extensiones propias
-Los XPI instalados dinámicamente se validan por GeckoView y requieren firma de Mozilla.
-Una extensión privada/sin firma puede integrarse dentro de
-`app/src/main/assets/extensions/` como extensión built-in y compilarse en el APK.
+Chromium embebido no ejecuta WebExtensions. PhantomShield funciona con su motor nativo
+(`app/src/main/java/com/nexo/browser/shield/`) y los scripts de contenido de
+`app/src/main/assets/extensions/phantomshield/`, que hablan con Nexo por `window.cefriumQuery`.
 
 ## Modelo de seguridad
 - **URLs**: las reglas están centralizadas en `SafetyRules.kt` (`UrlSafety`).
@@ -155,14 +155,18 @@ Una extensión privada/sin firma puede integrarse dentro de
   redirecciones sin toque del usuario o en pestaña privada piden confirmación.
 - **Permisos de sitios**: se pregunta siempre mostrando el dominio real; las notificaciones
   web se rechazan porque Nexo aún no las muestra.
-- **Puente nativo** (`nexo_bridge`): verifica su propia extensión y la sesión. PiP usa el frame principal; los subtítulos descubren reproductores en los marcos y capturan desde un único puerto autorizado por sesión. Solo con CC activo se reciben pistas de subtítulos o audio para transcribir; las claves permanecen en el proceso nativo. El puente del traductor local se retira al actualizar.
+- **Puente nativo** (`assets/nexo/`): un único canal por pestaña sobre `window.cefriumQuery`
+  (`cefrium-port.js` ↔ `PageChannel`). Corre en el mundo de la página, así que Nexo solo
+  responde lo que cualquier página ya puede ver (estado de bloqueo, selectores cosméticos) y
+  órdenes de video de su propia pestaña; ajustes, estadísticas e IA solo desde el panel, en su
+  propio origen. Solo con CC activo se reciben pistas de subtítulos; las claves permanecen en el proceso nativo.
 - **Privacidad**: el historial elimina parámetros sensibles (tokens, sesiones, firmas) antes de
   guardarse; las pestañas privadas no se guardan en historial, pestañas ni miniaturas; la
   notificación multimedia no muestra el título en la pantalla de bloqueo.
-- **Descargas**: todas pasan por Gecko (cookies de la sesión, modo privado), se guardan en la
+- **Descargas**: Chromium las entrega al gestor de Nexo, que las pide con las cookies del perfil de la pestaña, se guardan en la
   carpeta privada de la app con nombres saneados, y se borran si quedan incompletas.
-- **Rutas y Burner**: el componente interno `nexo_network` configura la pestaña antes de
-  cargar su destino y está habilitado en privado para aplicar esas rutas. No instala una VPN
+- **Rutas y Burner**: el proxy de una pestaña Burner se aplica a su perfil de Chromium, sin
+  conexión directa de respaldo; una pestaña normal o privada con proxy no se abre. No instala una VPN
   ni incluye Tor. Buzón, IA y listas tienen conexiones propias; las simulaciones no cambian
   la IP. El borrado remoto de mail.tm depende de la conexión y de que siga vivo el proceso.
 
@@ -173,37 +177,32 @@ Se admiten imágenes raster compatibles con Android y PNG dentro de ICO (no SVG)
 formato compatible se muestra la inicial. No se solicitan desde pestañas privadas.
 
 ## Desarrollo
-Requisitos: JDK 21, Gradle 9.8.2 y Android SDK con `platforms;android-37.2` y
-`build-tools;37.0.0` (GeckoView 159 exige compilar contra la API 37.2; AGP 9.5).
-
-Hay dos variantes de motor (ver [migración a Chromium WebView](docs/MIGRACION-CHROMIUM-WEBVIEW.md)):
-
-- **`gecko`**: GeckoView, la versión publicada (`com.nexo.browser`).
-- **`chromium`**: Android System WebView, en migración. Mismo paquete (`com.nexo.browser`): firmada con la clave de release se instala como actualización de la versión Gecko y conserva sus datos. Con `-PnexoSideBySide` se instala aparte (`com.nexo.browser.chromium`).
+Requisitos: **JDK 25** (el SDK de Cefrium es bytecode Java 25), Gradle 9.8.2 y Android SDK con
+`platforms;android-37.2` y `build-tools;37.0.0` (AGP 9.5). Las dependencias de Cefrium vienen de
+`https://maven.cefrium.com`; sus hashes están en `gradle/cefrium-0.21.0.sha256`.
 
 ```bash
-node --test app/src/test/js/*.test.cjs  # regresiones de extensiones y mini reproductor
-gradle :app:testGeckoDebugUnitTest :app:testChromiumDebugUnitTest   # tests unitarios
-gradle :app:assembleGeckoDebug :app:assembleChromiumDebug
-gradle :app:lintGeckoRelease :app:lintChromiumRelease
+node --test app/src/test/js/*.test.cjs  # regresiones de PhantomShield, puente y mini reproductor
+gradle :app:testDebugUnitTest            # tests unitarios
+gradle :app:assembleDebug                # APK arm64-v8a y armeabi-v7a
+gradle :app:lintRelease
 ```
 
 Pruebas de interfaz nativa (Robolectric, también en CI):
 
 ```bash
-gradle :app:testGeckoDebugUnitTest -PnexoScreenshots --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest'
+gradle :app:testDebugUnitTest -PnexoScreenshots --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest'
 ```
 
 Capturas adicionales de la interfaz nativa (opcionales):
 
 ```bash
-gradle :app:testGeckoDebugUnitTest --tests 'com.nexo.browser.ScreenshotTest' \
+gradle :app:testDebugUnitTest --tests 'com.nexo.browser.ScreenshotTest' \
   -PnexoScreenshots -PnexoShotsDir=/ruta/capturas
 ```
 
-Las librerías nativas de la variante Gecko van comprimidas en el APK (como Firefox para
-Android): el APK arm64 pesa ~100 MB en vez de ~216 MB y Android las extrae una vez al
-instalar. La variante Chromium no lleva motor propio: usa el WebView del sistema.
+Las librerías nativas de Chromium (`libcef.so`) van comprimidas en el APK; Android las extrae
+una vez al instalar. Hay un APK por ABI (arm64-v8a, armeabi-v7a).
 
 ## CI y releases
 El workflow `.github/workflows/main.yml` compila, ejecuta tests y lint en cada PR y push a `main`.

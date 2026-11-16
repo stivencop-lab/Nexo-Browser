@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # GeckoView 159 exige compileSdk 37 y Android Gradle Plugin 9.
+  # Cefrium 0.21.0 (Chromium 156) exige JDK 25, compileSdk 37 y AGP 9.4+.
   ANDROID_PLATFORM: "37.2"
   BUILD_TOOLS: "37.0.0"
   GRADLE_VERSION: "9.8.2"
@@ -61,32 +61,25 @@ jobs:
           set -euo pipefail
           test -z "$(git status --porcelain)"
 
-          if grep -R --line-number --fixed-strings 'useMultiprocess(false)' app/src; then
-            echo "::error::No se permite desactivar el multiproceso de Gecko"
+          if grep -R --line-number -E 'loadUrl\("javascript:|loadUri\("javascript:' app/src; then
+            echo "::error::No se permite cargar URL javascript:"
             exit 1
           fi
 
-          if grep -R --line-number 'loadUri("javascript:' app/src; then
-            echo "::error::No se permite loadUri(javascript:...)"
+          if grep -R --line-number -E 'RemoteDebuggingEnabled\(true\)' app/src; then
+            echo "::error::No se permite habilitar la depuración remota"
             exit 1
           fi
 
-          if grep -R --line-number 'remoteDebuggingEnabled(true)' app/src; then
-            echo "::error::No se permite habilitar remote debugging"
+          # Motor Chromium (Cefrium): solo su API pública, sin tocar el
+          # embebido interno ni el puente JNI generado.
+          if grep -R --line-number -E '^import (org\.chromium\.|org\.jni_zero\.)|GEN_JNI' app/src/main app/src/test; then
+            echo "::error::Usa solo la API pública com.cefrium.*"
             exit 1
           fi
-
-          # Variante Chromium (WebView): mismas garantías.
-          if grep -R --line-number -E 'setWebContentsDebuggingEnabled\(true\)' app/src; then
-            echo "::error::No se permite habilitar la depuración remota de WebView"
-            exit 1
-          fi
-          if grep -R --line-number -E 'allowUniversalAccessFromFileURLs *= *true|allowFileAccessFromFileURLs *= *true|setAllowUniversalAccessFromFileURLs\(true\)|setAllowFileAccessFromFileURLs\(true\)|MIXED_CONTENT_ALWAYS_ALLOW' app/src/main app/src/chromium; then
-            echo "::error::No se permite relajar el aislamiento de archivos ni el contenido mixto en WebView"
-            exit 1
-          fi
-          if grep -R --line-number -E 'addJavascriptInterface|\.proceed\(\)' app/src/main app/src/chromium; then
-            echo "::error::El puente nativo usa WebMessageListener y los errores TLS no se aceptan"
+          # Los errores TLS nunca se aceptan y no hay puentes JS sin control de origen.
+          if grep -R --line-number -E 'addJavascriptInterface|\.proceed\(\)' app/src/main; then
+            echo "::error::El puente nativo usa cefriumQuery y los errores TLS no se aceptan"
             exit 1
           fi
 
@@ -100,11 +93,11 @@ jobs:
       - name: Extension regression tests
         run: node --test app/src/test/js/*.test.cjs
 
-      - name: Java 21
+      - name: Java 25
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
@@ -135,27 +128,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle :app:testGeckoDebugUnitTest -PnexoScreenshots \
+          gradle :app:testDebugUnitTest -PnexoScreenshots \
             -PnexoShotsDir="$PWD/app/build/reports/ui-previews" \
             --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest' --no-daemon --max-workers=4
           mkdir -p app/build/reports/ui-tests
-          cp app/build/test-results/testGeckoDebugUnitTest/TEST-*.xml app/build/reports/ui-tests/
+          cp app/build/test-results/testDebugUnitTest/TEST-*.xml app/build/reports/ui-tests/
 
       - name: Build, test and lint committed source
         shell: bash
         run: |
           set -euo pipefail
           args=()
-          # La actualización de transición solo existe con Gecko; la variante
-          # Chromium (en migración) se compila y prueba en el resto de builds.
-          flavors=(Gecko Chromium)
-          if [ "$NEXO_TRANSITION" = true ]; then args+=(-PnexoTransition); flavors=(Gecko); fi
-          tasks=()
-          for flavor in "${flavors[@]}"; do
-            tasks+=(":app:test${flavor}DebugUnitTest" ":app:test${flavor}ReleaseUnitTest"
-                    ":app:assemble${flavor}Debug" ":app:assemble${flavor}Release"
-                    ":app:lint${flavor}Debug" ":app:lint${flavor}Release")
-          done
+          if [ "$NEXO_TRANSITION" = true ]; then args+=(-PnexoTransition); fi
+          tasks=(":app:testDebugUnitTest" ":app:testReleaseUnitTest"
+                 ":app:assembleDebug" ":app:assembleRelease"
+                 ":app:lintDebug" ":app:lintRelease")
           gradle "${args[@]}" "${tasks[@]}" \
             --stacktrace \
             --no-daemon
@@ -168,13 +155,10 @@ jobs:
           set -euo pipefail
           python3 tools/check_release_reflection.py \
             --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" \
-            app/build/outputs/apk/*/release/*.apk
+            app/build/outputs/apk/release/*.apk
           expected=com.nexo.browser
           if [ "$NEXO_TRANSITION" = true ]; then expected=com.ejemplo.navegador; fi
-          python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package "$expected" app/build/outputs/apk/gecko/debug/*.apk app/build/outputs/apk/gecko/release/*.apk
-          if [ "$NEXO_TRANSITION" != true ]; then
-            python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package com.nexo.browser app/build/outputs/apk/chromium/debug/*.apk app/build/outputs/apk/chromium/release/*.apk
-          fi
+          python3 tools/check_apk_identity.py --build-tools "$ANDROID_HOME/build-tools/${BUILD_TOOLS}" --package "$expected" app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk
 
       - name: Confirm build did not mutate tracked source
         shell: bash
@@ -253,11 +237,11 @@ jobs:
       - name: Extension regression tests
         run: node --test app/src/test/js/*.test.cjs
 
-      - name: Java 21
+      - name: Java 25
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
@@ -287,7 +271,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle :app:testGeckoDebugUnitTest -PnexoScreenshots \
+          gradle :app:testDebugUnitTest -PnexoScreenshots \
             --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest' --no-daemon --max-workers=4
 
       # La compilación corre SIN acceso a los secretos de firma.
@@ -295,12 +279,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Se publica la variante Gecko; Chromium sigue en migración.
-          gradle :app:testGeckoReleaseUnitTest :app:assembleGeckoRelease :app:lintGeckoRelease --stacktrace --no-daemon
+          gradle :app:testReleaseUnitTest :app:assembleRelease :app:lintRelease --stacktrace --no-daemon
           # Solo se publica la app nueva (com.nexo.browser).
           mkdir -p build-out/new
-          cp app/build/outputs/apk/gecko/release/*.apk build-out/new/
-          cp app/build/outputs/mapping/geckoRelease/mapping.txt build-out/new/mapping.txt
+          cp app/build/outputs/apk/release/*.apk build-out/new/
+          cp app/build/outputs/mapping/release/mapping.txt build-out/new/mapping.txt
           git diff --exit-code
 
       - name: Release APKs keep startup constructors and identity
