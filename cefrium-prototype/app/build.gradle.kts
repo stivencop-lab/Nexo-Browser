@@ -21,9 +21,6 @@ android {
         abi { isEnable = true; reset(); include("arm64-v8a"); isUniversalApk = false }
     }
 
-    defaultConfig {
-        ndk { abiFilters += listOf("arm64-v8a") }
-    }
 }
 dependencies {
     implementation("com.cefrium:cefrium-sdk-core:0.21.0")
