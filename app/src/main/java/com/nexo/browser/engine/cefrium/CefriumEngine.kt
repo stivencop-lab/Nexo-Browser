@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.util.Log
 import android.view.View
 import com.cefrium.Cefrium
 import com.cefrium.CefriumBrowser
@@ -32,6 +33,9 @@ import java.util.WeakHashMap
  * si esa Activity se destruye.
  */
 object CefriumEngine : BrowserEngine {
+    /** Etiqueta de registro del motor de Nexo. */
+    internal const val TAG = "NexoEngine"
+
     /** Navegador entregado por `onCreateWindow` que la próxima pestaña debe adoptar. */
     internal var adopting: Pair<CefriumBrowser, String>? = null
 
@@ -49,7 +53,17 @@ object CefriumEngine : BrowserEngine {
         if (started) return
         started = true
         appContext = context.applicationContext
-        Cefrium.initialize(appContext)
+        // Diagnóstico: `adb logcat -s NexoEngine CefriumBrowser chromium AndroidRuntime`.
+        val ready = runCatching { Cefrium.initialize(appContext) }
+            .onFailure { Log.e(TAG, "Cefrium.initialize lanzó una excepción", it) }
+            .getOrDefault(false)
+        Log.i(TAG, "Cefrium ${runCatching { Cefrium.getVersion() }.getOrDefault("?")} " +
+            "(Chromium ${runCatching { Cefrium.getChromiumVersion() }.getOrDefault("?")}) iniciado=$ready")
+        if (!ready) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                TabManager.notifyMessage("Chromium no pudo iniciarse en este teléfono; las páginas no cargarán. Detalles en el registro (NexoEngine).")
+            }, 1500)
+        }
         // Antes de abrir ningún perfil: los Burner de la sesión anterior.
         CefriumProfiles.purgeStale()
         // Actualización desde Nexo con Gecko: sus cookies antes de abrir la primera pestaña.

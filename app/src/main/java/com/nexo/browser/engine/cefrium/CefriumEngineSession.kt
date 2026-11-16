@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.util.Log
 import android.view.KeyEvent
 import android.view.ViewGroup
 import com.cefrium.Cefrium
@@ -168,9 +169,11 @@ class CefriumEngineSession internal constructor(
             releaseBrowser()
         }
         val created = runCatching { CefriumBrowser.createWithSurface(activity, profile) }.getOrElse {
+            Log.e(CefriumEngine.TAG, "createWithSurface falló (perfil ${profile.name}, privado=${profile.isIncognito})", it)
             TabManager.notifyMessage("Chromium no pudo abrir la pestaña: ${it.message ?: it.javaClass.simpleName}")
             return null
         }
+        Log.i(CefriumEngine.TAG, "navegador creado (perfil ${profile.name}, privado=${profile.isIncognito})")
         setUp(created, activity)
         val state = pendingState
         val url = pendingUrl
@@ -535,6 +538,9 @@ class CefriumEngineSession internal constructor(
 
         override fun onLoadError(browser: CefriumBrowser, error: CefriumLoadError) {
             mainFrameError = true
+            // Solo el host: la URL completa puede llevar datos personales.
+            val host = error.failedUrl?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"
+            Log.w(CefriumEngine.TAG, "error de carga ${error.errorCode} (${error.description}) en $host")
         }
 
         /**
@@ -546,6 +552,7 @@ class CefriumEngineSession internal constructor(
                 CefriumRendererTerminationStatus.KILLED, CefriumRendererTerminationStatus.OOM -> ProcessExit.KILL
                 else -> ProcessExit.CRASH
             }
+            Log.w(CefriumEngine.TAG, "el proceso de la página terminó: $status (código $errorCode)")
             main.post { observer?.onProcessExit(this@CefriumEngineSession, exit) }
         }
 
