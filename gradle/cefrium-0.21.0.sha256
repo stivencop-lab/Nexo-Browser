@@ -15,4 +15,11 @@ com.cefrium:cefrium-native-codecs-armeabi-v7a:0.21.0: a159f0671910205e6f1d308cd4
 com.cefrium:cefrium-native-codecs-x86_64:0.21.0: ee23324da1ac0122edb5d218e494cdfd152055bdc2be30acabb38b88a163f97c
 com.cefrium:cefrium-sdk:0.21.0:pom: 724b39ed5bc4da6d7b2756411e9e3a961b39ea765b51398cc273dd058b2ed101
 
-# Maven sidecars matched downloaded AARs locally. Detached GPG release signature remains pending.
+# Official Codeberg release verification:
+# SHA256SUMS-0.21.0.asc: valid detached signature.
+# Maintainer fingerprint: 2A840ED00DE669F4219B8B3302A79E3B82151695
+# Signing key: 5B639D9BFE995C6418CEFA8970CB7258A38E268F
+# SBOM SPDX SHA-256: 3d6012e1977683043ed60cd9e16491264ae58899c37453e9b00c666b6cfcfe3b
+# NOTICE SHA-256: fd20273d0a2a59cc2973a2fea35c0f3036057f278cf3ab7540a194ec128f37d5
+# SHA256SUMS file SHA-256: 006a4b1151d5cf9d0a1fcfb21f778dea4a895561bc6daf7114b865ed4e1b7f4f
+# Maven sidecars and official release sums matched downloaded AARs locally.
