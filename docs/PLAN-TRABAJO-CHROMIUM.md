@@ -70,7 +70,8 @@ app/src/main/java/com/nexo/browser/
 app/src/main/assets/nexo/
 ├── cefrium-port.js   # crea __nexoShield sobre window.cefriumQuery
 ├── phantom-shim.js   # browser.* mínimo para los scripts de PhantomShield
-└── nexo-bridge.js    # mini video, subtítulos y medios con sonido
+├── bridge-shim.js    # browser.runtime para extensions/nexo_bridge/content_script.js (el de Gecko)
+└── media-reporter.js # medios con sonido (notificación, segundo plano)
 ```
 
 ### Comportamientos que hay que conocer
@@ -117,7 +118,11 @@ Nexo leía archivos/preferencias y registraba su gestor de cierres en esos proce
 
 ### Procedimiento (en este orden; detente cuando encuentres la causa)
 
-1. **Recoger el registro** con la 0.31.1 instalada:
+0. **Sin adb** (0.31.2+): Ajustes › tocar la línea de la versión → *Diagnóstico del motor* → **Copiar**. Muestra si
+   Cefrium se inició, cuántos navegadores y procesos de página hay, si la pestaña activa tiene navegador y puente,
+   el estado de PhantomShield y de los subtítulos, y los últimos eventos (creación de navegadores, errores de carga
+   con su código, procesos que terminan, fallos del panel).
+1. **Recoger el registro** con la 0.31.1 o posterior instalada:
    ```bash
    adb logcat -c
    adb shell am start -n com.nexo.browser/.MainActivity
@@ -185,9 +190,9 @@ Por prioridad. Cada una: código + pruebas JVM/JS + nota en `docs/CHROMIUM-NATIV
    que lo elija cuando la pestaña tenga `networkProfile`. Hay que pasar la ruta a `SessionParams` (hoy no la lleva) o
    decidir el perfil en `TabRouting.prepare` antes de crear el navegador. Avisar al usuario de que esas pestañas no
    comparten sesión con las normales.
-2. **Modo nocturno de páginas (Dark Reader).** `main/assets/extensions/nexo_bridge/darkreader.js` ya está en el APK.
-   Inyectarlo bajo demanda con `evaluateJavaScript` (marco principal) cuando `ExtensionManager.sendBrowserState`
-   indique tema oscuro + sitio no exceptuado; `setDarkMode(true)` ya pide `prefers-color-scheme: dark`.
+2. **Modo nocturno en marcos internos.** Hecho para el marco principal (0.31.2: `PageBridge.loadDarkReader`).
+   Los iframes responden `false`: valorar inyectar Dark Reader con `addDocumentStartJavaScript` solo mientras el
+   modo nocturno esté activo.
 3. **Traducción de páginas** (`TranslatorManager.translateActive`): extraer texto con un script, traducir con los
    proveedores ya configurados para subtítulos (Google/DeepL/IA en `BrowserPrefs`) y reinsertar. Sin enviar URLs.
 4. **`nexo_network`**: retardo simulado, ubicación simulada y variación de Canvas/WebGL por Burner. Ubicación y
@@ -195,10 +200,8 @@ Por prioridad. Cada una: código + pruebas JVM/JS + nota en `docs/CHROMIUM-NATIV
    API, valorar si se elimina de la interfaz.
 5. **Política de cookies "equilibrada"**: bloquear cookies de terceros cuando el host está en las listas de
    rastreo (`rules.network` con tipo `xmlhttprequest`), con caché por host para no evaluar reglas en cada cookie.
-6. **Puente completo** (`nexo_bridge/content_script.js`, 1654 líneas): protección de reproducción en segundo
-   plano y PiP con CSS aislado. Opción: reutilizarlo con un shim de `browser.runtime.connectNative` sobre
-   `__nexoShield` y portar a Kotlin los mensajes que manejaba el `ExtensionManager` de Gecko (historial de git,
-   antes de `d80d61a`: `app/src/gecko/java/com/nexo/browser/ExtensionManager.kt`).
+6. ~~Puente completo~~ **Hecho en 0.31.2**: `content_script.js` de Gecko con `bridge-shim.js` y `PageBridge.kt`.
+   Validar en dispositivo: subtítulos por audio (clave de Deepgram), pistas VTT, YouTube, mini video.
 7. **IA y parcheador anti-bloqueo de PhantomShield**: hoy responden `AI_UNAVAILABLE`.
 8. **Extensiones de terceros (runtime NXR)**: `ExtensionsActivity` ya evalúa compatibilidad de CRX/XPI/ZIP.
 

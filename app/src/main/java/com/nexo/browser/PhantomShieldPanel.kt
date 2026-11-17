@@ -23,6 +23,7 @@ import com.cefrium.CefriumNavigationClient
 import com.cefrium.CefriumNavigationRequest
 import com.cefrium.CefriumProfile
 import com.cefrium.CefriumRendererTerminationStatus
+import com.nexo.browser.engine.cefrium.EngineDiagnostics
 import com.nexo.browser.shield.PhantomShield
 import java.io.ByteArrayInputStream
 
@@ -45,10 +46,15 @@ object PhantomShieldPanel {
         val radius = 24f * density
         val dialog = Dialog(activity)
 
-        val profile = runCatching { CefriumProfile.get(PROFILE) }.getOrNull() ?: return false
+        val profile = runCatching { CefriumProfile.get(PROFILE) }
+            .onFailure { EngineDiagnostics.log("panel de PhantomShield: perfil no disponible", it) }
+            .getOrNull() ?: return false
         runCatching { profile.registerContentServer(PhantomShield.PANEL_ORIGIN, PanelServer(activity.applicationContext)) }
-            .onFailure { return false }
-        val web = runCatching { CefriumBrowser.createWithSurface(activity, profile) }.getOrNull() ?: return false
+            .onFailure { EngineDiagnostics.log("panel de PhantomShield: servidor de contenido rechazado", it); return false }
+        val web = runCatching { CefriumBrowser.createWithSurface(activity, profile) }
+            .onFailure { EngineDiagnostics.log("panel de PhantomShield: no se pudo crear el navegador", it) }
+            .getOrNull() ?: return false
+        EngineDiagnostics.log("panel de PhantomShield abierto")
         web.setBackgroundColor(p.surface)
         web.setDarkMode(ThemeManager.isDark(activity))
         web.setNavigationClient(object : CefriumNavigationClient {
@@ -64,7 +70,12 @@ object PhantomShieldPanel {
 
             /** El proceso del panel terminó: se cierra el panel, no Nexo. */
             override fun onRenderProcessTerminated(browser: CefriumBrowser, status: CefriumRendererTerminationStatus, errorCode: Int) {
+                EngineDiagnostics.log("panel de PhantomShield: el proceso terminó ($status, $errorCode)")
                 dialog.dismiss()
+            }
+
+            override fun onLoadError(browser: CefriumBrowser, error: com.cefrium.CefriumLoadError) {
+                EngineDiagnostics.log("panel de PhantomShield: error de carga ${error.errorCode} (${error.description})")
             }
         })
         web.setChromeClient(object : CefriumChromeClient {

@@ -41,8 +41,20 @@ así que reenvía `onActivityResult` y `onRequestPermissionsResult` al motor.
 pestaña tiene un `PageChannel`: las páginas envían `{m, s}` y reciben la respuesta más los
 eventos que Nexo publicó desde `s` (ajustes, órdenes de mini video y subtítulos, respuestas
 tardías del panel). Los marcos consultan cada 2 s (principal) o 4 s (internos) mientras la
-página es visible, y Nexo despierta al marco principal al publicar. `phantom-shim.js` y
-`nexo-bridge.js` no cambian: reciben el mismo puerto `__nexoShield` que en WebView.
+página es visible, y Nexo despierta al marco principal al publicar. `phantom-shim.js` no cambia:
+recibe el mismo puerto `__nexoShield` que en WebView.
+
+El puente de Nexo es **el mismo `extensions/nexo_bridge/content_script.js` de Gecko** (mini video
+con `pip.css`, subtítulos por pista, texto del reproductor o audio del video para Deepgram,
+protección de la reproducción en segundo plano, modo nocturno con Dark Reader). `bridge-shim.js`
+le da su `browser.runtime` (`connectNative`, `sendNativeMessage`, `sendMessage`): cada marco lleva
+un token aleatorio y `PageBridge.kt` porta la lógica del `ExtensionManager` de Gecko (los marcos
+con video se ofrecen, Nexo concede la captura al mejor en 200 ms y solo ese marco envía audio).
+Dark Reader se inyecta bajo demanda en el marco principal con `evaluateJavaScript`.
+`media-reporter.js` informa los medios con sonido (notificación y segundo plano).
+
+Diagnóstico: Ajustes › tocar la versión muestra el estado del motor, de PhantomShield, de los
+subtítulos y los últimos eventos (`EngineDiagnostics`), con botón para copiarlo.
 
 Los scripts corren en el mundo de la página (Cefrium no tiene mundos aislados): el puente
 solo responde lo que cualquier página ya puede ver. Ajustes, estadísticas e IA solo se
@@ -74,8 +86,7 @@ Pendiente (la interfaz lo explica al usuario):
 3. **Proxy en pestañas normales o privadas**: el proxy de Chromium es del perfil, así que esas
    pestañas con ruta no se abren (nunca salen por conexión directa).
 4. **Retardo simulado, ubicación simulada y variación de huella**: dependían de `nexo_network`.
-5. **Puente completo de `nexo_bridge`** (Dark Reader para páginas, protección de la
-   reproducción en segundo plano): el puente reducido cubre mini video y subtítulos.
+5. **Modo nocturno en marcos internos**: Dark Reader solo se inyecta en el marco principal.
 6. **IA de PhantomShield, parcheador anti-bloqueo**: como en la variante WebView.
 7. Descargas resultado de un POST: Nexo vuelve a pedir la URL (las `blob:`/`data:` que genera la
    página sí funcionan: Chromium las guarda y pasan al gestor de Nexo).

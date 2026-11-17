@@ -246,7 +246,10 @@ class SettingsActivity : Activity() {
         remoteDebug.isChecked = BrowserPrefs.remoteDebugging(this)
         strictTracking.isEnabled = BrowserPrefs.trackingProtection(this)
         tracking.setOnCheckedChangeListener { _, on -> strictTracking.isEnabled = on }
-        findViewById<TextView>(R.id.aboutText).text = aboutText()
+        findViewById<TextView>(R.id.aboutText).apply {
+            text = aboutText() + "\nToca para ver el diagnóstico del motor"
+            setOnClickListener { showEngineDiagnostics() }
+        }
         captionsEnabled.isChecked = BrowserPrefs.captionsEnabled(this)
         updateCaptionsSummary()
 
@@ -353,6 +356,30 @@ class SettingsActivity : Activity() {
         findViewById<TextView>(R.id.captionsSummary).text =
             (if (BrowserPrefs.deepgramKey(this).isBlank()) "Sin clave de Deepgram: solo videos con subtítulos propios."
             else "Audio: $language · ${LiveCaptions.usageText(this)}") + "\nTraducción: $target"
+    }
+
+    /** Estado del motor y últimos eventos, para copiar y enviar sin adb. */
+    private fun showEngineDiagnostics() {
+        val report = com.nexo.browser.engine.cefrium.EngineDiagnostics.report(this)
+        val body = TextView(this).apply {
+            text = report
+            setTextIsSelectable(true)
+            textSize = 12f
+            typeface = android.graphics.Typeface.MONOSPACE
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+            ThemeManager.styleText(this@SettingsActivity, this)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Diagnóstico del motor")
+            .setView(android.widget.ScrollView(this).apply { addView(body) })
+            .setPositiveButton("Copiar") { _, _ ->
+                val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Diagnóstico de Nexo", report))
+                android.widget.Toast.makeText(this, "Diagnóstico copiado", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cerrar", null)
+            .show()
     }
 
     private fun aboutText(): String {

@@ -5,15 +5,14 @@ import android.content.Context
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
 import com.nexo.browser.shield.PhantomShield
-import org.json.JSONObject
 import java.lang.ref.WeakReference
 
 /**
  * Extensiones de Nexo sobre Chromium (Cefrium).
  *
  * Cefrium no ejecuta WebExtensions: PhantomShield funciona con su motor
- * nativo ([PhantomShield]) y el puente de páginas (mini video, subtítulos)
- * con `nexo-bridge.js` sobre el mismo canal. Las extensiones de terceros
+ * nativo ([PhantomShield]) y el puente de páginas (mini video, subtítulos,
+ * modo nocturno) con el mismo `content_script.js` de Gecko ([PageBridge]). Las extensiones de terceros
  * llegarán con el runtime NXR; mientras tanto la interfaz común recibe
  * respuestas vacías y explicaciones claras.
  */
@@ -47,7 +46,7 @@ object ExtensionManager {
         if (id != PHANTOMSHIELD_ID) return onDone(false, NOT_YET)
         val activity = promptActivity?.get()
         if (activity == null || !PhantomShieldPanel.show(activity)) {
-            onDone(false, "No se pudo abrir el panel de PhantomShield.")
+            onDone(false, "No se pudo abrir el panel de PhantomShield. Detalles en Ajustes › diagnóstico del motor.")
         } else {
             onDone(true, "PhantomShield")
         }
@@ -71,29 +70,25 @@ object ExtensionManager {
 
     fun forgetSession(session: EngineSession) {
         (session as? CefriumEngineSession)?.shield?.session = null
+        PageBridge.forget(session)
     }
 
     fun setTabActive(session: EngineSession, active: Boolean) = Unit
 
-    fun sendBrowserState(context: Context) = Unit
+    // Mini video, subtítulos y estado del navegador: el puente de Nexo en las páginas (PageBridge).
 
-    private fun send(session: EngineSession?, message: JSONObject): Boolean =
-        (session as? CefriumEngineSession)?.let { PhantomShield.sendToSession(it, message) } ?: false
+    fun sendBrowserState(context: Context) = PageBridge.sendBrowserState(context)
 
     fun setPipMode(session: EngineSession?, active: Boolean, resumePlayback: Boolean = false, isolateCss: Boolean = true) =
-        send(session, JSONObject().put("type", "pip_mode").put("active", active).put("resume", resumePlayback).put("isolate", isolateCss))
+        PageBridge.setPipMode(session, active, resumePlayback, isolateCss)
 
-    fun sendPipCommand(session: EngineSession?, command: String): Boolean =
-        send(session, JSONObject().put("type", "pip_command").put("command", command))
+    fun sendPipCommand(session: EngineSession?, command: String): Boolean = PageBridge.sendPipCommand(session, command)
 
     fun setCaptions(session: EngineSession?, active: Boolean, live: Boolean = false, language: String = "multi", target: String = ""): Boolean =
-        send(session, JSONObject().put("type", "captions").put("active", active).put("live", live).put("lang", language).put("target", target))
+        PageBridge.setCaptions(session, active, live, language, target)
 
-    fun restartCaptions(session: EngineSession?): Boolean = send(session, JSONObject().put("type", "captions_restart"))
-    fun restoreCaptions(session: EngineSession) = send(session, JSONObject().put("type", "captions_grant"))
-
-    fun sendLifecycle(session: EngineSession?, foreground: Boolean) =
-        send(session, JSONObject().put("type", "lifecycle").put("state", if (foreground) "foreground" else "background"))
-
-    fun hasMediaBridge(session: EngineSession?): Boolean = send(session, JSONObject().put("type", "get_state"))
+    fun restartCaptions(session: EngineSession?): Boolean = PageBridge.restartCaptions(session)
+    fun restoreCaptions(session: EngineSession) = PageBridge.restoreCaptions(session)
+    fun sendLifecycle(session: EngineSession?, foreground: Boolean) = PageBridge.sendLifecycle(session, foreground)
+    fun hasMediaBridge(session: EngineSession?): Boolean = PageBridge.hasMediaBridge(session)
 }

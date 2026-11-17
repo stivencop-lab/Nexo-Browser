@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
-import android.util.Log
 import android.view.View
 import com.cefrium.Cefrium
 import com.cefrium.CefriumBrowser
@@ -55,9 +54,13 @@ object CefriumEngine : BrowserEngine {
         appContext = context.applicationContext
         // Diagnóstico: `adb logcat -s NexoEngine CefriumBrowser chromium AndroidRuntime`.
         val ready = runCatching { Cefrium.initialize(appContext) }
-            .onFailure { Log.e(TAG, "Cefrium.initialize lanzó una excepción", it) }
+            .onFailure {
+                EngineDiagnostics.initError = "${it.javaClass.simpleName}: ${it.message}"
+                EngineDiagnostics.log("Cefrium.initialize lanzó una excepción", it)
+            }
             .getOrDefault(false)
-        Log.i(TAG, "Cefrium ${runCatching { Cefrium.getVersion() }.getOrDefault("?")} " +
+        EngineDiagnostics.initialized = ready
+        EngineDiagnostics.log("Cefrium ${runCatching { Cefrium.getVersion() }.getOrDefault("?")} " +
             "(Chromium ${runCatching { Cefrium.getChromiumVersion() }.getOrDefault("?")}) iniciado=$ready")
         if (!ready) {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -78,6 +81,7 @@ object CefriumEngine : BrowserEngine {
     internal fun register(activity: Activity) {
         if (activityRef.get() === activity) return
         activityRef = WeakReference(activity)
+        EngineDiagnostics.log("Activity registrada: ${activity.javaClass.simpleName}")
         // Pestañas creadas sin Activity (o con una ya destruida): ahora tienen dónde dibujarse.
         TabManager.liveSessions().forEach { (it as? CefriumEngineSession)?.ensureBrowser() }
     }
