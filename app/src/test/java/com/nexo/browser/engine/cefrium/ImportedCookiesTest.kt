@@ -6,13 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Test
 
-class GeckoCookiesTest {
+class ImportedCookiesTest {
     private val now = 1_790_000_000_000L // ms
     private fun cookie(
         name: String = "sid", value: String = "abc", host: String = "example.com", path: String = "/",
         expiry: Long = now / 1000 + 3600, secure: Boolean = true, httpOnly: Boolean = true,
         sameSite: Int = 1, scheme: Int = 2, origin: String = ""
-    ) = GeckoCookie(name, value, host, path, expiry, secure, httpOnly, sameSite, scheme, origin)
+    ) = ImportedCookie(name, value, host, path, expiry, secure, httpOnly, sameSite, scheme, origin)
 
     @Test fun hostOnlyCookieKeepsAttributes() {
         val (url, header) = cookie().toSetCookie(now)!!
@@ -60,7 +60,7 @@ class GeckoCookiesTest {
 
     @Test fun expiryIsCappedAt400Days() {
         val (_, header) = cookie(expiry = now / 1000 + 5L * 365 * 24 * 3600).toSetCookie(now)!!
-        val expected = GeckoCookie.httpDate(now + 400L * 24 * 3600 * 1000)
+        val expected = ImportedCookie.httpDate(now + 400L * 24 * 3600 * 1000)
         assertTrue(header.contains("Expires=$expected"))
     }
 

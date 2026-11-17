@@ -127,7 +127,8 @@ class ExtensionManifestTest {
             File("app/src/main/assets/extensions/phantomshield/manifest.json")
         ).first { it.exists() }
         val m = ExtensionManifest.parse(file.readText())
-        assertEquals("phantomshield@geckoview.internal", m.geckoId)
+        // Integrado en Nexo: sin identidad de Firefox.
+        assertEquals(null, m.geckoId)
         assertEquals(2, m.manifestVersion)
         assertTrue("webRequestBlocking" in m.permissions)
         assertEquals(listOf("<all_urls>"), m.hostPermissions)

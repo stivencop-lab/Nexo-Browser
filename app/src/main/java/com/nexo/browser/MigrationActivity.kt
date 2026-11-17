@@ -67,7 +67,7 @@ class MigrationActivity : Activity() {
         super.onCreate(savedInstanceState)
         check(MigrationMode.cold && !com.nexo.browser.engine.Engines.current.isStarted())
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24,32,24,24) }
-        status = TextView(this).apply { text = "Transferencia de Nexo · ${packageName}\nEl motor web está detenido. La importación reemplaza ajustes, historial, accesos y pestañas normales. Conserva los datos anteriores del destino hasta que decidas eliminarlos. Las extensiones externas se reinstalan después con confirmación y verificación de Gecko. No se importan cookies ni descargas." }
+        status = TextView(this).apply { text = "Transferencia de Nexo · ${packageName}\nEl motor web está detenido. La importación reemplaza ajustes, historial, accesos y pestañas normales. Conserva los datos anteriores del destino hasta que decidas eliminarlos. No se importan cookies, datos de los sitios ni descargas." }
         password = EditText(this).apply { hint = "Contraseña de la copia (mínimo 12 caracteres)"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
         actions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun button(label: String, action: () -> Unit) { actions.addView(Button(this).apply { text = label; setOnClickListener { if(!busy) action() } }) }
@@ -124,7 +124,7 @@ class MigrationActivity : Activity() {
                     val replacements = ProfileTransfer.prepare(this,stage)
                     MigrationMode.markDataChanged()
                     MigrationMode.commit(this).apply(replacements)
-                    "Importación aplicada. Sal del modo de transferencia, vuelve a abrir Nexo y revisa tus datos. Reinstala los XPI transferidos desde Extensiones; Gecko verificará firmas y pedirá permisos. Puedes volver aquí para restaurar los originales del destino."
+                    "Importación aplicada. Sal del modo de transferencia, vuelve a abrir Nexo y revisa tus datos. Puedes volver aquí para restaurar los originales del destino."
                 }
             } finally { secret.fill('\u0000'); work.deleteRecursively() }
         }

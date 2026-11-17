@@ -7,7 +7,7 @@ import org.json.JSONObject
  * Datos nativos que la app anterior (com.ejemplo.navegador) entrega a la
  * nueva: validación y combinación con lo que ya tenga el destino. Puro (sin
  * Android) para probarlo en la JVM. Nunca incluye pestañas privadas, Burner,
- * cookies ni datos de Gecko.
+ * cookies ni datos del motor web.
  */
 object LegacyMerge {
     const val VERSION = 1

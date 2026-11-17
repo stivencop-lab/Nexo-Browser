@@ -13,7 +13,7 @@ import java.net.InetAddress
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
-/** Automatic anonymous image requests, never the user's Gecko navigation or API clients. */
+/** Automatic anonymous image requests, never the user's browser navigation or API clients. */
 object NativeImagePolicy {
     private val ipv4 = Regex("[0-9]{1,3}(\\.[0-9]{1,3}){3}")
     private val nat64Prefix = byteArrayOf(0, 0x64, 0xff.toByte(), 0x9b.toByte(), 0, 0, 0, 0, 0, 0, 0, 0)

@@ -47,7 +47,7 @@ object BrowserMediaController {
         var playing: Boolean = false,
         var width: Int = 0,
         var height: Int = 0,
-        /** Rectángulo del video dentro de la GeckoView, en píxeles. */
+        /** Rectángulo del video dentro de la vista de página, en píxeles. */
         var rect: android.graphics.Rect? = null
     )
 
@@ -58,7 +58,7 @@ object BrowserMediaController {
     /*
      * Ventana de protección para Home/PiP.
      * Durante esta ventana una pausa transitoria emitida por el sitio
-     * no debe apagar GeckoSession ni el foreground service.
+     * no debe apagar la sesión del motor ni el foreground service.
      */
     private val playbackHoldUntil = mutableMapOf<String, Long>()
 
@@ -281,7 +281,7 @@ object BrowserMediaController {
         listener?.onBrowserMediaStateChanged()
     }
 
-    /** Último rectángulo conocido del video (píxeles de la GeckoView). */
+    /** Último rectángulo conocido del video (píxeles de la vista de página). */
     fun videoRect(tabId: String): android.graphics.Rect? =
         videos[tabId]?.rect?.let { android.graphics.Rect(it) }
 

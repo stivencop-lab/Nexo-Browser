@@ -163,7 +163,7 @@ class PlaybackCaptureService : Service() {
             val consent = getSystemService(MediaProjectionManager::class.java).getMediaProjection(Activity.RESULT_OK,grant.data) ?: error("Projection denied")
             projection = consent
             consent.registerCallback(callback, main)
-            // Sin filtro por UID: el audio de Gecko puede salir de un proceso hijo con otro
+            // Sin filtro por UID: el audio del motor puede salir de un proceso hijo con otro
             // UID y Android lo descartaba entero. Se capta el audio multimedia del teléfono.
             val config = AudioPlaybackCaptureConfiguration.Builder(consent)
                 .addMatchingUsage(AudioAttributes.USAGE_MEDIA)

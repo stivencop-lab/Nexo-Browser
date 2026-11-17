@@ -28,15 +28,32 @@ function nexoPhantomShim(base, manifest) {
       else entry.resolve(message.result);
       return;
     }
-    const list = message.event === 'storage' ? storageListeners : message.event === 'message' ? messageListeners : null;
-    if (!list) return;
-    for (const listener of list.slice()) {
-      try {
-        if (message.event === 'storage') listener(message.changes || {}, 'local');
-        else listener(message.message, {});
-      } catch (_) {}
+    if (message.event === 'storage') {
+      for (const listener of storageListeners.slice()) {
+        try { listener(message.changes || {}, 'local'); } catch (_) {}
+      }
+    } else if (message.event === 'message') {
+      deliver(message.message, typeof message.rid === 'number' ? message.rid : null);
     }
   });
+
+  /*
+   * Mensaje de PhantomShield (Nexo) para los oyentes de `runtime.onMessage`.
+   * Con `rid`, Nexo espera la respuesta del primer oyente que devuelve algo
+   * (p. ej. «Analizar con IA» del panel).
+   */
+  async function deliver(payload, rid) {
+    let result;
+    for (const listener of messageListeners.slice()) {
+      let value;
+      try { value = listener(payload, { id: 'phantomshield' }); } catch (_) { continue; }
+      if (value !== undefined && result === undefined) result = value;
+    }
+    if (rid === null) return;
+    let settled = null;
+    try { settled = await result; } catch (_) { settled = null; }
+    call('reply', { rid: rid, result: settled === undefined ? null : settled }).catch(function() {});
+  }
 
   function call(kind, payload) {
     return new Promise(function(resolve, reject) {
@@ -79,7 +96,7 @@ function nexoPhantomShim(base, manifest) {
     tabs: Object.freeze({
       query: function() { return call('tabs.query', null); },
       reload: function(tabId) { return call('tabs.reload', tabId === undefined ? null : tabId).then(function() {}); },
-      sendMessage: function(_tabId, message) { return call('tabs.sendMessage', message); }
+      sendMessage: function(tabId, message) { return call('tabs.sendMessage', { tabId: tabId, message: message }); }
     }),
     permissions: Object.freeze({
       getAll: function() { return Promise.resolve({ origins: [], permissions: [] }); },

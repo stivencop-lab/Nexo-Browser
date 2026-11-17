@@ -563,7 +563,7 @@ class CefriumEngineSession internal constructor(
             main.post { observer?.onProcessExit(this@CefriumEngineSession, exit) }
         }
 
-        /** Certificado no válido: la conexión se cancela siempre (sin excepción, como en Gecko). */
+        /** Certificado no válido: la conexión se cancela siempre, sin excepción. */
         override fun onSslError(browser: CefriumBrowser, error: CefriumSslError, callback: CefriumBrowser.SslErrorCallback) {
             callback.cancel()
             val host = error.url?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: return

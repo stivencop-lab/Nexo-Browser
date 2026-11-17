@@ -2,10 +2,13 @@ package com.nexo.browser
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.util.UUID
 
-/** Portable native data, never opaque Gecko session state or private containers. */
+/**
+ * Datos portables de Nexo (nunca estado opaco del motor ni contenedores
+ * privados). [origin] y [payloadPath] solo validan copias antiguas (formato 1),
+ * que pueden traer datos del motor anterior: se comprueban y se ignoran.
+ */
 object TransferSchema {
     val secretNames = setOf("deepgram_key", "deepl_key", "ai_translate_key")
     val settingsKeys = setOf(
@@ -40,23 +43,5 @@ object TransferSchema {
             p.size == 2 && p[0] == "addons" -> p[1].matches(Regex("[a-f0-9]{64}\\.xpi"))
             else -> false
         }
-    }
-    fun profile(filesDir: File): File {
-        val home = File(filesDir, "mozilla")
-        require(!java.nio.file.Files.isSymbolicLink(home.toPath()))
-        val ini = File(home, "profiles.ini")
-        require(!java.nio.file.Files.isSymbolicLink(ini.toPath()) && ini.isFile && ini.length() < 65536) { "No se encuentra profiles.ini. Abre el navegador una vez antes de entrar en mantenimiento." }
-        val sections = ini.readText().split(Regex("(?m)^\\["))
-            .filter { it.startsWith("Profile") }.map { section ->
-                section.lineSequence().mapNotNull { l -> l.indexOf('=').takeIf { it > 0 }?.let { l.substring(0,it) to l.substring(it+1).trim() } }.toMap()
-            }
-        val item = sections.singleOrNull { it["Default"] == "1" } ?: sections.singleOrNull()
-        require(item != null && item["IsRelative"] == "1") { "Perfil Gecko ambiguo o no compatible; no se copiará parcialmente." }
-        val name = requireNotNull(item["Path"])
-        require(name.matches(Regex("[A-Za-z0-9._-]+")) && name != "." && name != "..")
-        val profile = File(home, name)
-        require(profile.isDirectory && !java.nio.file.Files.isSymbolicLink(profile.toPath()))
-        require(profile.canonicalFile.parentFile == home.canonicalFile)
-        return profile
     }
 }

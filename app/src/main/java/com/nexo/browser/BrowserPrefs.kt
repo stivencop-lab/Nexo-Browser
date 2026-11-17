@@ -194,7 +194,7 @@ object BrowserPrefs {
     fun isNightException(c: Context, host: String?): Boolean =
         host != null && host.lowercase().removePrefix("www.") in nightExceptions(c)
 
-    /** Audio de Gecko por el mezclador de Android (latencia ~100 ms) para que la captura lo oiga. */
+    /** Audio del motor por el mezclador de Android (latencia ~100 ms) para que la captura lo oiga. */
     fun captureFriendlyAudio(c: Context) = p(c).getBoolean("capture_friendly_audio", true)
     fun setCaptureFriendlyAudio(c: Context, v: Boolean) = p(c).edit().putBoolean("capture_friendly_audio", v).apply()
     fun captionDailyLimit(c: Context) = p(c).getInt("caption_daily_limit", 120).coerceIn(0, 1440)

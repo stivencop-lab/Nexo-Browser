@@ -14,5 +14,5 @@ dependencyResolutionManagement {
         maven("https://maven.cefrium.com") { content { includeGroup("com.cefrium") } }
     }
 }
-rootProject.name = "NavegadorGecko"
+rootProject.name = "Nexo"
 include(":app")

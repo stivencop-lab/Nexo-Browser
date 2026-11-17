@@ -9,8 +9,11 @@
    * Rendimiento: no trabaja en pestañas ocultas (salvo en PiP), limita el
    * escaneo de Shadow DOM y solo informa cuando el estado cambia.
    *
-   * El aspecto del mini video vive en pip.css (declarado en el manifest),
-   * aquí solo se marcan el video y sus ancestros con clases.
+   * El aspecto del mini video vive en pip.css (Nexo lo aplica como hoja
+   * construida), aquí solo se marcan el video y sus ancestros con clases.
+   *
+   * Habla con Nexo por `browser.runtime` (bridge-shim.js sobre
+   * window.cefriumQuery): connectNative, sendNativeMessage y sendMessage.
    */
 
   const REPORT_DEBOUNCE_MS = 250;
@@ -59,7 +62,7 @@
        * protege si la opción está activa Y algo se está reproduciendo:
        * ocultar el evento a todas las páginas las mantenía animando y
        * consumiendo batería en segundo plano.
-       * No llamamos play() aquí: Gecko mantiene el estado del decoder.
+       * No llamamos play() aquí: el motor mantiene el estado del decoder.
        */
       if (pipActive || (backgroundMedia && mediaPlaying())) {
         event.stopImmediatePropagation();
@@ -104,7 +107,7 @@
   const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false, earlyStyle: null };
 
   // Fallback de primer render: no oculta la página; solo pinta el canvas base mientras
-  // Dark Reader calcula los estilos completos. Gecko ya anuncia el esquema oscuro nativo.
+  // Dark Reader calcula los estilos completos. Chromium ya anuncia el esquema oscuro nativo.
   function applyEarlyNight(enabled) {
     try {
       const root = document.documentElement;
@@ -778,7 +781,7 @@
     } catch (_) { sendToNexo({ type: "captions_status", code: "meter_unavailable" }); }
   }
 
-  // Gecko may populate captureStream tracks after metadata/MSE becomes ready.
+  // captureStream tracks can appear after metadata/MSE becomes ready.
   // Wait briefly, but release pending streams immediately when CC is switched off.
   function captureAudioTracks(stream, epoch) {
     return new Promise(resolve => {
@@ -815,7 +818,7 @@
     const epoch = ++captions.epoch;
     captions.capturing = true;
     try {
-      const capture = video.captureStream || video.mozCaptureStream;
+      const capture = video.captureStream;
       if (!capture || typeof MediaRecorder !== "function") throw new Error("unsupported");
       const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus"].find(type => MediaRecorder.isTypeSupported(type));
       if (!mimeType) throw new Error("mime");
@@ -1032,8 +1035,8 @@
     let element = null;
     try { element = document.getElementById("movie_player") || document.querySelector(".html5-video-player"); } catch (_) {}
     if (!element) return null;
-    // API del reproductor de la página (Firefox: wrappedJSObject desde el mundo aislado).
-    const api = element.wrappedJSObject || element;
+    // API del reproductor de la página (el puente corre en el mismo mundo que ella).
+    const api = element;
     try {
       return typeof api.getOption === "function" && typeof api.setOption === "function" ? api : null;
     } catch (_) {
@@ -1225,9 +1228,8 @@
   async function loadSubtitleFile(token) {
     const urls = subtitleUrls();
     captions.fileUrls = urls.length;
-    // content.fetch (Firefox) pide como la propia página: el CDN responde igual que al reproductor.
-    const pageFetch = typeof content !== "undefined" && content && typeof content.fetch === "function"
-      ? content.fetch.bind(content) : (typeof fetch === "function" ? fetch : null);
+    // fetch de la página: el CDN responde igual que al reproductor.
+    const pageFetch = typeof fetch === "function" ? fetch.bind(globalThis) : null;
     if (!urls.length || !pageFetch) return false;
     const url = pickSubtitleUrl(urls, captions.target || captions.lang);
     let text = "";
@@ -1539,9 +1541,9 @@
   // ---------------------------------------------------------------
 
   /*
-   * Captura de Android: un salto al mismo punto hace que Gecko cierre y vuelva
-   * a abrir el flujo de audio del video. Abierto con la captura ya activa,
-   * Android lo enruta por la vía que puede oír (no por la de baja latencia).
+   * Captura de Android: un salto al mismo punto hace que el motor cierre y
+   * vuelva a abrir el flujo de audio del video. Abierto con la captura ya
+   * activa, Android lo enruta por la vía que puede oír (no por la de baja latencia).
    */
   function nudgeMedia() {
     const media = new Set(collectVideos().concat(Array.from(document.getElementsByTagName("audio"))));

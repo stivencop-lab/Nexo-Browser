@@ -17,13 +17,13 @@ object UrlSafety {
     private val schemePattern = Regex("^([a-zA-Z][a-zA-Z0-9+.-]*):")
 
     /** Esquemas que la propia app (barra de direcciones, historial, opciones) puede abrir. */
-    private val appSchemes = setOf("http", "https", "about", "resource", "moz-extension")
+    private val appSchemes = setOf("http", "https", "about")
 
     /** Esquemas aceptados desde otras apps a través del Activity exportado. */
     private val externalSchemes = setOf("http", "https")
 
     /** Esquemas que una extensión puede abrir en una pestaña nueva. */
-    private val extensionTabSchemes = setOf("http", "https", "moz-extension")
+    private val extensionTabSchemes = setOf("http", "https")
 
     private val sensitiveParam = Regex(
         "(?i)^(access_?token|refresh_?token|id_?token|token|auth|authorization|" +
@@ -64,13 +64,14 @@ object UrlSafety {
     }
 
     /**
-     * Esquemas que Gecko nunca debe pasar a otra app: los que carga él mismo
-     * y los que permitirían ejecutar código o leer archivos locales.
+     * Esquemas que el navegador nunca pasa a otra app: los que carga él mismo
+     * (también los internos de Chromium) y los que permitirían ejecutar código
+     * o leer archivos locales.
      */
     private val neverExternalSchemes = setOf(
-        "http", "https", "about", "resource", "moz-extension", "chrome",
-        "javascript", "data", "blob", "file", "content", "view-source",
-        "jar", "ws", "wss", "moz-icon", "moz-page-thumb", "wyciwyg"
+        "http", "https", "about", "chrome", "chrome-extension", "chrome-untrusted", "devtools",
+        "javascript", "data", "blob", "file", "filesystem", "content", "view-source",
+        "jar", "ws", "wss", "resource", "moz-extension"
     )
 
     /** Enlaces que corresponden a otra app (tel:, mailto:, intent:, market:…). */

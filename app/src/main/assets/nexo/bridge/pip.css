@@ -1,9 +1,9 @@
 /*
  * Mini video (Picture-in-Picture) de Nexo.
  *
- * Declarado en manifest.json: Gecko lo inyecta como hoja de estilos de la
- * extensión, así que la CSP del sitio no puede bloquearlo (un <style>
- * insertado desde el content script sí podía ser bloqueado).
+ * Nexo lo aplica como hoja construida (`adoptedStyleSheets`) al inicio de
+ * cada documento, así que la CSP del sitio no puede bloquearlo (un <style>
+ * insertado desde la página sí podía ser bloqueado).
  *
  * Solo actúa mientras <html> tiene la clase "nexo-pip-root".
  */

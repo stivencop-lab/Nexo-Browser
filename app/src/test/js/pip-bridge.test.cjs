@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
-const source = fs.readFileSync(path.join(__dirname, '../../main/assets/extensions/nexo_bridge/content_script.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '../../main/assets/nexo/bridge/page-bridge.js'), 'utf8');
 
 function harness(extra = {}) {
   let now = 100000, nextId = 1, onMessage;
@@ -407,7 +407,8 @@ function youtubeHarness(tracks, currentTrack = null) {
     setOption: (module, option, value) => { calls.push(['set', value.languageCode]); currentTrack = value; }
   };
   const player = new h.Element(h.body);
-  player.wrappedJSObject = api;
+  // El puente corre en el mundo de la página: la API del reproductor está en el propio elemento.
+  Object.assign(player, api);
   let segments = [];
   const box = new h.Element(player);
   h.document.getElementById = id => id === 'movie_player' ? player : null;

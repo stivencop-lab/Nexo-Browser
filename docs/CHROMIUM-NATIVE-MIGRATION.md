@@ -28,7 +28,7 @@ Requisitos nuevos: **Android 10 (API 29)** como mínimo y **JDK 25** para compil
 | PhantomShield (red) | `shield/PhantomShield.kt` | `CefriumResourceInterceptor` del navegador y del perfil (service workers) |
 | PhantomShield (páginas) y puente de video | `assets/nexo/cefrium-port.js`, `shield/PageChannel.kt` | `addDocumentStartJavaScript`, `setQueryHandler` |
 | Panel de PhantomShield | `PhantomShieldPanel.kt` | `CefriumProfile.registerContentServer` |
-| Cookies de la versión Gecko | `GeckoProfileImport.kt` | `CefriumCookieManager.setCookie` |
+| Cookies de la versión anterior (actualización) | `UpgradeImport.kt`, `ImportedCookies.kt` | `CefriumCookieManager.setCookie` |
 
 Cada navegador de Cefrium se dibuja en una superficie ligada a una Activity: la pestaña crea
 su navegador cuando hay una (`ensureBrowser`) y, si esa Activity se destruye, lo vuelve a
@@ -44,11 +44,11 @@ tardías del panel). Los marcos consultan cada 2 s (principal) o 4 s (internos) 
 página es visible, y Nexo despierta al marco principal al publicar. `phantom-shim.js` no cambia:
 recibe el mismo puerto `__nexoShield` que en WebView.
 
-El puente de Nexo es **el mismo `extensions/nexo_bridge/content_script.js` de Gecko** (mini video
+El puente de Nexo es `assets/nexo/bridge/page-bridge.js` (mini video
 con `pip.css`, subtítulos por pista, texto del reproductor o audio del video para Deepgram,
 protección de la reproducción en segundo plano, modo nocturno con Dark Reader). `bridge-shim.js`
 le da su `browser.runtime` (`connectNative`, `sendNativeMessage`, `sendMessage`): cada marco lleva
-un token aleatorio y `PageBridge.kt` porta la lógica del `ExtensionManager` de Gecko (los marcos
+un token aleatorio y `PageBridge.kt` decide qué acepta de cada uno (los marcos
 con video se ofrecen, Nexo concede la captura al mejor en 200 ms y solo ese marco envía audio).
 Dark Reader se inyecta bajo demanda en el marco principal con `evaluateJavaScript`.
 `media-reporter.js` informa los medios con sonido (notificación y segundo plano).
@@ -60,7 +60,27 @@ Los scripts corren en el mundo de la página (Cefrium no tiene mundos aislados):
 solo responde lo que cualquier página ya puede ver. Ajustes, estadísticas e IA solo se
 aceptan desde el panel, en su propio origen (`https://phantomshield.nexo.invalid`).
 
-## Respecto a Gecko
+IA de PhantomShield (opcional, con la API del usuario): el detector (`content/ai-detector.js`)
+corre en la página principal; Nexo decide si el sitio puede usar IA (`ShieldAi`: activada,
+aceptada, sitio autorizado, no privada, escudo activo) y pasa cada lote al clasificador
+original, que se ejecuta en un navegador Chromium oculto (`ShieldAiHost`, `host/ai-host.html`,
+perfil del panel). La clave de API solo existe en ese anfitrión y en los ajustes; las
+llamadas al proveedor las hace Nexo (HTTPS, sin cookies ni redirecciones, respuesta de 64 KB
+como máximo). Las direcciones de enlaces y marcos de los candidatos se comprueban en el
+dispositivo y nunca llegan al proveedor. Los dominios publicitarios aprendidos se cortan en la
+red (peticiones de terceros, no medios) y en las ventanas emergentes.
+
+## Sin Gecko
+
+La app no incluye GeckoView ni librerías de Mozilla. Lo único que conoce el formato de la
+versión anterior es la importación de cookies al actualizar (`UpgradeImport.kt`, solo lee
+`files/mozilla/` si existe y lo borra a los 30 días) y la validación de copias de perfil
+antiguas (`TransferSchema`), que se aceptan pero ignoran los datos de aquel motor. Se
+retiraron la tienda AMO, la traducción local, `nexo_network`, el esquema `moz-extension:` y la
+identidad de Firefox de PhantomShield. La transferencia de perfil ya no necesita el perfil de
+Gecko (antes fallaba en una instalación con Chromium).
+
+## Respecto a la versión anterior
 
 Igual o mejor:
 
@@ -85,9 +105,9 @@ Pendiente (la interfaz lo explica al usuario):
    los proveedores ya configurados para subtítulos.
 3. **Proxy en pestañas normales o privadas**: el proxy de Chromium es del perfil, así que esas
    pestañas con ruta no se abren (nunca salen por conexión directa).
-4. **Retardo simulado, ubicación simulada y variación de huella**: dependían de `nexo_network`.
+4. **Retardo simulado, ubicación simulada y variación de huella** (antes, extensión `nexo_network`, retirada).
 5. **Modo nocturno en marcos internos**: Dark Reader solo se inyecta en el marco principal.
-6. **IA de PhantomShield, parcheador anti-bloqueo**: como en la variante WebView.
+6. **Parcheador anti-bloqueo de PhantomShield** (la IA ya funciona desde 0.32.0, ver abajo).
 7. Descargas resultado de un POST: Nexo vuelve a pedir la URL (las `blob:`/`data:` que genera la
    página sí funcionan: Chromium las guarda y pasan al gestor de Nexo).
 8. Política de cookies "equilibrada": hoy es la de Chromium (sin bloqueo de cookies de rastreo

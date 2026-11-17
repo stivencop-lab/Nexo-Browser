@@ -10,8 +10,8 @@ import java.util.WeakHashMap
  * que su ruta SOCKS/HTTP se aplica a ese perfil y no toca al resto (sin
  * conexión directa de respaldo: si el proxy no responde, la página no carga).
  * Una pestaña normal o privada con proxy compartiría perfil con otras: no se
- * abre por conexión directa, queda bloqueada con aviso, igual que en Gecko
- * cuando la ruta falla. El retardo, la ubicación simulada y la variación de
+ * abre por conexión directa: queda bloqueada con aviso, como cuando la ruta
+ * falla. El retardo, la ubicación simulada y la variación de
  * huella llegan con el puente de páginas.
  */
 object TabRouting {

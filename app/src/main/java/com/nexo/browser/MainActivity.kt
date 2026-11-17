@@ -72,8 +72,8 @@ class MainActivity :
     private var startPageKey = ""
 
     /**
-     * Mini video nativo: rectángulo del video (px de la GeckoView) que se
-     * amplía para llenar la ventana PiP. Mientras no sea null, la GeckoView
+     * Mini video nativo: rectángulo del video (px de la vista de página) que se
+     * amplía para llenar la ventana PiP. Mientras no sea null, la vista de página
      * conserva su tamaño, así la página NO se redimensiona (YouTube pausaba
      * y reorganizaba la página al achicarse) y no hace falta modificar su CSS.
      */
@@ -240,7 +240,7 @@ class MainActivity :
             onExtensions = { openScreen(ExtensionManager.storeScreen()) },
             onAction = { action -> startPageAction(action) }
         ).apply { visibility = View.GONE }
-        // Encima de la GeckoView y debajo del botón "Mini video".
+        // Encima de la vista de página y debajo del botón "Mini video".
         browserFrame.addView(
             startPage,
             1,
@@ -916,7 +916,7 @@ class MainActivity :
             return
         }
 
-        // Descargar con Gecko (cookies de la sesión, modo privado) en lugar de
+        // Descargar con el gestor de Nexo (cookies del perfil, modo privado) en lugar de
         // DownloadManager, que no tiene acceso a la sesión del navegador.
         val tab = TabManager.activeTab()
         if(tab?.networkProfile?.type?.let { it != "direct" } == true) {
@@ -1004,7 +1004,7 @@ class MainActivity :
      * MainActivity está exportada (launcher), así que cualquier app puede
      * enviarle EXTRA_OPEN_URL. Solo las pantallas propias, que llegan por el
      * alias NO exportado InternalOpenActivity, pueden abrir páginas internas
-     * (about:, moz-extension:…). Desde fuera solo se aceptan http/https.
+     * (about:…). Desde fuera solo se aceptan http/https.
      */
     private fun handleNavigationIntent(intent: Intent?) {
         if (intent == null || intent.getBooleanExtra(EXTRA_CONSUMED, false)) return
@@ -1219,7 +1219,6 @@ class MainActivity :
         setOmniboxIcon(
             when (UrlSafety.scheme(tab.url)) {
                 "https" -> R.drawable.ic_lock
-                "moz-extension" -> R.drawable.ic_extension_placeholder
                 else -> R.drawable.ic_search
             }
         )
@@ -1231,14 +1230,6 @@ class MainActivity :
     }
 
     private fun displayUrl(url: String): String {
-        if (UrlSafety.scheme(url) == "moz-extension") {
-            val installedOptions = ExtensionManager.actionEntries().mapNotNull { candidate ->
-                val options = candidate.optionsPageUrl ?: return@mapNotNull null
-                val name = candidate.name ?: return@mapNotNull null
-                options to name
-            }
-            return BrowserPagePresentation.extensionLabel(url, installedOptions) ?: "Página de extensión"
-        }
         if (!UrlSafety.isWebUrl(url)) return "Página interna de Nexo"
         val host = runCatching { Uri.parse(url).host }.getOrNull()?.lowercase() ?: return url
         return host.removePrefix("www.").removePrefix("m.")
@@ -1339,7 +1330,7 @@ class MainActivity :
 
             /*
              * Si el usuario salió mientras multimedia estaba
-             * reproduciéndose, damos a Gecko una segunda
+             * reproduciéndose, damos al motor una segunda
              * oportunidad de continuar después de la transición.
              */
             if (backgroundPlaybackWasActive && BrowserPrefs.backgroundMedia(this) && tab != null) {
@@ -1551,7 +1542,7 @@ class MainActivity :
         val tab = TabManager.activeTab() ?: return
         val session = tab.session ?: return
 
-        // Capturar el estado antes de tocar CSS, GeckoSession o PiP.
+        // Capturar el estado antes de tocar CSS, la sesión del motor o PiP.
         pipPlaybackWasActive = isMiniPlaybackActive(tab)
 
         if (!hasMiniVideo(tab)) {
@@ -1564,7 +1555,7 @@ class MainActivity :
 
         if (requirePlayback && !isMiniPlaybackActive(tab)) return
 
-        // Mantener GeckoSession activa durante la transición a PiP.
+        // Mantener la sesión del motor activa durante la transición a PiP.
         TabManager.prepareForPictureInPicture()
 
         // Recorte nativo si conocemos el rectángulo del video; si no (p. ej.
@@ -1625,7 +1616,7 @@ class MainActivity :
         if (rect.width() < minW || rect.height() < minH) return false
 
         pipCrop = rect
-        // Tamaño fijo: aunque la ventana se achique, Gecko sigue viendo la misma
+        // Tamaño fijo: aunque la ventana se achique, el motor sigue viendo la misma
         // vista y la página no recibe ningún "resize".
         pageView.layoutParams = android.widget.FrameLayout.LayoutParams(w, h)
         return true
@@ -1808,7 +1799,7 @@ class MainActivity :
         when {
             isInPictureInPictureMode -> {
                 /*
-                 * GeckoView mantiene la sesión/compositor activos.
+                 * El motor mantiene la sesión y el compositor activos.
                  * No forzar MediaSession.play(): en YouTube puede
                  * reiniciar el decoder y producir frames negros.
                  */
@@ -1934,7 +1925,7 @@ class MainActivity :
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (MigrationMode.enabled(this)) return
-        // La Activity gestiona la rotación: Gecko debe enterarse para
+        // La Activity gestiona la rotación: el motor debe enterarse para
         // actualizar screen.orientation y las media queries.
         com.nexo.browser.engine.Engines.current.onConfigurationChanged(this, newConfig)
         ViewCompat.requestApplyInsets(findViewById(android.R.id.content))
@@ -1962,7 +1953,7 @@ class MainActivity :
             engineView.release()
             attachedSession = null
         }
-        // No cerrar las GeckoSession al recrear o destruir solo la Activity.
+        // No cerrar las sesiones del motor al recrear o destruir solo la Activity.
         if (isFinishing && !isChangingConfigurations && BrowserPrefs.clearOnExit(this)) {
             BrowsingData.clear(this)
         }

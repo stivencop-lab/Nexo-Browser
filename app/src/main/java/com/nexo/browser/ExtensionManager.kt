@@ -12,12 +12,12 @@ import java.lang.ref.WeakReference
  *
  * Cefrium no ejecuta WebExtensions: PhantomShield funciona con su motor
  * nativo ([PhantomShield]) y el puente de páginas (mini video, subtítulos,
- * modo nocturno) con el mismo `content_script.js` de Gecko ([PageBridge]). Las extensiones de terceros
+ * modo nocturno) con `page-bridge.js` ([PageBridge]). Las extensiones de terceros
  * llegarán con el runtime NXR; mientras tanto la interfaz común recibe
  * respuestas vacías y explicaciones claras.
  */
 object ExtensionManager {
-    const val PHANTOMSHIELD_ID = "phantomshield@geckoview.internal"
+    const val PHANTOMSHIELD_ID = "phantomshield@nexo.internal"
     private const val NOT_YET = "Las extensiones de terceros llegarán en una próxima versión de Nexo."
 
     private var promptActivity: WeakReference<Activity>? = null

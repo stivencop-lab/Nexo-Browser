@@ -69,8 +69,8 @@ object CefriumEngine : BrowserEngine {
         }
         // Antes de abrir ningún perfil: los Burner de la sesión anterior.
         CefriumProfiles.purgeStale()
-        // Actualización desde Nexo con Gecko: sus cookies antes de abrir la primera pestaña.
-        GeckoProfileImport.runOnce(appContext)
+        // Actualización desde una versión anterior de Nexo: sus cookies antes de abrir la primera pestaña.
+        UpgradeImport.runOnce(appContext)
         PhantomShield.initialize(appContext)
         applySettings(appContext)
     }
@@ -144,7 +144,7 @@ object CefriumEngine : BrowserEngine {
         TabManager.liveSessions().forEach { (it as? CefriumEngineSession)?.applySettings() }
     }
 
-    /** DNS sobre HTTPS de Chromium, como el de Gecko: proveedor y modo estricto. */
+    /** DNS sobre HTTPS de Chromium: proveedor y modo estricto. */
     private fun applySecureDns(context: Context) {
         val template = when (BrowserPrefs.dnsProvider(context)) {
             BrowserPrefs.DNS_CLOUDFLARE -> "https://chrome.cloudflare-dns.com/dns-query"

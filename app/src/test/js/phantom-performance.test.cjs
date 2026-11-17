@@ -33,7 +33,7 @@ function pageHooks(enabled = true, includeNativeBridge = false) {
       observe() { this.active = true; } disconnect() { this.active = false; }
     }
   });
-  if (includeNativeBridge) vm.runInContext(fs.readFileSync(path.join(content, '../../nexo_bridge/content_script.js'), 'utf8'), context);
+  if (includeNativeBridge) vm.runInContext(fs.readFileSync(path.join(content, '../../../nexo/bridge/page-bridge.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(content, 'page-hooks.js'), 'utf8'), context);
   function tick(ms) {
     const end = time + ms;

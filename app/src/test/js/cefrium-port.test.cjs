@@ -12,7 +12,7 @@ const portSource = fs.readFileSync(path.join(nexo, 'cefrium-port.js'), 'utf8');
 const shimSource = fs.readFileSync(path.join(nexo, 'phantom-shim.js'), 'utf8');
 const mediaSource = fs.readFileSync(path.join(nexo, 'media-reporter.js'), 'utf8');
 const bridgeShimSource = fs.readFileSync(path.join(nexo, 'bridge-shim.js'), 'utf8');
-const geckoBridge = fs.readFileSync(path.join(__dirname, '../../main/assets/extensions/nexo_bridge/content_script.js'), 'utf8');
+const geckoBridge = fs.readFileSync(path.join(nexo, 'bridge/page-bridge.js'), 'utf8');
 
 /** Nexo falso con el protocolo de PageChannel.kt: {m, s} -> {reply, seq, events}. */
 function nativeSide(answer) {
@@ -132,7 +132,7 @@ test('events published by Nexo reach the page once, in order, through polling', 
   assert.deepEqual([...context.seen], ['adblockEnabled', 'privacyEnabled'], 'events are not delivered twice');
 });
 
-test('the Gecko bridge only needs connectNative, sendNativeMessage and sendMessage from browser.runtime', () => {
+test('the page bridge only needs connectNative, sendNativeMessage and sendMessage from browser.runtime', () => {
   const used = new Set([...geckoBridge.matchAll(/browser\s*\.\s*([a-zA-Z]+)\s*\.\s*([a-zA-Z]+)/g)].map(m => `browser.${m[1]}.${m[2]}`));
   assert.deepEqual([...used].sort(), ['browser.runtime.connectNative', 'browser.runtime.sendMessage', 'browser.runtime.sendNativeMessage']);
 });

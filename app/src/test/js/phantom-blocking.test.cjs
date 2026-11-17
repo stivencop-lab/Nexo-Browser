@@ -138,7 +138,7 @@ async function background(options = {}) {
         changed.listeners.forEach(fn => fn(delta, 'local'));
       }
     } },
-    runtime: { id: 'phantom', getURL: file => 'moz-extension://phantom/' + file, onMessage: message, onInstalled: installed,
+    runtime: { id: 'phantom', getURL: file => 'https://phantomshield.nexo.invalid/' + file, onMessage: message, onInstalled: installed,
       openOptionsPage: async () => { throw new Error('options must not open on update'); } },
     webRequest: { onBeforeRequest: beforeRequest },
     tabs: { onRemoved: event(), onUpdated: event() },
