@@ -203,7 +203,11 @@ Por prioridad. Cada una: código + pruebas JVM/JS + nota en `docs/CHROMIUM-NATIV
    rastreo (`rules.network` con tipo `xmlhttprequest`), con caché por host para no evaluar reglas en cada cookie.
 6. ~~Puente completo~~ **Hecho en 0.31.2**: `bridge/page-bridge.js` con `bridge-shim.js` y `PageBridge.kt`.
    Validar en dispositivo: subtítulos por audio (clave de Deepgram), pistas VTT, YouTube, mini video.
-7. **IA y parcheador anti-bloqueo de PhantomShield**: hoy responden `AI_UNAVAILABLE`.
+7. ~~IA de PhantomShield~~ **Hecho en 0.32.0**: «Configurar IA» abre `options/options.html` en el panel; el
+   clasificador original (`ai-config`, `ai-memory`, `ai-domains`, `ai-classifier`) corre en un navegador oculto
+   (`ShieldAiHost`, `host/ai-host.html`) con `fetch` nativo (OkHttp, HTTPS, sin redirecciones); Nexo autoriza
+   cada lote (`ShieldAi`), inyecta `content/ai-detector.js` en la página principal y corta en la red los dominios
+   aprendidos. Validar en dispositivo con una clave real. Pendiente: parcheador anti-bloqueo.
 8. **Extensiones de terceros (runtime NXR)**: `ExtensionsActivity` ya evalúa compatibilidad de CRX/XPI/ZIP.
 
 ## 6. Fase 3 — Publicación

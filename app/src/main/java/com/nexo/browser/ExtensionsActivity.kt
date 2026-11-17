@@ -46,11 +46,11 @@ class ExtensionsActivity : Activity() {
             listOf(
                 ListRow(
                     "PhantomShield",
-                    "Bloqueo de anuncios y rastreadores con motor nativo",
+                    "Anuncios y rastreadores con motor nativo; IA opcional con tu API",
                     if (com.nexo.browser.shield.PhantomShield.isEnabled()) "Activo · se configura desde el escudo del menú" else "Desactivado desde el menú",
                     "✓"
                 ),
-                ListRow("Puente de Nexo", "Subtítulos en vivo y mini video", "Activo · el modo nocturno de páginas llegará en una próxima versión", "✓"),
+                ListRow("Puente de Nexo", "Subtítulos en vivo, mini video y modo nocturno de páginas", "Activo", "✓"),
                 ListRow(
                     "Extensiones de escritorio",
                     "Chrome Web Store, Firefox (AMO) y archivos .crx/.xpi/.zip",

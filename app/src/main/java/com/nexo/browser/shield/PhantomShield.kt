@@ -41,9 +41,11 @@ import java.util.concurrent.atomic.AtomicLong
  * - Panel: `popup/popup.html` de la extensión en una hoja ([PhantomShieldPanel]).
  * - Cookies: la política de Ajustes (todas, propias, ninguna) en el mismo
  *   interceptor.
- *
- * La clasificación con IA, el parcheador anti-bloqueo y la variación de
- * Canvas por extensión quedan para una fase posterior: el panel lo explica.
+ * - IA (opcional, con la API del usuario): `content/ai-detector.js` en cada
+ *   página principal; Nexo decide si el sitio puede usarla ([ShieldAi]) y
+ *   pasa los lotes al clasificador original, que corre en un navegador
+ *   oculto ([ShieldAiHost]). Los dominios publicitarios aprendidos se cortan
+ *   en la red como el resto de reglas.
  */
 object PhantomShield {
     internal const val ASSET_ROOT = "extensions/phantomshield/"
@@ -55,7 +57,7 @@ object PhantomShield {
     private const val UPDATE_INTERVAL_MS = 24L * 3600 * 1000
     private const val MAX_LIST_BYTES = 15L * 1024 * 1024
     private const val HIDE_BASE_SELECTOR = "[data-phantomshield-hidden=\"true\"]"
-    internal const val AI_UNAVAILABLE = "La IA de PhantomShield llegará en una próxima versión de Nexo."
+    private const val AI_SCAN_TIMEOUT_MS = 90_000L
 
     private val SETTING_KEYS = listOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled")
     private val PAGE_READABLE = setOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled")
@@ -81,6 +83,10 @@ object PhantomShield {
     }
     private val scripts by lazy { Scripts(appContext) }
 
+    /** `aiConfig` y `aiAdDomains` ya interpretados; se renuevan al cambiar el almacén. */
+    @Volatile private var aiConfig: ShieldAi.Config = ShieldAi.Config.OFF
+    @Volatile private var learned: ShieldAi.Learned = ShieldAi.Learned.EMPTY
+
     /** Política de cookies de Ajustes; la lee el hilo de red. */
     @Volatile var cookieMode: String = BrowserPrefs.COOKIES_BALANCED
 
@@ -96,6 +102,11 @@ object PhantomShield {
         /** Marcos de la pestaña: consultas, ajustes y órdenes de Nexo. */
         val channel = PageChannel()
         internal var lastPopupReport = 0L
+        /** Carga actual (cambia con cada página principal): las respuestas de IA de otra carga se descartan. */
+        @Volatile internal var page = 0
+        internal var ai = ShieldAi.TabState()
+        /** Respuestas que el panel espera de esta pestaña («Analizar con IA»), por id. */
+        internal val replies = HashMap<Int, (Any?) -> Unit>()
 
         /** Respuestas propias pendientes: el hilo de red decide, otro hilo responde. */
         internal val answers = ConcurrentHashMap<String, ShieldDecision>()
@@ -104,14 +115,20 @@ object PhantomShield {
             topUrl = url
             topHost = UrlParts.host(url)
             blocked.set(0)
+            newPage()
             channel.reset()
+        }
+
+        private fun newPage() {
+            page++
+            main.post { ai = ShieldAi.TabState() }
         }
 
         /** Navegación sin petición de red (atrás/adelante en caché, cambios de historial). */
         fun onLocation(url: String) {
             if (url.startsWith("http://") || url.startsWith("https://")) {
                 val host = UrlParts.host(url)
-                if (host != topHost) blocked.set(0)
+                if (host != topHost) { blocked.set(0); newPage() }
                 topUrl = url
                 topHost = host
             }
@@ -129,6 +146,7 @@ object PhantomShield {
         store = ShieldStore(File(appContext.filesDir, "phantomshield"))
         enabled = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
         readSettings()
+        readAi(aiConfig = true, domains = true)
         blockedTotal.set(store.long("blockedCount"))
         // Reglas incluidas ya mismo (protegen desde la primera página); las listas, en segundo plano.
         runCatching {
@@ -162,6 +180,13 @@ object PhantomShield {
             antiBlockEnabled = store.boolean("antiBlockEnabled", false),
             disabledDomains = ShieldSettings.normalizeDomains(store.stringList("disabled_domains"))
         )
+    }
+
+    private fun readAi(aiConfig: Boolean, domains: Boolean) {
+        val stored = store.get(JSONArray().put("aiConfig").put("aiAdDomains"))
+        if (aiConfig) this.aiConfig = runCatching { ShieldAi.Config.from(stored.opt("aiConfig")) }.getOrDefault(ShieldAi.Config.OFF)
+        if (domains) learned = runCatching { ShieldAi.Learned.from(stored.opt("aiAdDomains"), System.currentTimeMillis()) }
+            .getOrDefault(ShieldAi.Learned.EMPTY)
     }
 
     private fun reloadLists() {
@@ -314,6 +339,7 @@ object PhantomShield {
             val document = request.documentUrl?.takeIf { it.isNotEmpty() } ?: top
             val decision = runCatching {
                 ShieldPolicy.decide(rules.network, settings, popupDomains, url, type, UrlParts.host(top), document)
+                    .let { if (it == ShieldDecision.Allow && !request.isMainFrame && blocksLearned(url, type, top)) ShieldDecision.Block else it }
             }.getOrDefault(ShieldDecision.Allow)
             return when (decision) {
                 ShieldDecision.Allow -> forget(url)
@@ -380,11 +406,25 @@ object PhantomShield {
         else -> null
     }
 
+    /**
+     * Dominio publicitario aprendido con la IA: se cortan sus peticiones de
+     * terceros (no los medios ni la página que abre el usuario).
+     */
+    private fun blocksLearned(url: String, type: String, topUrl: String): Boolean {
+        val current = learned
+        if (current.blocked.isEmpty() || type == "media") return false
+        val host = UrlParts.host(url) ?: return false
+        val topHost = UrlParts.host(topUrl)
+        if (!settings.isEnabledForHost(topHost) || ShieldPolicy.siteOfHost(host) == ShieldPolicy.siteOfHost(topHost)) return false
+        return current.blocks(host)
+    }
+
     /** Ventana nueva que pide [opener]: ¿la corta PhantomShield? (cuenta el bloqueo). */
     fun blocksPopup(opener: ShieldTab, url: String): Boolean {
         if (!started || !enabled) return false
         val blocked = runCatching {
-            ShieldPolicy.blocksPopup(rules.network, settings, popupDomains, url, opener.topUrl)
+            ShieldPolicy.blocksPopup(rules.network, settings, popupDomains, url, opener.topUrl) ||
+                (settings.popupBlockEnabled && blocksLearned(url, "popup", opener.topUrl ?: url))
         }.getOrDefault(false)
         if (blocked) recordBlocked(opener)
         return blocked
@@ -433,6 +473,14 @@ object PhantomShield {
     }
 
     internal fun detachPanel() { panelChannel = null }
+
+    /** Script de inicio del anfitrión de IA ([ShieldAiHost]). */
+    internal fun aiHostScript(): String = scripts.aiHost
+
+    internal fun hostGet(keys: Any?): JSONObject = store.get(if (keys == null || keys == JSONObject.NULL) null else keys)
+    internal fun hostSet(values: JSONObject) { if (values.length() > 0) store.set(values) }
+    internal fun hostRemove(keys: List<String>) { if (keys.isNotEmpty()) store.remove(keys) }
+    internal fun keysOf(payload: Any?): Set<String>? = requestedKeys(payload)
 
     @Volatile private var panelChannel: PageChannel? = null
 
@@ -496,10 +544,106 @@ object PhantomShield {
             }
             "message" -> {
                 val payload = call.payload as? JSONObject ?: return answer(call.id, null)
+                if (payload.optString("type") == "AI_CLASSIFY") {
+                    // El clasificador responde más tarde, por el canal de la pestaña.
+                    classify(tab, payload, origin, isMainFrame) { tab.channel.push(answer(call.id, it)) }
+                    return null
+                }
                 answer(call.id, pageMessage(tab, payload, origin, isMainFrame))
+            }
+            "reply" -> {
+                // Respuesta de la página a una petición del panel (solo las que Nexo espera de esta pestaña).
+                val reply = call.payload as? JSONObject
+                if (isMainFrame && reply != null) tab.replies.remove(reply.optInt("rid"))?.invoke(reply.opt("result").takeIf { it != JSONObject.NULL })
+                answer(call.id, null)
             }
             else -> answer(call.id, null, "No disponible")
         }
+    }
+
+    /** ¿Puede esta pestaña usar IA en [host]? (activa, aceptada, sitio autorizado, no privada, escudo activo). */
+    private fun aiAllowed(tab: ShieldTab, host: String?): Boolean =
+        !tab.isPrivate && effectiveEnabled(host) && aiConfig.allows(host)
+
+    /** `AI_CLASSIFY` del detector: solo la página principal de un sitio autorizado. */
+    private fun classify(tab: ShieldTab, message: JSONObject, origin: String, isMainFrame: Boolean, done: (Any?) -> Unit) {
+        val host = tab.topHost
+        if (!isMainFrame || host == null || UrlParts.host(origin) != host || !effectiveEnabled(host)) {
+            done(JSONObject().put("ok", false).put("error", "Página no autorizada para IA."))
+            return
+        }
+        if (!aiAllowed(tab, host)) {
+            done(JSONObject().put("ok", false).put("code", "off").put("error", "IA desactivada o sitio sin autorización."))
+            return
+        }
+        val page = tab.page
+        val candidates = enrichCandidates(message.optJSONArray("candidates"), tab.topUrl ?: origin)
+        val sender = JSONObject().put("tabId", tab.id).put("page", page).put("host", host).put("incognito", tab.isPrivate)
+            .put("known", JSONArray(knownAdHosts(candidates)))
+        ShieldAiHost.request(JSONObject().put("type", "AI_CLASSIFY").put("candidates", candidates), sender) { result ->
+            val json = result as? JSONObject
+            if (tab.page != page) {
+                done(JSONObject().put("ok", false).put("code", "changed").put("error", "La página cambió."))
+                return@request
+            }
+            if (!effectiveEnabled(host)) {
+                done(JSONObject().put("ok", false).put("error", "Protección desactivada."))
+                return@request
+            }
+            tab.ai.onClassified(json, System.currentTimeMillis())
+            json?.remove("learned")
+            notifyAiActivity(tab)
+            done(json ?: JSONObject().put("ok", false).put("code", "format").put("error", "Respuesta de IA no válida."))
+        }
+    }
+
+    /**
+     * Como `enrichCandidates` de la extensión: un enlace o marco hacia una red
+     * que las listas bloquean marca el candidato como anuncio. Las
+     * direcciones siguen hasta el anfitrión (aprende dominios con ellas),
+     * que las quita antes de llamar al proveedor.
+     */
+    private fun enrichCandidates(candidates: JSONArray?, documentUrl: String): JSONArray {
+        val out = JSONArray()
+        if (candidates == null) return out
+        val engine = rules.network
+        for (i in 0 until minOf(candidates.length(), 12)) {
+            val candidate = candidates.optJSONObject(i) ?: continue
+            val copy = JSONObject(candidate.toString())
+            val signals = copy.optJSONArray("signals")
+            val urls = copy.optJSONArray("localUrls")
+            if (signals != null && urls != null && (0 until signals.length()).none { signals.opt(it) == "ad-network" }) {
+                val adNetwork = (0 until minOf(urls.length(), 4)).any { index ->
+                    val url = urls.opt(index) as? String ?: return@any false
+                    url.length <= 512 && (url.startsWith("http://") || url.startsWith("https://")) &&
+                        (runCatching { engine.shouldBlock(url, "sub_frame", documentUrl, false) }.getOrDefault(false) ||
+                            blocksLearned(url, "sub_frame", documentUrl))
+                }
+                if (adNetwork) signals.put("ad-network")
+            }
+            out.put(copy)
+        }
+        return out
+    }
+
+    /** Hosts de marcos y enlaces de los candidatos que las listas ya bloquean (no se aprenden). */
+    private fun knownAdHosts(candidates: JSONArray): List<String> {
+        val hosts = LinkedHashSet<String>()
+        for (i in 0 until candidates.length()) {
+            val candidate = candidates.optJSONObject(i) ?: continue
+            (candidate.opt("localFrame") as? String)?.let { url -> UrlParts.host(url)?.let(hosts::add) }
+            candidate.optJSONArray("localUrls")?.let { urls ->
+                for (j in 0 until minOf(urls.length(), 4)) (urls.opt(j) as? String)?.let { url -> UrlParts.host(url)?.let(hosts::add) }
+            }
+        }
+        val engine = rules.network
+        return hosts.filter { runCatching { engine.isDomainBlocked(it) }.getOrDefault(false) }.take(64)
+    }
+
+    /** El panel abierto vuelve a leer la actividad de IA de la pestaña. */
+    private fun notifyAiActivity(tab: ShieldTab) {
+        panelChannel?.push(JSONObject().put("event", "message")
+            .put("message", JSONObject().put("type", "AI_ACTIVITY_UPDATED").put("tabId", tab.id)).toString())
     }
 
     internal fun bindSession(tab: ShieldTab, session: CefriumEngineSession) { tab.session = WeakReference(session) }
@@ -525,8 +669,12 @@ object PhantomShield {
         val topHost = tab.topHost.orEmpty()
         val frameHost = UrlParts.host(origin)?.takeIf { it.isNotEmpty() } ?: topHost
         return when (message.optString("type")) {
-            "GET_SITE_STATE" -> JSONObject().put("ok", true).put("enabled", effectiveEnabled(topHost))
-                .put("aiEnabled", false).put("aiDetail", "basic").put("aiSensitivity", "balanced").put("host", topHost)
+            "GET_SITE_STATE" -> {
+                val config = aiConfig
+                JSONObject().put("ok", true).put("enabled", effectiveEnabled(topHost))
+                    .put("aiEnabled", aiAllowed(tab, topHost.takeIf { it.isNotEmpty() }))
+                    .put("aiDetail", config.detail).put("aiSensitivity", config.sensitivity).put("host", topHost)
+            }
             "GET_COSMETIC" -> {
                 if (!effectiveEnabled(topHost)) return disabledCosmetic()
                 val result = rules.cosmetic.forHost(frameHost)
@@ -548,7 +696,14 @@ object PhantomShield {
                 }
                 JSONObject().put("ok", true)
             }
-            "AI_CLASSIFY", "AI_PAGE" -> JSONObject().put("ok", false).put("error", AI_UNAVAILABLE)
+            "AI_PAGE" -> {
+                // El detector informa de lo que realmente ocultó (o de pasadas sin candidatos).
+                if (!isMainFrame || tab.isPrivate || UrlParts.host(origin) != tab.topHost) return JSONObject().put("ok", false)
+                val delta = tab.ai.onPage(message, System.currentTimeMillis())
+                if (delta != 0) tab.blocked.updateAndGet { (it + delta).coerceAtLeast(0) }
+                notifyAiActivity(tab)
+                JSONObject().put("ok", true)
+            }
             else -> null
         }
     }
@@ -596,8 +751,17 @@ object PhantomShield {
                 TabManager.activeSession()?.reload(false)
                 answer(call.id, null)
             }
-            "tabs.sendMessage" -> answer(call.id, null, AI_UNAVAILABLE)
-            "openOptions" -> answer(call.id, null, AI_UNAVAILABLE)
+            "tabs.sendMessage" -> {
+                val request = call.payload as? JSONObject ?: return answer(call.id, null, "Petición no válida")
+                val message = request.optJSONObject("message")
+                val tab = tabs.mapNotNull { it.get() }.firstOrNull { it.id == request.optInt("tabId", -1) }
+                // Solo «Analizar con IA» de la página principal; la pestaña responde por su canal.
+                if (tab == null || message?.optString("type") != "AI_SCAN") return answer(call.id, null, "No disponible")
+                askTab(tab, message) { result -> channel.push(answer(call.id, result)) }
+                null
+            }
+            "openOptions" -> if (com.nexo.browser.PhantomShieldPanel.openOptions()) answer(call.id, null)
+                else answer(call.id, null, "No se pudieron abrir los ajustes de IA.")
             "message" -> {
                 val payload = call.payload as? JSONObject ?: return answer(call.id, null)
                 var immediate: String? = null
@@ -623,17 +787,17 @@ object PhantomShield {
                 done(JSONObject().put("ok", true)
                     .put("blockedCount", blockedTotal.get())
                     .put("tabBlocked", tab?.blocked?.get() ?: 0)
-                    .put("tabAi", JSONObject.NULL)
+                    .put("tabAi", tab?.ai?.takeIf { it.active }?.toJson() ?: JSONObject.NULL)
                     .put("siteDisabled", settings.isHostDisabled(host))
                     .put("rules", JSONObject().put("network", rules.networkCount).put("cosmetic", rules.cosmeticCount))
-                    .put("learnedDomains", JSONObject().put("blocked", 0).put("watching", 0))
+                    .put("learnedDomains", JSONObject().put("blocked", learned.blocked.size).put("watching", learned.watching))
                     .put("settings", JSONObject().put("adblockEnabled", settings.adblockEnabled && enabled)
                         .put("privacyEnabled", settings.privacyEnabled).put("popupBlockEnabled", settings.popupBlockEnabled)
                         .put("antiBlockEnabled", settings.antiBlockEnabled)))
             }
             "RESET_STATS" -> {
                 blockedTotal.set(0)
-                tabs.mapNotNull { it.get() }.forEach { it.blocked.set(0) }
+                tabs.mapNotNull { it.get() }.forEach { it.blocked.set(0); it.ai = ShieldAi.TabState() }
                 store.set(JSONObject().put("blockedCount", 0))
                 done(JSONObject().put("ok", true).put("blockedCount", 0))
             }
@@ -643,26 +807,57 @@ object PhantomShield {
                 }
                 main.post { done(result) }
             }
-            else -> if (message.optString("type").startsWith("AI_")) done(JSONObject().put("ok", false).put("error", AI_UNAVAILABLE))
-                else done(null)
+            // Ajustes de IA, memoria y dominios aprendidos: el panel es una página propia (origen exacto).
+            "AI_TEST", "AI_MEMORY_LIST", "AI_MEMORY_FORGET", "AI_MEMORY_CLEAR", "AI_MEMORY_EXCLUDE",
+            "AI_DOMAINS_LIST", "AI_DOMAINS_FORGET", "AI_DOMAINS_ALLOW", "AI_DOMAINS_UNALLOW", "AI_DOMAINS_CLEAR" ->
+                ShieldAiHost.request(message, JSONObject().put("panel", true), done)
+            else -> done(null)
         }
     }
 
     private fun onStorageChanged(changes: JSONObject) {
         if (changes.has("adblockEnabled") || changes.has("privacyEnabled") || changes.has("popupBlockEnabled") ||
             changes.has("antiBlockEnabled") || changes.has("disabled_domains")) readSettings()
+        if (changes.has("aiConfig") || changes.has("aiAdDomains")) readAi(changes.has("aiConfig"), changes.has("aiAdDomains"))
         broadcast(changes)
     }
 
-    /** `storage.onChanged` hacia las páginas (solo ajustes legibles) y el panel (todo salvo listas). */
+    /**
+     * `storage.onChanged` hacia las páginas (solo ajustes legibles; de la IA,
+     * solo que cambió), el panel y el anfitrión de IA (todo).
+     */
     private fun broadcast(changes: JSONObject) {
         val pageChanges = JSONObject()
-        changes.keys().forEach { key -> if (key in PAGE_READABLE || key == "disabled_domains") pageChanges.put(key, if (key == "disabled_domains") JSONObject() else changes.get(key)) }
+        changes.keys().forEach { key ->
+            when (key) {
+                in PAGE_READABLE -> pageChanges.put(key, changes.get(key))
+                // Sin valores: la clave de la API y los dominios nunca llegan a las páginas.
+                "disabled_domains", "aiConfig" -> pageChanges.put(key, JSONObject())
+            }
+        }
         val pageText = JSONObject().put("event", "storage").put("changes", pageChanges).toString()
-        val panelText = JSONObject().put("event", "storage").put("changes", changes).toString()
+        val allText = JSONObject().put("event", "storage").put("changes", changes).toString()
         if (pageChanges.length() > 0) tabs.mapNotNull { it.get() }.forEach { tab -> tab.channel.push(pageText) }
-        panelChannel?.push(panelText)
+        // Memoria de IA olvidada: solo las pestañas de ese sitio (o todas, si se borró entera) vuelven a analizar.
+        (changes.optJSONObject("aiMemoryRevision")?.opt("newValue") as? JSONObject)?.let { revision ->
+            val host = revision.optString("host").takeIf { it.isNotEmpty() && revision.opt("host") != JSONObject.NULL }
+            val text = JSONObject().put("event", "storage").put("changes", JSONObject().put("aiMemoryRevision",
+                JSONObject().put("newValue", JSONObject().put("nonce", revision.opt("nonce")).put("host", host ?: JSONObject.NULL)))).toString()
+            tabs.mapNotNull { it.get() }.filter { host == null || it.topHost == host }.forEach { it.channel.push(text) }
+        }
+        panelChannel?.push(allText)
+        main.post { ShieldAiHost.storageChanged(allText) }
     }
+
+    /** Pregunta a la página principal de [tab] (p. ej. «Analizar con IA») y espera su respuesta. */
+    private fun askTab(tab: ShieldTab, message: JSONObject, done: (Any?) -> Unit) {
+        val rid = nextReply++
+        tab.replies[rid] = done
+        tab.channel.push(JSONObject().put("event", "message").put("rid", rid).put("message", message).toString())
+        main.postDelayed({ tab.replies.remove(rid)?.invoke(JSONObject().put("ok", false).put("error", "La página no respondió.")) }, AI_SCAN_TIMEOUT_MS)
+    }
+
+    private var nextReply = 1
 
     private class Scripts(private val context: Context) {
         private fun asset(path: String) = context.assets.open(path).use { it.readBytes().toString(Charsets.UTF_8) }
@@ -672,6 +867,7 @@ object PhantomShield {
         private val bridgeShim = asset("nexo/bridge-shim.js")
         private val bridge = asset("nexo/bridge/page-bridge.js")
         private val pipCss = asset("nexo/bridge/pip.css")
+        private val hostShim = asset("nexo/ai-host-shim.js")
         private val manifest = JSONObject(asset(ASSET_ROOT + "manifest.json")).toString()
         private fun ext(path: String) = asset(ASSET_ROOT + path)
 
@@ -698,6 +894,12 @@ object PhantomShield {
             for (file in listOf("content/content-script.js", "data/cosmetic-rules.js", "content/cosmetic-filter.js")) {
                 append("try {\n").append(ext(file)).append("\n} catch (_) {}\n")
             }
+            // Detector de IA (solo la página principal; decide Nexo si el sitio puede usarla), tras cargar el documento.
+            append("if (window === window.top) {\n")
+            append("try {\n").append(ext("data/functional-safety.js")).append("\n} catch (_) {}\n")
+            append("const nexoAiDetector = function() { try {\n").append(ext("content/ai-detector.js")).append("\n} catch (_) {} };\n")
+            append("if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', nexoAiDetector, { once: true });\n")
+            append("else nexoAiDetector();\n}\n")
             append("if (window === window.top && /(^|\\.)(facebook|instagram)\\.com$/.test(location.hostname)) {\n")
             append("try {\n").append(ext("content/heuristic-vision.js")).append("\n} catch (_) {}\n}\n")
             append("})();")
@@ -708,6 +910,15 @@ object PhantomShield {
             append("nexoCefriumPort(true);\n")
             append(shim).append('\n')
             append("globalThis.browser = nexoPhantomShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n")
+        }
+
+        /** Anfitrión de IA: su `browser.*` propio y `fetch` por Nexo (solo en `host/ai-host.html`). */
+        val aiHost: String = buildString {
+            append("if (location.pathname === '/host/ai-host.html') {\n")
+            append(port).append('\n')
+            append("nexoCefriumPort(true);\n")
+            append(hostShim).append('\n')
+            append("globalThis.browser = nexoAiHostShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n}\n")
         }
     }
 

@@ -60,6 +60,16 @@ Los scripts corren en el mundo de la página (Cefrium no tiene mundos aislados):
 solo responde lo que cualquier página ya puede ver. Ajustes, estadísticas e IA solo se
 aceptan desde el panel, en su propio origen (`https://phantomshield.nexo.invalid`).
 
+IA de PhantomShield (opcional, con la API del usuario): el detector (`content/ai-detector.js`)
+corre en la página principal; Nexo decide si el sitio puede usar IA (`ShieldAi`: activada,
+aceptada, sitio autorizado, no privada, escudo activo) y pasa cada lote al clasificador
+original, que se ejecuta en un navegador Chromium oculto (`ShieldAiHost`, `host/ai-host.html`,
+perfil del panel). La clave de API solo existe en ese anfitrión y en los ajustes; las
+llamadas al proveedor las hace Nexo (HTTPS, sin cookies ni redirecciones, respuesta de 64 KB
+como máximo). Las direcciones de enlaces y marcos de los candidatos se comprueban en el
+dispositivo y nunca llegan al proveedor. Los dominios publicitarios aprendidos se cortan en la
+red (peticiones de terceros, no medios) y en las ventanas emergentes.
+
 ## Sin Gecko
 
 La app no incluye GeckoView ni librerías de Mozilla. Lo único que conoce el formato de la
@@ -97,7 +107,7 @@ Pendiente (la interfaz lo explica al usuario):
    pestañas con ruta no se abren (nunca salen por conexión directa).
 4. **Retardo simulado, ubicación simulada y variación de huella** (antes, extensión `nexo_network`, retirada).
 5. **Modo nocturno en marcos internos**: Dark Reader solo se inyecta en el marco principal.
-6. **IA de PhantomShield, parcheador anti-bloqueo**: como en la variante WebView.
+6. **Parcheador anti-bloqueo de PhantomShield** (la IA ya funciona desde 0.32.0, ver abajo).
 7. Descargas resultado de un POST: Nexo vuelve a pedir la URL (las `blob:`/`data:` que genera la
    página sí funcionan: Chromium las guarda y pasan al gestor de Nexo).
 8. Política de cookies "equilibrada": hoy es la de Chromium (sin bloqueo de cookies de rastreo

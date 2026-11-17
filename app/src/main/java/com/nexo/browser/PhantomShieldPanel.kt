@@ -36,6 +36,28 @@ import java.io.ByteArrayInputStream
 object PhantomShieldPanel {
     private const val PROFILE = "nexo_shield_panel"
     private var current: Dialog? = null
+    private var currentBrowser: CefriumBrowser? = null
+    private var serverRegistered = false
+
+    /** Perfil del panel con el origen propio ya servido (lo comparte el anfitrión de IA). */
+    internal fun profile(context: Context): CefriumProfile? {
+        val profile = runCatching { CefriumProfile.get(PROFILE) }
+            .onFailure { EngineDiagnostics.log("panel de PhantomShield: perfil no disponible", it) }
+            .getOrNull() ?: return null
+        if (!serverRegistered) {
+            runCatching { profile.registerContentServer(PhantomShield.PANEL_ORIGIN, PanelServer(context.applicationContext)) }
+                .onSuccess { serverRegistered = true }
+                .onFailure { EngineDiagnostics.log("panel de PhantomShield: servidor de contenido rechazado", it); return null }
+        }
+        return profile
+    }
+
+    /** «Configurar IA» del panel: los ajustes de IA en la misma hoja (atrás vuelve al panel). */
+    internal fun openOptions(): Boolean {
+        val web = currentBrowser?.takeIf { !it.isClosed } ?: return false
+        web.loadUrl(PhantomShield.BASE_URL + "options/options.html")
+        return true
+    }
 
     fun show(activity: Activity): Boolean {
         if (activity.isFinishing || activity.isDestroyed) return false
@@ -46,11 +68,7 @@ object PhantomShieldPanel {
         val radius = 24f * density
         val dialog = Dialog(activity)
 
-        val profile = runCatching { CefriumProfile.get(PROFILE) }
-            .onFailure { EngineDiagnostics.log("panel de PhantomShield: perfil no disponible", it) }
-            .getOrNull() ?: return false
-        runCatching { profile.registerContentServer(PhantomShield.PANEL_ORIGIN, PanelServer(activity.applicationContext)) }
-            .onFailure { EngineDiagnostics.log("panel de PhantomShield: servidor de contenido rechazado", it); return false }
+        val profile = profile(activity) ?: return false
         val web = runCatching { CefriumBrowser.createWithSurface(activity, profile) }
             .onFailure { EngineDiagnostics.log("panel de PhantomShield: no se pudo crear el navegador", it) }
             .getOrNull() ?: return false
@@ -113,14 +131,25 @@ object PhantomShieldPanel {
             setTitle("PhantomShield")
             setCanceledOnTouchOutside(true)
             setContentView(sheet)
+            // Atrás: de los ajustes de IA (u otra página del panel) al panel; desde el panel, cerrar.
+            setOnKeyListener { _, keyCode, event ->
+                if (keyCode == android.view.KeyEvent.KEYCODE_BACK && event.action == android.view.KeyEvent.ACTION_UP &&
+                    runCatching { web.canGoBack() }.getOrDefault(false)) {
+                    web.goBack()
+                    true
+                } else keyCode == android.view.KeyEvent.KEYCODE_BACK && event.action == android.view.KeyEvent.ACTION_DOWN &&
+                    runCatching { web.canGoBack() }.getOrDefault(false)
+            }
             setOnDismissListener {
                 PhantomShield.detachPanel()
+                if (currentBrowser === web) currentBrowser = null
                 runCatching { web.stopLoading(); web.close() }
                 if (current === this) current = null
             }
         }
         WindowPrivacy.inherit(dialog.window, activity.window)
         current = dialog
+        currentBrowser = web
         dialog.show()
         dialog.window?.apply {
             val metrics = activity.resources.displayMetrics
@@ -135,11 +164,16 @@ object PhantomShieldPanel {
         return true
     }
 
-    /** Archivos de la extensión; cualquier otra ruta (y el código de fondo) se rechaza. */
+    private val AI_MODULES = setOf("background/ai-memory.js", "background/ai-domains.js", "background/ai-classifier.js")
+
+    /**
+     * Archivos de la extensión. Del código de fondo solo se sirven los módulos
+     * de IA que ejecuta el anfitrión oculto (`host/ai-host.html`).
+     */
     private class PanelServer(private val context: Context) : CefriumContentServer {
         override fun serve(request: CefriumContentRequest): CefriumContentResponse {
             val path = request.path.orEmpty().removePrefix("/")
-            val allowed = path.isNotEmpty() && ".." !in path && !path.startsWith("background/")
+            val allowed = path.isNotEmpty() && ".." !in path && (!path.startsWith("background/") || path in AI_MODULES)
             val bytes = if (allowed) runCatching {
                 context.assets.open(PhantomShield.ASSET_ROOT + path).use { it.readBytes() }
             }.getOrNull() else null
