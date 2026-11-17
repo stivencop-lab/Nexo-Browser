@@ -33,6 +33,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class DownloadEntry(
@@ -55,6 +56,10 @@ class ActiveDownload internal constructor(val id: String, val fileName: String, 
         internal set
     @Volatile var cancelled = false
         internal set
+    /** Respuestas HTTP activas; se cierran todas al cancelar, incluida cada parte paralela. */
+    internal val activeResponses = CopyOnWriteArrayList<DownloadResponse>()
+    internal val workerFutures = CopyOnWriteArrayList<Future<*>>()
+    internal val terminal = AtomicBoolean(false)
     internal var sampleBytes = 0L
     internal var sampleAt = startedAt
 
@@ -109,7 +114,13 @@ object DownloadStore {
     fun activeDownloads(): List<ActiveDownload> = running.values.sortedBy { it.startedAt }
 
     fun cancel(id: String) {
-        running[id]?.cancelled = true
+        val job = running[id] ?: return
+        synchronized(job) {
+            if (job.terminal.get()) return
+            job.cancelled = true
+        }
+        job.activeResponses.forEach { response -> runCatching { response.close() } }
+        job.workerFutures.forEach { future -> future.cancel(true) }
     }
 
     /** Aviso periódico (hilo principal) mientras hay descargas en curso. */
@@ -296,6 +307,7 @@ object DownloadStore {
             file = target
             val active = ActiveDownload(UUID.randomUUID().toString(), target.name, total)
             job = active
+            active.activeResponses += response
             running[active.id] = active
             startTicker(app)
 
@@ -312,18 +324,22 @@ object DownloadStore {
                 if (total > 0 && raf.length() != total) raf.setLength(total)
             }
 
-            add(
-                app,
-                DownloadEntry(
-                    UUID.randomUUID().toString(),
-                    target.name,
-                    target.absolutePath,
-                    redactSourceUrl(response.uri),
-                    mime,
-                    target.length(),
-                    System.currentTimeMillis()
+            synchronized(active) {
+                if (active.terminal.get() || active.cancelled) throw CancellationException("cancelada")
+                active.terminal.set(true)
+                add(
+                    app,
+                    DownloadEntry(
+                        UUID.randomUUID().toString(),
+                        target.name,
+                        target.absolutePath,
+                        redactSourceUrl(response.uri),
+                        mime,
+                        target.length(),
+                        System.currentTimeMillis()
+                    )
                 )
-            )
+            }
             showDone(app, target.name)
             main.post { callback(true, "Descargado: ${target.name}") }
         } catch (error: Throwable) {
@@ -393,6 +409,7 @@ object DownloadStore {
 
         val probe = parts.submit {
             val first = runCatching { openRange(app, job, response, source, tail, total) }.getOrNull() ?: return@submit
+            if (job.cancelled) { runCatching { first.body?.close() }; return@submit }
             val plan = synchronized(lock) {
                 if (job.cancelled) null else DownloadPlan.split(position, tail, connections - 2)?.also { limit = it.first }
             }
@@ -401,11 +418,17 @@ object DownloadStore {
                 return@submit
             }
             job.connections = 2 + plan.second.size
+            job.activeResponses += first
             plan.second.forEach { range ->
-                tasks += parts.submit { fetchPart(app, job, response, channel, folder, source, range.first, range.last + 1, null) }
+                parts.submit {
+                    fetchPart(app, job, response, channel, folder, source, range.first, range.last + 1, null)
+                }.also {
+                    tasks += it
+                    job.workerFutures += it
+                }
             }
             fetchPart(app, job, response, channel, folder, source, tail, total, first)
-        }
+        }.also { job.workerFutures += it }
 
         try {
             var end = 0L
@@ -427,7 +450,8 @@ object DownloadStore {
             tasks.forEach { it.get() }
         } catch (error: Throwable) {
             job.cancelled = true
-            tasks.forEach { it.cancel(false) }
+            job.activeResponses.forEach { runCatching { it.close() } }
+            job.workerFutures.forEach { it.cancel(true) }
             throw (error as? java.util.concurrent.ExecutionException)?.cause ?: error
         }
         if (job.received.get() != total) throw IOException("Descarga incompleta")
@@ -453,15 +477,22 @@ object DownloadStore {
             try {
                 val response = pending ?: openRange(app, job, original, source, position, end)
                 pending = null
+                job.activeResponses += response
                 val input = response.body ?: throw IOException("sin cuerpo")
                 input.use { position = copy(it, channel, position, { end }, job, folder) }
+                job.activeResponses -= response
                 if (position < end) throw IOException("tramo incompleto")
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 if (job.cancelled) throw CancellationException("cancelada")
                 if (++attempt > MAX_PART_RETRIES) throw IOException("No se pudo completar la descarga (${error.message})", error)
-                Thread.sleep(700L * attempt)
+                try {
+                    Thread.sleep(700L * attempt)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw CancellationException("cancelada")
+                }
             }
         }
     }
