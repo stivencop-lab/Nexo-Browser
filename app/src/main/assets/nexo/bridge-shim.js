@@ -1,10 +1,9 @@
 /*
- * Nexo (Chromium/Cefrium): `browser.runtime` mínimo para el puente de Nexo
- * (`extensions/nexo_bridge/content_script.js`, el mismo script que con
- * Gecko), sobre el puerto `__nexoShield` de cefrium-port.js.
+ * Nexo (Chromium/Cefrium): `browser.runtime` mínimo para el puente de páginas
+ * de Nexo (`bridge/page-bridge.js`), sobre el puerto `__nexoShield` de
+ * cefrium-port.js.
  *
- * Con Gecko cada marco tenía su puerto nativo. Aquí cada marco lleva un token
- * aleatorio: Nexo lo usa para conceder los subtítulos a un solo marco y para
+ * Cada marco lleva un token aleatorio: Nexo lo usa para conceder los subtítulos a un solo marco y para
  * enviarle mensajes solo a él (`to`), a todos o al principal (`to: "top"`).
  * Las llamadas con respuesta usan ids negativos, distintos de los de
  * phantom-shim.js, que comparte el puerto. Este código no concede nada: Nexo

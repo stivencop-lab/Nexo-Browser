@@ -7,20 +7,6 @@ import java.util.Locale
 object BrowserPagePresentation {
     data class Shortcut(val title: String, val origin: String, val identity: String)
 
-    /** Names come only from installed extension metadata, never from page titles or URL paths. */
-    fun extensionLabel(url: String, installedOptions: List<Pair<String, String>>): String? {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return null
-        if (!uri.scheme.equals("moz-extension", ignoreCase = true)) return null
-        val authority = uri.rawAuthority ?: return "Página de extensión"
-        val name = installedOptions.firstOrNull { (options, name) ->
-            if (name.isBlank()) return@firstOrNull false
-            val known = runCatching { URI(options) }.getOrNull()
-            known?.scheme.equals("moz-extension", ignoreCase = true) &&
-                known?.rawAuthority?.equals(authority, ignoreCase = true) == true
-        }?.second
-        return name?.let { "$it · Extensión" } ?: "Página de extensión"
-    }
-
     fun shortcut(url: String): Shortcut? = runCatching {
         if (!UrlSafety.isWebUrl(url)) return null
         val uri = URI(url)

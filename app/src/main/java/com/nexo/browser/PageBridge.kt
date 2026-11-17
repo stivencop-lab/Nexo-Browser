@@ -9,16 +9,16 @@ import org.json.JSONObject
 import java.util.WeakHashMap
 
 /**
- * Puente de Nexo con las páginas: el mismo `content_script.js` que usaba
- * Gecko (`extensions/nexo_bridge/`), sobre el canal de cada pestaña
+ * Puente de Nexo con las páginas (`assets/nexo/bridge/page-bridge.js`),
+ * sobre el canal de cada pestaña
  * (`PageChannel` + `window.cefriumQuery`). Mini video, subtítulos (pistas,
  * texto del reproductor y audio del video para Deepgram), estado de
  * reproducción en segundo plano y modo nocturno.
  *
- * Con Gecko cada marco tenía su puerto de extensión. Aquí cada marco se
+ * Cada marco se
  * identifica con un token aleatorio (`bridge-shim.js`) y los mensajes de Nexo
  * van a todos los marcos, al principal (`top`) o a uno solo (su token). Las
- * reglas son las de Gecko: los marcos con video se ofrecen para los
+ * reglas: los marcos con video se ofrecen para los
  * subtítulos, Nexo concede la captura al mejor en 200 ms y solo ese marco
  * puede enviar audio y estados; el estado del video para el mini reproductor
  * solo lo da el marco principal.
@@ -27,7 +27,7 @@ import java.util.WeakHashMap
  */
 object PageBridge {
     private const val OFFER_WINDOW_MS = 200L
-    private const val DARK_READER_ASSET = "extensions/nexo_bridge/darkreader.js"
+    private const val DARK_READER_ASSET = "nexo/bridge/darkreader.js"
 
     private val main = Handler(Looper.getMainLooper())
 

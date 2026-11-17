@@ -670,8 +670,8 @@ object PhantomShield {
         private val port = asset("nexo/cefrium-port.js")
         private val media = asset("nexo/media-reporter.js")
         private val bridgeShim = asset("nexo/bridge-shim.js")
-        private val bridge = asset("extensions/nexo_bridge/content_script.js")
-        private val pipCss = asset("extensions/nexo_bridge/pip.css")
+        private val bridge = asset("nexo/bridge/page-bridge.js")
+        private val pipCss = asset("nexo/bridge/pip.css")
         private val manifest = JSONObject(asset(ASSET_ROOT + "manifest.json")).toString()
         private fun ext(path: String) = asset(ASSET_ROOT + path)
 
@@ -689,7 +689,7 @@ object PhantomShield {
             // Estilos del mini video (pip.css): hoja construida, que la CSP del sitio no bloquea.
             append("try { const s = new CSSStyleSheet(); s.replaceSync(").append(JSONObject.quote(pipCss))
                 .append("); document.adoptedStyleSheets = document.adoptedStyleSheets.concat([s]); } catch (_) {}\n")
-            // Puente de Nexo: el mismo content_script.js de Gecko, con su `browser` propio.
+            // Puente de Nexo (page-bridge.js), con su `browser` propio.
             append("{ const nexoBridge = nexoBridgeShim(globalThis.__nexoShield, window === window.top);\n")
             append("if (nexoBridge) (function(browser){ try {\n").append(bridge).append("\n} catch (_) {} })(nexoBridge); }\n")
             append(shim).append('\n')

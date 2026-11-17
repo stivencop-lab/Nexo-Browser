@@ -10,7 +10,7 @@ import kotlin.system.exitProcess
 
 class NexoApplication : Application() {
     /*
-     * Los ContentProvider de las librerías (ML Kit, AndroidX Startup, Gecko)
+     * Los ContentProvider de las librerías (ML Kit, AndroidX Startup, Cefrium)
      * se crean ANTES de onCreate. Instalar aquí el registro de cierres hace
      * que un fallo en ese arranque también quede guardado y se muestre.
      */

@@ -1,17 +1,16 @@
 /*
  * Medios con sonido de la página para Nexo (Chromium/Cefrium): notificación
- * multimedia y reproducción en segundo plano. Gecko lo daba desde su
- * MediaSession; Chromium solo lo hace con su propia notificación, así que lo
- * informa la página: elementos <audio>/<video> audibles y
+ * multimedia y reproducción en segundo plano. Chromium solo lo informa con su
+ * propia notificación (que duplicaría la de Nexo), así que lo informa la página: elementos <audio>/<video> audibles y
  * `navigator.mediaSession` (cubre el audio que no está en el documento). Un
  * video silenciado (portadas en bucle) no cuenta.
  *
  * Solo envía cambios. Un marco interno sin medios calla, para no borrar los
  * de otro marco. Privacidad: solo el título que la página da a su sesión
- * multimedia, como hacía Gecko; nunca la URL.
+ * multimedia; nunca la URL.
  *
  * El mini video y los subtítulos los hace el puente de Nexo
- * (extensions/nexo_bridge/content_script.js).
+ * (bridge/page-bridge.js).
  */
 (() => {
   "use strict";

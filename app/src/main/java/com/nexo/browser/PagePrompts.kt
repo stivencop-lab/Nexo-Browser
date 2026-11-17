@@ -20,7 +20,7 @@ import java.util.WeakHashMap
  * página?", archivos y autenticación HTTP. Los `<select>`, fechas y colores
  * los dibuja Chromium.
  *
- * Igual que en Gecko: se muestra el sitio real (nunca el título que pone la
+ * Se muestra el sitio real (nunca el título que pone la
  * página), solo la pestaña visible puede abrir diálogos y tras varios
  * seguidos se ofrece bloquearlos hasta que cambie la página.
  */

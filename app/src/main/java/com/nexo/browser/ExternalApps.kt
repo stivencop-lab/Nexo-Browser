@@ -8,8 +8,8 @@ import android.net.Uri
 
 /**
  * Enlaces que no son páginas web: tel:, mailto:, sms:, geo:, market:,
- * intent:// (Play Store, WhatsApp, Maps…). Antes Gecko mostraba un error
- * porque no sabe abrirlos.
+ * intent:// (Play Store, WhatsApp, Maps…). El motor web no sabe abrirlos:
+ * Nexo los entrega a la app que corresponda.
  *
  * El intent se sanea como en Chrome/Firefox: sin componente ni selector
  * explícitos, solo actividades BROWSABLE, sin permisos de URI heredados y

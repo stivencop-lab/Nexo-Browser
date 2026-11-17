@@ -23,8 +23,8 @@ async function background() {
         changed.listeners.forEach(fn => fn(delta, 'local'));
       }
     } },
-    runtime: { id: manifest.browser_specific_settings.gecko.id,
-      getURL: file => 'moz-extension://phantom/' + file, onMessage: message, onInstalled: event(),
+    runtime: { id: 'phantomshield',
+      getURL: file => 'https://phantomshield.nexo.invalid/' + file, onMessage: message, onInstalled: event(),
       openOptionsPage: async () => {} },
     webRequest: { onBeforeRequest: beforeRequest },
     tabs: { onRemoved: event(), onUpdated: event() },
@@ -53,7 +53,7 @@ async function background() {
 }
 
 test('every manifest resource is bundled and identity stays stable', () => {
-  assert.equal(manifest.browser_specific_settings.gecko.id, 'phantomshield@geckoview.internal');
+  assert.equal(manifest.browser_specific_settings, undefined, 'integrated into Nexo: no Firefox identity');
   const resources = [...manifest.background.scripts, ...Object.values(manifest.icons),
     ...manifest.web_accessible_resources, manifest.browser_action.default_popup,
     manifest.options_ui.page, ...manifest.content_scripts.flatMap(x => [...x.js || [], ...x.css || []])];
@@ -106,10 +106,10 @@ test('AI is off by default and makes no provider request', async () => {
    await h.memory.remember('news.com',['a'.repeat(64)],()=>true);
    for(const sender of [
     {id:h.browser.runtime.id,url:'https://news.com',tab:{id:10}},
-    {id:'other',url:'moz-extension://phantom/options/options.html'},
-    {id:h.browser.runtime.id,url:'moz-extension://phantom/options/options.html',tab:{id:10,incognito:true}}
+    {id:'other',url:'https://phantomshield.nexo.invalid/options/options.html'},
+    {id:h.browser.runtime.id,url:'https://phantomshield.nexo.invalid/options/options.html',tab:{id:10,incognito:true}}
    ])assert.equal((await h.message({type:'AI_MEMORY_CLEAR'},sender)).ok,false);
-   const own={id:h.browser.runtime.id,url:'moz-extension://phantom/options/options.html'};
+   const own={id:h.browser.runtime.id,url:'https://phantomshield.nexo.invalid/options/options.html'};
    assert.equal((await h.message({type:'AI_MEMORY_LIST'},own)).domains.length,1);
    const result=await h.message({type:'AI_MEMORY_EXCLUDE',host:'news.com'},own);
    assert.equal(result.ok,true);assert.equal(result.domains.length,0);assert.ok(h.stored.aiConfig.excludedHosts.includes('news.com'));

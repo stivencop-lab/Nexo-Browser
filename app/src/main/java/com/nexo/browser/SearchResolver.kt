@@ -38,7 +38,7 @@ object SearchResolver {
         // desde la barra de direcciones o desde un intent externo.
         if (scheme != null) {
             return when (scheme) {
-                "https", "http", "about", "resource", "moz-extension" -> input
+                "https", "http", "about" -> input
                 else -> search(context, input)
             }
         }

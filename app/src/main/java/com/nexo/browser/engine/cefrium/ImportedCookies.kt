@@ -10,7 +10,7 @@ import java.util.TimeZone
  * llamada `CefriumCookieManager.setCookie(url, valor)` de Chromium. Sin Android: se
  * prueba en la JVM.
  */
-internal data class GeckoCookie(
+internal data class ImportedCookie(
     val name: String,
     val value: String,
     val host: String,

@@ -142,14 +142,14 @@ Chromium embebido no ejecuta WebExtensions. PhantomShield funciona con su motor 
 
 ## Modelo de seguridad
 - **URLs**: las reglas están centralizadas en `SafetyRules.kt` (`UrlSafety`).
-  - Barra de direcciones y pantallas propias: `http`, `https`, `about`, `resource`, `moz-extension`.
+  - Barra de direcciones y pantallas propias: `http`, `https`, `about`.
   - Otras apps (Activity exportada): solo `http`/`https`. Las pantallas de Nexo usan el
     alias no exportado `InternalOpenActivity` (`MainActivity.openUrlIntent`).
-  - Pestañas abiertas por extensiones: `http`, `https`, `moz-extension` y `about:blank`.
+  - Pestañas abiertas por el escudo o el puente: `http`, `https` y `about:blank`.
   - `javascript:`, `data:`, `file:`, `content:` e `intent:` nunca se cargan.
-- **Extensiones**: la instalación automática al navegar solo acepta XPI de
-  `addons.mozilla.org`. Los paquetes importados se validan (rutas, nº de entradas y tamaño
-  real descomprimido) y el temporal se borra siempre.
+- **Extensiones**: Nexo no instala extensiones de terceros (llegarán con el runtime NXR). La
+  comprobación de compatibilidad valida los paquetes (rutas, nº de entradas y tamaño real
+  descomprimido) y el temporal se borra siempre.
 - **Otras apps**: `tel:`, `mailto:`, `intent://`… se abren sin componente ni selector
   explícitos, solo con actividades BROWSABLE y sin permisos de URI heredados. Las
   redirecciones sin toque del usuario o en pestaña privada piden confirmación.

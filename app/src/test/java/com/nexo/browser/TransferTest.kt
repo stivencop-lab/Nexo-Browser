@@ -87,9 +87,9 @@ class TransferTest {
         try {
             val home=File(root,"mozilla").apply { mkdirs() };File(home,"abc.default").mkdirs()
             val ini=File(home,"profiles.ini").apply { writeText("[Profile0]\nName=default\nIsRelative=1\nPath=abc.default\nDefault=1\n") }
-            assertEquals(File(home,"abc.default"),TransferSchema.profile(root))
+            assertEquals(File(home,"abc.default"),com.nexo.browser.engine.cefrium.UpgradeImport.legacyProfile(root))
             ini.writeText("[Profile0]\nIsRelative=1\nPath=../outside\nDefault=1\n")
-            assertThrows(IllegalArgumentException::class.java) { TransferSchema.profile(root) }
+            assertThrows(IllegalArgumentException::class.java) { com.nexo.browser.engine.cefrium.UpgradeImport.legacyProfile(root) }
         } finally { root.deleteRecursively() }
     }
     @Test fun protocolKeepsContainerConfigurationAndParsesProviderErrors() {

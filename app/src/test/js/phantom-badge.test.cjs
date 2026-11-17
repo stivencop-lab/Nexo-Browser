@@ -20,7 +20,7 @@ async function harness(initial = {}) {
       }
     } },
     browserAction: { setBadgeText: details => { writes.push({ at: time, ...details }); return Promise.resolve(); } },
-    runtime: { id: 'phantom', getURL: file => 'moz-extension://phantom/' + file, onMessage: messages, onInstalled: event(), openOptionsPage: async () => {} },
+    runtime: { id: 'phantom', getURL: file => 'https://phantomshield.nexo.invalid/' + file, onMessage: messages, onInstalled: event(), openOptionsPage: async () => {} },
     webRequest: { onBeforeRequest: requests }, tabs: { onRemoved: removed, onUpdated: updated },
     alarms: { create() {}, onAlarm: event() }, permissions: { onRemoved: event(), getAll: async () => ({ data_collection: [] }) }
   };

@@ -178,7 +178,7 @@ async function background(stored = {}) {
         changed.listeners.forEach(fn => fn(delta, 'local'));
       }
     } },
-    runtime: { id: 'phantom', getURL: file => 'moz-extension://phantom/' + file, onMessage: message, onInstalled: installed,
+    runtime: { id: 'phantom', getURL: file => 'https://phantomshield.nexo.invalid/' + file, onMessage: message, onInstalled: installed,
       sendMessage: async () => ({}) },
     webRequest: { onBeforeRequest: beforeRequest },
     tabs: { onRemoved: event(), onUpdated: event() },
@@ -218,7 +218,7 @@ test('ads the AI hides teach their network, which is then blocked as a third par
   // La tienda anunciada no se aprendió, y quien abre adnet-x.com a propósito llega.
   assert.deepEqual({ ...h.request({ type: 'image', url: 'https://shop-advertiser.com/i.png', documentUrl: 'https://third-site.net/', tabId: 9 }) }, {});
   assert.deepEqual({ ...h.request({ type: 'main_frame', url: 'https://adnet-x.com/', tabId: 9 }) }, {});
-  const own = 'moz-extension://phantom/options/options.html';
+  const own = 'https://phantomshield.nexo.invalid/options/options.html';
   const listed = await h.message({ type: 'AI_DOMAINS_LIST' }, { id: 'phantom', url: own });
   assert.equal(listed.domains[0].domain, 'adnet-x.com');
   assert.equal(listed.domains[0].state, 'blocked');

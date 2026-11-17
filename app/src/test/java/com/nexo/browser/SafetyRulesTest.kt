@@ -31,9 +31,11 @@ class UrlSafetyTest {
         listOf(
             "https://example.com",
             "http://example.com",
-            "about:blank",
-            "moz-extension://abc/options.html"
+            "about:blank"
         ).forEach { assertTrue(it, UrlSafety.isAppNavigable(it)) }
+        // Esquemas internos del motor anterior: ya no existen y no se abren.
+        listOf("moz-extension://abc/options.html", "resource://android/assets/x", "chrome://settings")
+            .forEach { assertFalse(it, UrlSafety.isAppNavigable(it)) }
     }
 
     @Test
@@ -54,6 +56,8 @@ class UrlSafetyTest {
             "http://example.com",
             "about:blank",
             "moz-extension://abc/popup.html",
+            "chrome://settings",
+            "chrome-extension://abc/popup.html",
             "javascript:alert(1)",
             "java\tscript:alert(1)",
             "data:text/html,x",
@@ -78,9 +82,9 @@ class UrlSafetyTest {
     }
 
     @Test
-    fun extensionTabsAllowOnlyWebAndExtensionPages() {
+    fun extensionTabsAllowOnlyWebPages() {
         assertTrue(UrlSafety.isExtensionTabUrl("about:blank"))
-        assertTrue(UrlSafety.isExtensionTabUrl("moz-extension://abc/page.html"))
+        assertFalse(UrlSafety.isExtensionTabUrl("moz-extension://abc/page.html"))
         assertTrue(UrlSafety.isExtensionTabUrl("https://example.com"))
         assertFalse(UrlSafety.isExtensionTabUrl("about:config"))
         assertFalse(UrlSafety.isExtensionTabUrl("javascript:alert(1)"))

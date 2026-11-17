@@ -60,7 +60,7 @@ app/src/main/java/com/nexo/browser/
 │       ├── CefriumProfiles.kt      # normal / incógnito / Burner (+ proxy de Burner)
 │       ├── CefriumState.kt         # historial persistente (serializeNavigationState)
 │       ├── CefriumDownloads.kt     # descargas con OkHttp + cookies del perfil; blob:/data: vía Chromium
-│       ├── GeckoCookies.kt / GeckoProfileImport.kt  # cookies de la versión Gecko en la actualización
+│       ├── ImportedCookies.kt / UpgradeImport.kt  # cookies de la versión anterior al actualizar
 ├── shield/
 │   ├── PhantomShield.kt   # reglas, interceptor, puente de páginas, panel, política de cookies
 │   ├── PageChannel.kt     # canal {m,s} sobre cefriumQuery (respuesta inmediata + cola de eventos)
@@ -70,7 +70,8 @@ app/src/main/java/com/nexo/browser/
 app/src/main/assets/nexo/
 ├── cefrium-port.js   # crea __nexoShield sobre window.cefriumQuery
 ├── phantom-shim.js   # browser.* mínimo para los scripts de PhantomShield
-├── bridge-shim.js    # browser.runtime para extensions/nexo_bridge/content_script.js (el de Gecko)
+├── bridge/page-bridge.js, pip.css, darkreader.js  # puente de páginas (mini video, subtítulos, modo nocturno)
+├── bridge-shim.js    # browser.runtime para page-bridge.js
 └── media-reporter.js # medios con sonido (notificación, segundo plano)
 ```
 
@@ -156,7 +157,7 @@ Nexo leía archivos/preferencias y registraba su gestor de cierres en esos proce
    `shouldInterceptRequest` (todas las peticiones esperan esa respuesta). Prueba: devolver siempre `null` sin
    sobrescribir el método y ver si cambia.
 7. **Actualización desde Gecko**: probar con instalación limpia (desinstalar) frente a actualización. Si solo falla
-   al actualizar, revisar `GeckoProfileImport.runOnce` (miles de `setCookie` en el hilo principal) y el estado
+   al actualizar, revisar `UpgradeImport.runOnce` (miles de `setCookie` en el hilo principal) y el estado
    de pestañas heredado.
 
 **Terminado cuando:** en un teléfono arm64 (Android 10+) y uno armeabi-v7a, tanto con instalación limpia como con
@@ -195,12 +196,12 @@ Por prioridad. Cada una: código + pruebas JVM/JS + nota en `docs/CHROMIUM-NATIV
    modo nocturno esté activo.
 3. **Traducción de páginas** (`TranslatorManager.translateActive`): extraer texto con un script, traducir con los
    proveedores ya configurados para subtítulos (Google/DeepL/IA en `BrowserPrefs`) y reinsertar. Sin enviar URLs.
-4. **`nexo_network`**: retardo simulado, ubicación simulada y variación de Canvas/WebGL por Burner. Ubicación y
+4. **Simulaciones de red** (antes `nexo_network`, retirada): retardo, ubicación simulada y variación de Canvas/WebGL por Burner. Ubicación y
    Canvas/WebGL: script en `addDocumentStartJavaScript` por pestaña con la semilla `burnerSeed`; retardo: no hay
    API, valorar si se elimina de la interfaz.
 5. **Política de cookies "equilibrada"**: bloquear cookies de terceros cuando el host está en las listas de
    rastreo (`rules.network` con tipo `xmlhttprequest`), con caché por host para no evaluar reglas en cada cookie.
-6. ~~Puente completo~~ **Hecho en 0.31.2**: `content_script.js` de Gecko con `bridge-shim.js` y `PageBridge.kt`.
+6. ~~Puente completo~~ **Hecho en 0.31.2**: `bridge/page-bridge.js` con `bridge-shim.js` y `PageBridge.kt`.
    Validar en dispositivo: subtítulos por audio (clave de Deepgram), pistas VTT, YouTube, mini video.
 7. **IA y parcheador anti-bloqueo de PhantomShield**: hoy responden `AI_UNAVAILABLE`.
 8. **Extensiones de terceros (runtime NXR)**: `ExtensionsActivity` ya evalúa compatibilidad de CRX/XPI/ZIP.
