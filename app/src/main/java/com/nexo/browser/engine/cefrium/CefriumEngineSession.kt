@@ -7,7 +7,6 @@ import android.os.Handler
 import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
-import android.util.Log
 import android.view.KeyEvent
 import android.view.ViewGroup
 import com.cefrium.Cefrium
@@ -169,11 +168,11 @@ class CefriumEngineSession internal constructor(
             releaseBrowser()
         }
         val created = runCatching { CefriumBrowser.createWithSurface(activity, profile) }.getOrElse {
-            Log.e(CefriumEngine.TAG, "createWithSurface falló (perfil ${profile.name}, privado=${profile.isIncognito})", it)
+            EngineDiagnostics.log("createWithSurface falló (perfil ${profile.name}, privado=${profile.isIncognito})", it)
             TabManager.notifyMessage("Chromium no pudo abrir la pestaña: ${it.message ?: it.javaClass.simpleName}")
             return null
         }
-        Log.i(CefriumEngine.TAG, "navegador creado (perfil ${profile.name}, privado=${profile.isIncognito})")
+        EngineDiagnostics.log("navegador creado (perfil ${profile.name}, privado=${profile.isIncognito})")
         setUp(created, activity)
         val state = pendingState
         val url = pendingUrl
@@ -404,6 +403,12 @@ class CefriumEngineSession internal constructor(
         }
     }
 
+    /** Ejecuta [script] en el marco principal, fuera de la CSP de la página; [done] en el hilo principal. */
+    internal fun evaluateInMainFrame(script: String, done: () -> Unit) {
+        val target = browser ?: return done()
+        runCatching { target.evaluateJavaScript(script) { done() } }.onFailure { done() }
+    }
+
     internal fun clearCache() {
         runCatching { browser?.clearCache() }
     }
@@ -513,8 +518,10 @@ class CefriumEngineSession internal constructor(
         override fun onLoadStart(browser: CefriumBrowser, url: String?) {
             mainFrameError = false
             sslNoticeFor = null
-            // Documento nuevo: sus medios los volverá a informar el puente.
+            EngineDiagnostics.log("carga iniciada: ${url?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"}")
+            // Documento nuevo: sus medios y sus marcos los volverá a informar el puente.
             onMediaState(active = false, playing = false, title = null)
+            com.nexo.browser.PageBridge.onNewDocument(this@CefriumEngineSession)
             observer?.onPageStart(this@CefriumEngineSession, url ?: currentUrl.orEmpty())
         }
 
@@ -540,7 +547,7 @@ class CefriumEngineSession internal constructor(
             mainFrameError = true
             // Solo el host: la URL completa puede llevar datos personales.
             val host = error.failedUrl?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"
-            Log.w(CefriumEngine.TAG, "error de carga ${error.errorCode} (${error.description}) en $host")
+            EngineDiagnostics.log("error de carga ${error.errorCode} (${error.description}) en $host")
         }
 
         /**
@@ -552,7 +559,7 @@ class CefriumEngineSession internal constructor(
                 CefriumRendererTerminationStatus.KILLED, CefriumRendererTerminationStatus.OOM -> ProcessExit.KILL
                 else -> ProcessExit.CRASH
             }
-            Log.w(CefriumEngine.TAG, "el proceso de la página terminó: $status (código $errorCode)")
+            EngineDiagnostics.log("el proceso de la página terminó: $status (código $errorCode)")
             main.post { observer?.onProcessExit(this@CefriumEngineSession, exit) }
         }
 

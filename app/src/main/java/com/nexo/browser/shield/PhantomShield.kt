@@ -9,9 +9,8 @@ import com.cefrium.CefriumContentRequest
 import com.cefrium.CefriumContentResponse
 import com.cefrium.CefriumProfile
 import com.cefrium.CefriumResourceInterceptor
-import com.nexo.browser.BrowserMediaController
 import com.nexo.browser.BrowserPrefs
-import com.nexo.browser.LiveCaptions
+import com.nexo.browser.PageBridge
 import com.nexo.browser.TabManager
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
 import okhttp3.OkHttpClient
@@ -98,12 +97,6 @@ object PhantomShield {
         val channel = PageChannel()
         internal var lastPopupReport = 0L
 
-        /** Marco que tiene el video de la pestaña (`top` o el origen del marco interno). */
-        @Volatile internal var videoFrame: String? = null
-
-        /** Marco que tiene los medios con sonido de la pestaña. */
-        @Volatile internal var mediaFrame: String? = null
-
         /** Respuestas propias pendientes: el hilo de red decide, otro hilo responde. */
         internal val answers = ConcurrentHashMap<String, ShieldDecision>()
 
@@ -112,8 +105,6 @@ object PhantomShield {
             topHost = UrlParts.host(url)
             blocked.set(0)
             channel.reset()
-            videoFrame = null
-            mediaFrame = null
         }
 
         /** Navegación sin petición de red (atrás/adelante en caché, cambios de historial). */
@@ -236,6 +227,16 @@ object PhantomShield {
     // --- Estado visible ---
 
     fun isEnabled(): Boolean = enabled
+
+    /** Resumen para el diagnóstico del motor. */
+    fun diagnostics(): String {
+        if (!started) return "sin iniciar"
+        val lastUpdate = store.long("phantom_last_update")
+        val ago = if (lastUpdate == 0L) "nunca" else "hace ${(System.currentTimeMillis() - lastUpdate) / 3_600_000} h"
+        return "${if (enabled) "activo" else "apagado"} · anuncios=${settings.adblockEnabled} · popups=${settings.popupBlockEnabled} · " +
+            "reglas red=${rules.networkCount} cosméticas=${rules.cosmeticCount} · bloqueos=${blockedTotal.get()} · " +
+            "listas actualizadas $ago · cookies=$cookieMode"
+    }
 
     fun setEnabled(value: Boolean) {
         if (!started || enabled == value) return
@@ -435,12 +436,14 @@ object PhantomShield {
 
     @Volatile private var panelChannel: PageChannel? = null
 
-    private class Call(val id: Int, val kind: String, val payload: Any?)
+    /** [frame]: token del marco que envía (puente de Nexo); lo pone la página, solo sirve para ordenar sus marcos. */
+    private class Call(val id: Int, val kind: String, val payload: Any?, val frame: String?)
 
     private fun parse(data: String): Call? = runCatching {
-        if (data.length > 256 * 1024) return null
+        if (data.length > 512 * 1024) return null
         val json = JSONObject(data)
-        Call(json.getInt("id"), json.getString("kind"), json.opt("payload"))
+        val frame = json.optString("frame").takeIf { it.length in 8..64 && it.all { c -> c.isLetterOrDigit() } }
+        Call(json.getInt("id"), json.getString("kind"), json.opt("payload"), frame)
     }.getOrNull()
 
     /** Respuesta del puerto a la llamada [id]: resultado o error, en el formato de `phantom-shim.js`. */
@@ -460,7 +463,27 @@ object PhantomShield {
     /** Mensajes de las páginas: solo estado de bloqueo y selectores; ni estadísticas ni ajustes. */
     private fun onPageMessage(tab: ShieldTab, message: String, origin: String, isMainFrame: Boolean): String? {
         val call = parse(message) ?: return null
-        if (call.kind == "bridge") { handleBridge(tab, call.payload, if (isMainFrame) "top" else origin); return null }
+        val session = tab.session?.get()
+        // Puente de Nexo (mini video, subtítulos, modo nocturno): marco por su token, o por su origen.
+        val frame = call.frame ?: if (isMainFrame) "top" else "o:" + (UrlParts.host(origin) ?: "")
+        if (call.kind == "bridge") {
+            val payload = call.payload as? JSONObject
+            if (session != null && payload != null) PageBridge.onMessage(session, frame, isMainFrame, payload)
+            return null
+        }
+        if (call.kind == "bridge_call") {
+            val payload = call.payload as? JSONObject
+            if (session == null || payload == null) return answer(call.id, null)
+            // Respuesta inmediata, o más tarde por el canal (la página la espera por su id).
+            var sync = true
+            var early: Any? = PageBridge.LATER
+            val result = PageBridge.onCall(session, isMainFrame, payload) { value ->
+                if (sync) early = value else tab.channel.push(answer(call.id, value))
+            }
+            sync = false
+            if (result !== PageBridge.LATER) return answer(call.id, result)
+            return if (early !== PageBridge.LATER) answer(call.id, early) else null
+        }
         return when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })
@@ -487,42 +510,6 @@ object PhantomShield {
         channel.push(JSONObject().put("event", "native").put("message", message).toString())
         return channel.connected
     }
-    private fun handleBridge(tab: ShieldTab, payload: Any?, frame: String) {
-        val message = payload as? JSONObject ?: return
-        val session = tab.session?.get() ?: return
-        when (message.optString("type")) {
-            "video_state" -> {
-                // Un marco sin video no borra el video que tiene otro marco de la pestaña.
-                val present = message.optBoolean("present")
-                val owner = tab.videoFrame
-                if (!present && owner != null && owner != frame) return
-                tab.videoFrame = if (present) frame else null
-                // La interfaz consulta el video por la pestaña de Nexo, no por la del escudo.
-                val tabId = TabManager.tabForSession(session)?.id ?: return
-                val rect = if (message.optInt("rw", 0) > 0) android.graphics.Rect(
-                    message.optInt("rx"), message.optInt("ry"),
-                    message.optInt("rx") + message.optInt("rw"), message.optInt("ry") + message.optInt("rh")
-                ) else null
-                BrowserMediaController.onVideoState(
-                    tabId, present, message.optBoolean("playing"),
-                    message.optInt("width"), message.optInt("height"), rect
-                )
-            }
-            "media_state" -> {
-                val active = message.optBoolean("active")
-                val owner = tab.mediaFrame
-                if (!active && owner != null && owner != frame) return
-                tab.mediaFrame = if (active) frame else null
-                session.onMediaState(active, message.optBoolean("playing"), message.optString("title").take(200))
-            }
-            "captions_track" -> LiveCaptions.onTrack(session, message.optString("source", "track"))
-            "captions_text" -> LiveCaptions.onDomText(appContext, session, message.optString("text"))
-            "captions_cues" -> LiveCaptions.onCues(appContext, session, message.optJSONArray("cues") ?: JSONArray())
-            "captions_active" -> LiveCaptions.onActiveCues(appContext, session, message.optJSONArray("ids") ?: JSONArray())
-            "content_script_ready" -> LiveCaptions.onBridgeConnected(session)
-        }
-    }
-
     private fun defaultSetting(key: String): Boolean = key != "privacyEnabled" && key != "antiBlockEnabled"
 
     private fun requestedKeys(payload: Any?): Set<String>? = when (payload) {
@@ -681,7 +668,10 @@ object PhantomShield {
         private fun asset(path: String) = context.assets.open(path).use { it.readBytes().toString(Charsets.UTF_8) }
         private val shim = asset("nexo/phantom-shim.js")
         private val port = asset("nexo/cefrium-port.js")
-        private val bridge = asset("nexo/nexo-bridge.js")
+        private val media = asset("nexo/media-reporter.js")
+        private val bridgeShim = asset("nexo/bridge-shim.js")
+        private val bridge = asset("extensions/nexo_bridge/content_script.js")
+        private val pipCss = asset("extensions/nexo_bridge/pip.css")
         private val manifest = JSONObject(asset(ASSET_ROOT + "manifest.json")).toString()
         private fun ext(path: String) = asset(ASSET_ROOT + path)
 
@@ -693,8 +683,15 @@ object PhantomShield {
             append("if (!/^https?:$/.test(location.protocol)) return;\n")
             append(port).append('\n')
             append("if (!nexoCefriumPort(window === window.top)) return;\n")
-            // El puente de video captura el puerto antes de que el shim lo retire de la página.
-            append(bridge).append('\n')
+            // Los medios y el puente de Nexo capturan el puerto antes de que el shim de PhantomShield lo retire.
+            append(media).append('\n')
+            append(bridgeShim).append('\n')
+            // Estilos del mini video (pip.css): hoja construida, que la CSP del sitio no bloquea.
+            append("try { const s = new CSSStyleSheet(); s.replaceSync(").append(JSONObject.quote(pipCss))
+                .append("); document.adoptedStyleSheets = document.adoptedStyleSheets.concat([s]); } catch (_) {}\n")
+            // Puente de Nexo: el mismo content_script.js de Gecko, con su `browser` propio.
+            append("{ const nexoBridge = nexoBridgeShim(globalThis.__nexoShield, window === window.top);\n")
+            append("if (nexoBridge) (function(browser){ try {\n").append(bridge).append("\n} catch (_) {} })(nexoBridge); }\n")
             append(shim).append('\n')
             append("const browser = nexoPhantomShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n")
             append("if (!browser) return;\n")

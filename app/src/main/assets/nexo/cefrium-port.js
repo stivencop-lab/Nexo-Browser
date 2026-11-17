@@ -1,6 +1,7 @@
 /*
  * Nexo (Chromium/Cefrium): el puerto `__nexoShield` que esperan
- * `nexo-bridge.js` y `phantom-shim.js`, sobre `window.cefriumQuery`.
+ * `media-reporter.js`, `bridge-shim.js` (puente de Nexo) y `phantom-shim.js`,
+ * sobre `window.cefriumQuery`.
  *
  * Cada mensaje viaja como `{m, s}` y cada respuesta trae la contestación y
  * los eventos que Nexo publicó desde `s` (ver PageChannel.kt). El puerto se

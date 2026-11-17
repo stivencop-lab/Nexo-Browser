@@ -1,5 +1,6 @@
 // Nexo sobre Chromium (Cefrium): el puerto `__nexoShield` (assets/nexo/cefrium-port.js)
-// sobre window.cefriumQuery, con el shim de PhantomShield y el puente de video reales.
+// sobre window.cefriumQuery, con el shim de PhantomShield, el informe de medios y el shim
+// del puente de Nexo (content_script.js de Gecko) reales.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,7 +10,9 @@ const vm = require('node:vm');
 const nexo = path.join(__dirname, '../../main/assets/nexo');
 const portSource = fs.readFileSync(path.join(nexo, 'cefrium-port.js'), 'utf8');
 const shimSource = fs.readFileSync(path.join(nexo, 'phantom-shim.js'), 'utf8');
-const bridgeSource = fs.readFileSync(path.join(nexo, 'nexo-bridge.js'), 'utf8');
+const mediaSource = fs.readFileSync(path.join(nexo, 'media-reporter.js'), 'utf8');
+const bridgeShimSource = fs.readFileSync(path.join(nexo, 'bridge-shim.js'), 'utf8');
+const geckoBridge = fs.readFileSync(path.join(__dirname, '../../main/assets/extensions/nexo_bridge/content_script.js'), 'utf8');
 
 /** Nexo falso con el protocolo de PageChannel.kt: {m, s} -> {reply, seq, events}. */
 function nativeSide(answer) {
@@ -67,7 +70,7 @@ const bridgeMessages = (native, type) => native.received.filter(m => m.kind === 
 test('a subframe without media stays silent so it cannot clear the video of another frame', async () => {
   const native = nativeSide(() => undefined);
   const { context, tick } = page(native, { top: false });
-  vm.runInContext(portSource + '\nnexoCefriumPort(false);\n' + bridgeSource, context);
+  vm.runInContext(portSource + '\nnexoCefriumPort(false);\n' + mediaSource, context);
   tick();
   await flush();
   assert.deepEqual(bridgeMessages(native, 'video_state'), []);
@@ -79,7 +82,7 @@ test('audible media is reported once per change; muted background loops are igno
   const loop = element('VIDEO', { paused: false, muted: true });
   const native = nativeSide(() => undefined);
   const { context, tick } = page(native, { media: [loop, audio], mediaSession: { playbackState: 'none', metadata: { title: 'Canción' } } });
-  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + bridgeSource, context);
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + mediaSource, context);
   tick();
   tick();
   await flush();
@@ -129,18 +132,48 @@ test('events published by Nexo reach the page once, in order, through polling', 
   assert.deepEqual([...context.seen], ['adblockEnabled', 'privacyEnabled'], 'events are not delivered twice');
 });
 
-test('the video bridge reports state and obeys native commands over the same port', async () => {
-  const native = nativeSide(() => undefined);
-  const { context } = page(native);
-  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + bridgeSource, context);
+test('the Gecko bridge only needs connectNative, sendNativeMessage and sendMessage from browser.runtime', () => {
+  const used = new Set([...geckoBridge.matchAll(/browser\s*\.\s*([a-zA-Z]+)\s*\.\s*([a-zA-Z]+)/g)].map(m => `browser.${m[1]}.${m[2]}`));
+  assert.deepEqual([...used].sort(), ['browser.runtime.connectNative', 'browser.runtime.sendMessage', 'browser.runtime.sendNativeMessage']);
+});
+
+test('the bridge shim gives each frame its own token, targets messages and answers calls', async () => {
+  const native = nativeSide(message => {
+    if (message.kind !== 'bridge_call') return undefined;
+    if (message.payload.type === 'get_state') return { result: { ok: true, backgroundMedia: false } };
+    return undefined; // respuesta diferida (Dark Reader)
+  });
+  const { context, tick } = page(native);
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + bridgeShimSource + `
+    globalThis.shim = nexoBridgeShim(globalThis.__nexoShield, true);
+    globalThis.got = [];
+    globalThis.nativePort = shim.runtime.connectNative('browser');
+    nativePort.onMessage.addListener(m => got.push(m.type));
+    nativePort.postMessage({ type: 'content_script_ready' });`, context);
   await flush();
-  const report = native.received.find(m => m.kind === 'bridge' && m.payload.type === 'video_state');
-  assert.ok(report, 'the bridge reports the video state on start');
-  assert.equal(report.payload.present, false);
-  native.push(JSON.stringify({ event: 'native', message: { type: 'lifecycle', state: 'foreground' } }));
-  const before = native.received.length;
-  vm.runInContext('__nexoWake()', context);
+  const ready = native.received.find(m => m.kind === 'bridge' && m.payload.type === 'content_script_ready');
+  assert.ok(ready && /^[a-z0-9]{8,48}$/.test(ready.frame), 'the frame sends a token');
+  assert.equal(context.shim.runtime.connectNative('browser'), context.nativePort, 'one port per frame');
+
+  const state = await context.shim.runtime.sendNativeMessage('browser', { type: 'get_state' });
+  assert.deepEqual({ ...state }, { ok: true, backgroundMedia: false });
+
+  // Mensajes de Nexo: a todos, al principal, a este marco y a otro marco.
+  native.push(JSON.stringify({ event: 'bridge', message: { type: 'browser_state' } }));
+  native.push(JSON.stringify({ event: 'bridge', message: { type: 'pip_mode' }, to: 'top' }));
+  native.push(JSON.stringify({ event: 'bridge', message: { type: 'captions_grant' }, to: ready.frame }));
+  native.push(JSON.stringify({ event: 'bridge', message: { type: 'captions_restart' }, to: 'otroMarco123' }));
+  tick();
   await flush();
+  assert.deepEqual([...context.got], ['browser_state', 'pip_mode', 'captions_grant']);
+
+  // Respuesta diferida: llega después por el canal con el id negativo de la llamada.
+  const dark = context.shim.runtime.sendMessage({ type: 'nexo_dark_load' });
   await flush();
-  assert.ok(native.received.length > before, 'a native command makes the bridge report again');
+  const call = native.received.filter(m => m.kind === 'bridge_call').at(-1);
+  assert.ok(call.id < 0);
+  native.push(JSON.stringify({ id: call.id, result: true }));
+  tick();
+  await flush();
+  assert.equal(await dark, true);
 });
