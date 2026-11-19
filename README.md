@@ -43,8 +43,9 @@ Reproductor multimedia mejorado sobre el elemento HTML5 `<video>` / `<audio>` si
 ### 2. Nexo Dark Engine (`com.nexo.browser.dark`)
 Modo oscuro web optimizado desde el inicio de carga para reducir destellos blancos y preservar contenido multimedia:
 - **Modos globales**: **Auto** (sigue el tema de Nexo y del sistema), **Claro**, **Oscuro** (`#0C1222`) y **OLED** (`#000000`).
-- **Estrategias de adaptación**: **Híbrido** (detección de oscuro nativo + CSS ligero seguro + Dark Reader opcional), **CSS ligero** y **Dark Reader dinámico**.
-- **Inicio temprano sin autointerferencia**: aplica `setBackgroundColor` sobre la superficie de Chromium antes del primer pintado, inyecta lienzo oscuro en `document_start` y suspende temporalmente su propio estilo al medir el color real del sitio para evitar falsos positivos de «oscuro nativo».
+- **Estrategias de adaptación**: **Híbrido** (detección de oscuro nativo + CSS ligero seguro; Dark Reader solo si la página lo necesita: bloques claros grandes o texto oscuro ilegible), **CSS ligero** y **Dark Reader dinámico**.
+- **Política síncrona por sitio**: Nexo inyecta en `document_start` un script de arranque con la política del sitio (modo, colores, estrategia, excepción) y fija `prefers-color-scheme` y el lienzo según el sitio de destino antes de que llegue su documento. La capa oscura completa está desde el primer pintado (sin esperar al puente) y un sitio excluido no parpadea en oscuro; ninguna página recibe la lista de sitios.
+- **Inicio temprano sin autointerferencia**: suspende su propio estilo al medir el color real del sitio y nunca mide con Dark Reader activo (sus colores se confundían con «oscuro nativo» y apagaban el modo a media carga). Respeta los temas oscuros propios del sitio (`color-scheme`, `data-theme`, clases como `html.dark`) también cuando el sitio los cambia después de cargar.
 - **Protección de elementos**: detecta páginas ya oscuras y evita invertir imágenes, vídeos, `<canvas>`, `<svg>`, PDF, formularios y editores de código/texto.
 - **Control por sitio**: activación/exclusión por dominio desde la hoja de Herramientas (`TabTools`) sin recargar la pestaña.
 

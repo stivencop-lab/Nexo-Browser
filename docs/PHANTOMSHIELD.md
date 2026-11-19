@@ -98,6 +98,43 @@ para XPI importados. Tampoco cambia una posible resolución de bloqueo/revisión
   excepción por sitio al actualizar, panel/opciones, permisos opcionales y YouTube/PiP con
   PhantomShield activado y desactivado. No se afirma que esas pruebas en Android se hayan ejecutado.
 
+### Proveedores y anfitrión de IA (posterior a 0.34.0)
+
+Solo hay tres proveedores: **ChatGPT (OpenAI)**, **Claude (Anthropic)** y
+**Compatible / personalizado** (cualquier API Chat Completions: proxy propio,
+OpenRouter, Gemini, Groq…, indicando su dirección). Las configuraciones
+guardadas con los proveedores antiguos (`openrouter`, `gemini`, `groq`,
+`deepseek`, `mistral`, `xai`) se migran solas a «Compatible» con la misma
+dirección, modelo y clave: la IA no se rompe al actualizar. Con «Compatible» la
+dirección se muestra abierta y como obligatoria.
+
+El anfitrión oculto del clasificador es un navegador fuera de pantalla (OSR,
+sin Activity) en su propio perfil (`nexo_shield_ai`), así que nunca comparte el
+proceso de renderizado con el panel: si Android lo cierra, el panel y los
+ajustes de IA siguen abiertos. Si el panel pierde su proceso se recarga la
+misma página (hasta dos veces) en lugar de cerrarse. La cadena principal +
+respaldos tiene un presupuesto total de 45 s (o el tiempo límite + 30 s, con un
+máximo de 120 s), por debajo de la espera de Nexo (150 s), de modo que un
+análisis nunca queda «en curso» indefinidamente. El tiempo límite admite hasta
+90 s porque los modelos que razonan antes de responder tardan 30-60 s; el
+`fetch` nativo corta a los 100 s (antes a los 40 s, lo que hacía inútil subirlo).
+
+#### APIs compatibles estrictas (NVIDIA y similares)
+
+Algunas APIs compatibles (p. ej. `https://integrate.api.nvidia.com/v1`)
+rechazan con **HTTP 422** cualquier parámetro que no conozcan
+(`max_completion_tokens`, `response_format`). El clasificador prueba tres formas
+de cuerpo ante un 400 o un 422 —completa, básica (`model`, `messages`,
+`max_tokens`) y la de razonamiento de OpenAI— y recuerda la que funcionó. Lee
+la respuesta en `content` o, si un modelo razonador la deja ahí, en
+`reasoning_content`, y tolera bloques `<think>` sin cerrar. Un HTTP 202 (petición
+encolada) se explica como tal. «Probar conexión» muestra el motivo que da el
+proveedor (saneado, sin la clave), no gasta el presupuesto por sitio y la clave
+y el modelo se limpian de caracteres invisibles copiados de la web. El tiempo
+límite por defecto pasa a 20 s (máximo 90 s). No se puede guardar «Solo sitios elegidos» con
+la lista vacía (la IA no se usaría en ninguna página) y el panel ofrece «Usar IA
+en este sitio».
+
 ### Proveedores y contadores en 8.4.0
 
 Las opciones incluyen presets OpenAI Chat Completions, Claude Messages y

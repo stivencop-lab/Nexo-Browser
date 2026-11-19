@@ -18,6 +18,13 @@
   const TAGS = new Set(['DIV', 'ASIDE', 'SECTION', 'ARTICLE', 'INS', 'IFRAME', 'LI', 'A', 'FIGURE']);
   const HIDE_CONFIDENCE = 0.8;
   const MAX_RESPONSE_BYTES = 65536;
+  // Tiempo total de una clasificación, sumando principal y respaldos: al menos
+  // 45 s, o el tiempo límite + 30 s, y nunca más de 120 s. Nexo espera 150 s:
+  // la respuesta (o el error) siempre llega antes y nada queda «en curso».
+  const TOTAL_BUDGET_MS = 45000;
+  // Con un tiempo límite largo (modelos que razonan) la cadena puede esperar más, nunca más de 120 s.
+  const MAX_TOTAL_BUDGET_MS = 120000;
+  const MIN_ATTEMPT_MS = 2000;
   const SYSTEM_PROMPT = 'You detect advertising on web pages. For each candidate container you receive DOM signals: ' +
     'tag, size in CSS pixels, heuristic signals and, when available, a short excerpt of its visible text ("text"), ' +
     'hostnames its links point to ("links"), the host of an embedded frame ("frame") and class/id tokens ("cls"). ' +
@@ -41,11 +48,11 @@
   // Mensajes seguros para la interfaz: nunca incluyen el cuerpo que devuelve el proveedor.
   const MESSAGES = Object.freeze({
     auth: 'El proveedor rechazó la clave de API. Revísala en Configurar IA.',
-    model: 'El proveedor no encontró ese modelo o dirección. Revisa el identificador del modelo.',
+    model: 'El proveedor no encontró ese modelo, lo retiró o tu cuenta no tiene acceso. Revisa el identificador del modelo.',
     request: 'El proveedor rechazó la solicitud. Revisa que el modelo y el protocolo elegido coincidan.',
     rate: 'El proveedor limitó las solicitudes o no hay saldo. Se reintentará más tarde.',
     server: 'El proveedor de IA tiene un problema temporal. Se reintentará más tarde.',
-    timeout: 'La IA tardó más que el tiempo límite. Auméntalo en Configurar IA.',
+    timeout: 'La IA tardó más que el tiempo límite. Algunos modelos razonan antes de responder y tardan 30-60 s: sube el tiempo límite (hasta 90 s) o elige un modelo más rápido.',
     network: 'No se pudo conectar con el proveedor de IA. Revisa tu conexión y la dirección.',
     format: 'La IA respondió en un formato que no se pudo leer.',
     refusal: 'El modelo declinó clasificar este contenido.',
@@ -54,24 +61,69 @@
     busy: 'Hay otro análisis de IA en curso.',
     changed: 'La configuración de IA cambió durante el análisis.',
     off: 'IA desactivada o sitio sin autorización.',
-    invalid: 'Lote IA inválido.'
+    invalid: 'Lote IA inválido.',
+    pending: 'El proveedor aceptó la petición pero no respondió a tiempo (HTTP 202). Prueba un modelo más rápido o aumenta el tiempo límite.'
   });
 
   class AIError extends Error {
-    constructor(code, status) {
+    constructor(code, status, detail) {
       super(MESSAGES[code] || MESSAGES.format);
       this.code = code;
       this.status = status || 0;
+      // Motivo que da el proveedor (saneado, sin claves); solo se muestra al probar la conexión.
+      this.detail = detail || '';
     }
   }
 
-  function httpError(status) {
-    if (status === 401 || status === 403) return new AIError('auth', status);
-    if (status === 404) return new AIError('model', status);
-    if (status === 429 || status === 402) return new AIError('rate', status);
-    if (status === 408) return new AIError('timeout', status);
-    if (status >= 500) return new AIError('server', status);
-    return new AIError('request', status);
+  function httpError(status, detail) {
+    if (status === 401 || status === 403) return new AIError('auth', status, detail);
+    // 410: el proveedor retiró el modelo (NVIDIA lo hace con modelos en fin de vida).
+    if (status === 404 || status === 410) return new AIError('model', status, detail);
+    if (status === 429 || status === 402) return new AIError('rate', status, detail);
+    if (status === 408) return new AIError('timeout', status, detail);
+    if (status >= 500) return new AIError('server', status, detail);
+    return new AIError('request', status, detail);
+  }
+
+  /**
+   * Motivo legible de un error del proveedor: OpenAI ({error:{message}}),
+   * Anthropic ({error:{message}}), NVIDIA/RFC 7807 ({title, detail}), FastAPI
+   * ({detail:[{msg, loc}]}). Sin la clave ni nada que lo parezca, y corto.
+   */
+  function providerDetail(text, apiKey) {
+    let value = '';
+    try {
+      const json = JSON.parse(text);
+      const error = json && json.error;
+      const detail = json && json.detail;
+      value = (error && typeof error === 'object' && error.message) || (typeof error === 'string' && error) ||
+        (Array.isArray(detail) && detail.map(item => item && (item.msg || item.message) ?
+          String(item.msg || item.message) + (Array.isArray(item.loc) ? ' (' + item.loc.slice(-1)[0] + ')' : '') : '').filter(Boolean).join('; ')) ||
+        (typeof detail === 'string' && detail) || (json && (json.message || json.title)) || '';
+    } catch (_) { value = ''; }
+    value = String(value || '');
+    if (apiKey && apiKey.length >= 6) value = value.split(apiKey).join('[clave]');
+    return value
+      .replace(/(sk-|nvapi-|sk-ant-|gsk_|xai-|AIza)[A-Za-z0-9_\-]{6,}/g, '[clave]')
+      .replace(/Bearer\s+\S+/gi, 'Bearer [clave]')
+      // Identificadores de cuenta o de función: no ayudan a arreglarlo y son datos de la cuenta.
+      .replace(/(account|cuenta|org(?:anization)?)\s+'[^']{6,}'/gi, '$1')
+      .replace(/(Function)\s+'[0-9a-f-]{20,}'/gi, '$1')
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .trim()
+      .slice(0, 200);
+  }
+
+  /** Texto de la respuesta: `content`, o el razonamiento si el modelo dejó ahí su respuesta. */
+  function messageText(message) {
+    if (!message || typeof message !== 'object') return null;
+    let content = message.content;
+    if (Array.isArray(content)) content = content.map(part => part && typeof part.text === 'string' ? part.text : '').join('');
+    if (typeof content === 'string' && content.trim()) return content;
+    for (const key of ['reasoning_content', 'reasoning']) {
+      if (typeof message[key] === 'string' && message[key].includes('"decisions"')) return message[key];
+    }
+    return typeof content === 'string' ? content : null;
   }
 
   /** Texto corto de la página: sin saltos, sin correos ni números largos. */
@@ -153,6 +205,16 @@
         try { parsed = JSON.parse(text.slice(start, end + 1)); } catch (inner) { parsed = null; }
       }
     }
+    // Razonamiento con llaves propias o sin cerrar: el último objeto {"decisions": …} del texto.
+    if (!parsed || !Array.isArray(parsed.decisions)) {
+      const raw = String(content);
+      const start = raw.search(/\{\s*"decisions"\s*:(?![\s\S]*\{\s*"decisions"\s*:)/);
+      if (start !== -1) {
+        for (let end = raw.lastIndexOf('}'); end > start; end = raw.lastIndexOf('}', end - 1)) {
+          try { parsed = JSON.parse(raw.slice(start, end + 1)); break; } catch (_) { parsed = null; }
+        }
+      }
+    }
     if (!parsed || !Array.isArray(parsed.decisions)) throw new AIError('format');
     const decisions = new Map();
     decisions.confidence = new Map();
@@ -170,9 +232,12 @@
   }
 
   /**
-   * Cuerpo de la petición según el protocolo. `variant` 1 es la forma mínima
-   * para modelos que rechazan `max_tokens` o `temperature` (familias de
-   * razonamiento): se usa tras un HTTP 400.
+   * Cuerpo de la petición según el protocolo (Chat Completions):
+   * - 0: completo (`temperature` 0, `stream` false, `max_tokens` y, si se pide, `response_format`).
+   * - 1: el de los modelos de razonamiento de OpenAI (`max_completion_tokens`, sin `temperature`).
+   * - 2: básico (`model`, `messages`, `max_tokens`): lo acepta cualquier API compatible,
+   *   también las que rechazan todo parámetro desconocido (NVIDIA y otras con HTTP 422).
+   * Tras un 400/422 se prueban las demás y se recuerda la que funcionó.
    */
   function buildRequest(config, userContent, variant) {
     const preset = globalThis.PhantomAIConfig && globalThis.PhantomAIConfig.providers[config.provider];
@@ -201,10 +266,13 @@
       };
       if (variant === 1) {
         body.max_completion_tokens = 4000;
+      } else if (variant === 2) {
+        body.max_tokens = 1024;
       } else {
         body.stream = false;
         body.temperature = 0;
-        body.max_tokens = 1500;
+        // Margen para modelos que razonan antes de responder (el límite de NVIDIA es 4096).
+        body.max_tokens = 4096;
         if (config.jsonMode) body.response_format = { type: 'json_object' };
       }
       if (config.apiKey) headers.Authorization = 'Bearer ' + config.apiKey;
@@ -213,7 +281,7 @@
   }
 
   // Errores tras los que se prueba el siguiente proveedor de la cadena.
-  const FAILOVER = new Set(['network', 'timeout', 'server', 'rate', 'auth', 'model', 'request', 'format', 'refusal']);
+  const FAILOVER = new Set(['network', 'timeout', 'server', 'rate', 'auth', 'model', 'request', 'format', 'refusal', 'pending']);
   // Tiempo que un proveedor queda apartado tras fallar (ms), según el motivo.
   function penalty(code, fails) {
     if (code === 'auth' || code === 'model') return 30 * 60000;
@@ -333,8 +401,14 @@
           this.cooldowns.set(config.endpoint, Date.now() + Math.min(3600, Math.max(60, Number.isFinite(seconds) ? seconds : 60)) * 1000);
           while (this.cooldowns.size > 20) this.cooldowns.delete(this.cooldowns.keys().next().value);
         }
+        let detail = '';
+        try { detail = providerDetail((await response.text()).slice(0, 4096), config.apiKey); } catch (error) {}
+        throw httpError(response.status, detail);
+      }
+      // 202: el proveedor encoló la petición (p. ej. NVIDIA NVCF) y no trae la respuesta.
+      if (response.status === 202 || response.status === 204) {
         try { if (response.body) await response.body.cancel(); } catch (error) {}
-        throw httpError(response.status);
+        throw new AIError('pending', response.status);
       }
       // Bound the response before parsing, even if the server ignores the token limit.
       let text = '';
@@ -387,11 +461,8 @@
           : null;
       } else {
         const message = envelope.choices && envelope.choices[0] && envelope.choices[0].message;
-        content = message && message.content;
-        // Algunos proveedores compatibles devuelven el contenido en bloques.
-        if (Array.isArray(content)) {
-          content = content.map(part => part && typeof part.text === 'string' ? part.text : '').join('');
-        }
+        // Bloques de contenido o respuesta dentro del razonamiento (DeepSeek R1, Nemotron…).
+        content = messageText(message);
         if (message && message.refusal && !content) return { delta: delta, refusal: true };
       }
       if (typeof content !== 'string' || !content.trim()) return { delta: delta, error: new AIError('format') };
@@ -402,21 +473,28 @@
      * Un proveedor: presupuesto, tiempo límite y un único reintento con el
      * cuerpo mínimo si rechaza los parámetros (HTTP 400). Devuelve Map(id -> ocultar).
      */
-    async requestOne(config, connection, host, payload, epoch) {
+    async requestOne(config, connection, host, payload, epoch, deadline, probe) {
       const controller = new AbortController();
       this.active = controller;
-      const timeout = setTimeout(() => { controller.timedOut = true; controller.abort(); }, config.timeoutMs);
+      const left = Number.isFinite(deadline) ? deadline - Date.now() : config.timeoutMs;
+      const timeout = setTimeout(() => { controller.timedOut = true; controller.abort(); },
+        Math.max(MIN_ATTEMPT_MS, Math.min(config.timeoutMs, left)));
       const variantKey = connection.endpoint + '|' + connection.model;
       const preset = globalThis.PhantomAIConfig.providers[connection.provider] || {};
       const claude = preset.protocol === 'claude';
-      let variant = this.variants.has(variantKey) ? this.variants.get(variantKey) : preset.minimal ? 1 : 0;
+      const first = this.variants.has(variantKey) ? this.variants.get(variantKey) : preset.minimal ? 1 : 0;
+      // Orden de cuerpos a probar: el recordado (o el del preset) y después los demás.
+      const order = [first].concat([0, 2, 1].filter(value => value !== first));
+      let variant = first;
       const userContent = JSON.stringify(payload);
       const validIds = new Set(payload.candidates.map(candidate => candidate.id));
       try {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          if (!this.budgetAllows(config, host, Date.now())) throw new AIError('budget');
+        for (let attempt = 0; attempt < (claude ? 1 : order.length); attempt++) {
+          variant = order[attempt];
+          // «Probar conexión» lo pide el usuario y no lleva navegación: no gasta el presupuesto por sitio.
+          if (!probe && !this.budgetAllows(config, host, Date.now())) throw new AIError('budget');
           let recorded = false;
-          this.requests.push({ host: host, time: Date.now() });
+          if (!probe) this.requests.push({ host: host, time: Date.now() });
           await this.record({ requests: 1 });
           try {
             if (epoch !== this.epoch || controller.signal.aborted) throw new AIError('changed');
@@ -431,10 +509,10 @@
             return decisions;
           } catch (error) {
             if (!recorded) await this.record({ usageMissing: 1 });
-            const retry = attempt === 0 && error instanceof AIError && error.code === 'request' &&
-              error.status === 400 && !claude;
+            // Parámetros rechazados (400 o 422): se prueba la siguiente forma del cuerpo.
+            const retry = !claude && attempt < order.length - 1 && error instanceof AIError && error.code === 'request' &&
+              (error.status === 400 || error.status === 422);
             if (!retry) throw error;
-            variant = variant === 1 ? 0 : 1;
           }
         }
         throw new AIError('request', 400);
@@ -459,12 +537,15 @@
         throw new AIError(limited ? 'rate' : 'unavailable');
       }
       let lastError = null;
+      const deadline = now + Math.min(MAX_TOTAL_BUDGET_MS, Math.max(TOTAL_BUDGET_MS, config.timeoutMs + 30000));
       for (let index = 0; index < ready.length; index++) {
         const connection = ready[index];
         if (epoch !== this.epoch) throw new AIError('changed');
+        // Sin tiempo para otro proveedor: se informa el último fallo en lugar de dejar esperando.
+        if (lastError && deadline - Date.now() < MIN_ATTEMPT_MS) break;
         const started = Date.now();
         try {
-          const decisions = await this.requestOne(config, connection, host, payload, epoch);
+          const decisions = await this.requestOne(config, connection, host, payload, epoch, deadline);
           this.markHealthy(connection);
           this.reportProvider(connection, 'ok', 0, Date.now() - started);
           decisions.connection = connection;
@@ -603,7 +684,7 @@
           { id: 't-2', tag: 'ARTICLE', signals: ['ad-class'], width: 350, height: 400,
             text: 'El concejo aprobó ayer el presupuesto municipal para el próximo año.', cls: ['article-body'] }
         ] };
-        const decisions = await this.requestOne(config, connection, 'prueba.example', payload, this.epoch);
+        const decisions = await this.requestOne(config, connection, 'prueba.example', payload, this.epoch, undefined, true);
         this.markHealthy(connection);
         this.report('ok', 0, connection);
         this.reportProvider(connection, 'ok', 0, Date.now() - started);
@@ -616,7 +697,8 @@
         }
         return {
           ok: false, code: code, http: error instanceof AIError ? error.status : 0,
-          error: error instanceof AIError ? error.message : (error && error.message) || MESSAGES.request
+          error: error instanceof AIError ? error.message : (error && error.message) || MESSAGES.request,
+          detail: error instanceof AIError ? error.detail : ''
         };
       }
     }

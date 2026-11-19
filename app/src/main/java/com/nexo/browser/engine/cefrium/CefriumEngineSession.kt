@@ -154,6 +154,13 @@ class CefriumEngineSession internal constructor(
         }
     }
     private var findTerm: String? = null
+    // Declaradas antes de `init`: setUp() puede correr desde él.
+    /** Scripts de arranque oscuro de este navegador y su contenido (solo se cambian si cambia). */
+    private var darkBoot: List<CefriumBrowser.ScriptHandler> = emptyList()
+    private var darkBootSignature = ""
+    /** Última combinación esquema/lienzo aplicada: no se repite en cada navegación. */
+    private var lastDark: Pair<Boolean, Int>? = null
+
     private var findCallback: ((FindResult?) -> Unit)? = null
 
     init {
@@ -215,7 +222,13 @@ class CefriumEngineSession internal constructor(
         browser = target
         boundActivity = WeakReference(activity)
         CefriumEngine.bind(target, this)
+        // Navegador nuevo: nada de lo aplicado al anterior vale para este.
+        darkBoot = emptyList()
+        darkBootSignature = ""
+        lastDark = null
         applyCanvasBackground(target)
+        // Antes que los scripts de PhantomShield: la política oscura ya está cuando arranca el motor de la página.
+        applyDarkBoot(target)
         target.setNavigationClient(Navigation())
         target.setChromeClient(Chrome())
         target.setDownloadClient(Downloads())
@@ -227,11 +240,34 @@ class CefriumEngineSession internal constructor(
         if (active) target.onResume() else target.setPageVisible(false)
     }
 
-    private fun applyCanvasBackground(target: CefriumBrowser) {
-        val hex = com.nexo.browser.NightMode.effective(appContext)
-        val color = if (hex != null) runCatching { android.graphics.Color.parseColor(hex) }.getOrDefault(0xFF0C1222.toInt())
-            else android.graphics.Color.WHITE
-        runCatching { target.setBackgroundColor(color) }
+    private fun applyCanvasBackground(target: CefriumBrowser) = applyDarkFor(target, currentUrl)
+
+    /**
+     * Esquema de color (`prefers-color-scheme`) y lienzo según el sitio al que
+     * se va, antes de que su documento empiece: un sitio excluido no recibe
+     * «oscuro» y uno oscuro no pinta blanco mientras carga.
+     */
+    private fun applyDarkFor(target: CefriumBrowser, url: String?) {
+        val policy = runCatching { com.nexo.browser.dark.DarkEngine.policyFor(appContext, url) }.getOrNull() ?: return
+        val next = policy.enabled to com.nexo.browser.dark.DarkEngine.canvasColor(policy)
+        if (next == lastDark || target.isClosed) return
+        lastDark = next
+        runCatching { target.setDarkMode(next.first) }
+        runCatching { target.setBackgroundColor(next.second) }
+    }
+
+    /** Política oscura síncrona para el motor de la página (ver [com.nexo.browser.dark.DarkEngine.bootScripts]). */
+    private fun applyDarkBoot(target: CefriumBrowser) {
+        val scripts = runCatching { com.nexo.browser.dark.DarkEngine.bootScripts(appContext) }.getOrNull() ?: return
+        val signature = scripts.joinToString("\n") { it.script + "@" + it.origins.joinToString(",") }
+        if (signature == darkBootSignature || target.isClosed) return
+        darkBoot.forEach { runCatching { it.remove() } }
+        darkBoot = scripts.mapNotNull { script ->
+            runCatching { target.addDocumentStartJavaScript(script.script, script.origins) }
+                .onFailure { EngineDiagnostics.log("modo oscuro: script de arranque rechazado", it) }
+                .getOrNull()
+        }
+        darkBootSignature = signature
     }
 
     /** Cierra el navegador sin cerrar la pestaña (Activity destruida, transferencia de perfil). */
@@ -264,8 +300,9 @@ class CefriumEngineSession internal constructor(
             target.setPinchToZoomEnabled(true)
             val scale = BrowserPrefs.textScale(context)
             target.setZoomLevel(if (scale == 100) 0.0 else ln(scale / 100.0) / ln(1.2))
-            target.setDarkMode(CefriumEngine.darkPages(context))
+            lastDark = null
             applyCanvasBackground(target)
+            applyDarkBoot(target)
             applyUserAgent(target)
         }
         // El filtro de cookies cuesta en cada cookie: el interceptor cambia solo si cambia la política.
@@ -290,6 +327,8 @@ class CefriumEngineSession internal constructor(
             pendingUrl = target
             pendingState = null
         } else {
+            // onBeforeNavigate no ve las cargas de la app: el esquema del destino se fija aquí.
+            applyDarkFor(live, target)
             runCatching { live.loadUrl(target) }
         }
     }
@@ -558,7 +597,10 @@ class CefriumEngineSession internal constructor(
     private inner class Navigation : CefriumNavigationClient {
         /** Navegación de la página principal: solo HTTPS, decisión de Nexo y URL sin rastreo. True la cancela. */
         override fun onBeforeNavigate(browser: CefriumBrowser, request: CefriumNavigationRequest): Boolean {
-            if (!request.isForMainFrame || request.isRedirect) return false
+            if (!request.isForMainFrame) return false
+            // Esquema oscuro del sitio de destino antes de que llegue su documento (también tras redirecciones).
+            request.url?.let { applyDarkFor(browser, it) }
+            if (request.isRedirect) return false
             val url = request.url ?: return false
             val observer = observer ?: return true
             val upgraded = upgrade(url)
@@ -583,6 +625,7 @@ class CefriumEngineSession internal constructor(
         override fun onUrlChanged(browser: CefriumBrowser, url: String?) {
             val value = url ?: return
             currentUrl = value
+            applyDarkFor(browser, value)
             shield.onLocation(value)
             val observer = observer ?: return
             observer.onLocationChange(this@CefriumEngineSession, value, false)

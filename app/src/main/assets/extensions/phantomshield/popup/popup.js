@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     field('site-toggle').disabled = !loaded || busy || !domain || !field('adblock-toggle').checked;
     field('scan-ai').disabled = !loaded || busy || !scanAvailable;
     field('exclude-ai').disabled = !loaded || busy;
+    field('allow-ai').disabled = !loaded || busy;
     field('disable-ai').disabled = !loaded || busy;
     field('update-lists').disabled = !loaded || busy;
     field('reset-stats').disabled = !loaded || busy;
@@ -81,10 +82,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const authorized = globalThis.PhantomAIConfig.hostAllowed(config, host);
     scanAvailable = Boolean(domain && globalOn && siteOn && config.enabled === true && config.consent === true && authorized && !(currentTab && currentTab.incognito));
     field('exclude-ai').hidden = !config.enabled || !authorized || !domain;
+    // IA activa pero este sitio no está en la lista: autorizarlo con un toque.
+    field('allow-ai').hidden = !config.enabled || authorized || !host || !globalThis.PhantomAIConfig.publicHost(host) ||
+      Boolean(currentTab && currentTab.incognito);
     field('disable-ai').hidden = !config.enabled;
     field('ai-hint').textContent = !config.enabled ? 'IA apagada. El bloqueo local sigue activo.'
       : currentTab && currentTab.incognito ? 'Sin IA en pestañas privadas.'
-      : !authorized ? 'Sitio no autorizado para IA.'
+      : !authorized ? 'Sitio no autorizado para IA: pulsa «Usar IA en este sitio».'
       : !globalOn || !siteOn ? 'Activa la protección del sitio para analizarlo.'
       : config.detail === 'rich' ? '' : 'Consejo: el análisis detallado detecta más anuncios.';
     field('ai-hint').hidden = !field('ai-hint').textContent;
@@ -162,6 +166,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   field('configure-ai').addEventListener('click', () => {
     browser.runtime.openOptionsPage().catch(() => showMessage('No se pudieron abrir los ajustes de IA.', true));
   });
+  field('allow-ai').addEventListener('click', () => mutate(async () => {
+    if (!host || !globalThis.PhantomAIConfig.publicHost(host)) return;
+    const stored = await browser.storage.local.get({ aiConfig: {} });
+    const current = stored.aiConfig || {};
+    const config = globalThis.PhantomAIConfig.validate(Object.assign({}, current, {
+      allowedHosts: [...new Set([...(current.allowedHosts || []), host])],
+      excludedHosts: (current.excludedHosts || []).filter(value => value !== host)
+    }));
+    await browser.storage.local.set({ aiConfig: config });
+    showMessage('IA autorizada en ' + host + '. Recarga la página o pulsa «Analizar página».');
+  }));
   field('exclude-ai').addEventListener('click', () => mutate(async () => {
     if (!host) return;
     const stored = await browser.storage.local.get({ aiConfig: {} });

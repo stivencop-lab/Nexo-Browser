@@ -153,7 +153,30 @@ test('backups are validated: at most two, complete, HTTPS; a backup key requires
   assert.deepEqual([...config.requiredPermissions({ apiKey: '', backups: [{ apiKey: 'x' }] })], ['websiteContent', 'browsingActivity', 'authenticationInfo']);
   // Configuraciones guardadas sin respaldos siguen siendo válidas.
   assert.deepEqual([...config.validate({ ...base }).backups], []);
-  for (const id of ['openai', 'claude', 'openrouter', 'gemini', 'groq', 'deepseek', 'mistral', 'xai', 'custom']) assert.ok(config.providers[id], id);
+  // Solo tres proveedores: OpenAI, Claude y API compatible propia.
+  assert.deepEqual(Object.keys(config.providers), ['openai', 'claude', 'custom']);
+});
+
+test('legacy providers saved by older versions migrate to the compatible API without losing address, model or key', () => {
+  const { config } = harness(primary, ok);
+  const legacy = {
+    openrouter: 'https://openrouter.ai/api/v1', gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    groq: 'https://api.groq.com/openai/v1', deepseek: 'https://api.deepseek.com/v1',
+    mistral: 'https://api.mistral.ai/v1', xai: 'https://api.x.ai/v1'
+  };
+  for (const [id, endpoint] of Object.entries(legacy)) {
+    const saved = config.validate({ enabled: true, consent: true, provider: id, model: 'm-' + id, apiKey: 'k-' + id,
+      backups: [{ provider: id, model: 'b-' + id, apiKey: 'bk' }] });
+    assert.equal(saved.provider, 'custom', id);
+    assert.equal(saved.endpoint, endpoint, id);
+    assert.equal(saved.model, 'm-' + id);
+    assert.equal(saved.apiKey, 'k-' + id);
+    assert.equal(saved.backups[0].provider, 'custom');
+    assert.equal(saved.backups[0].endpoint, endpoint);
+    // Una dirección propia guardada se conserva.
+    assert.equal(config.validate({ provider: id, endpoint: 'https://proxy.example/v1', model: 'x' }).endpoint, 'https://proxy.example/v1');
+  }
+  assert.throws(() => config.validate({ provider: 'desconocido', model: 'x' }), /Proveedor IA inválido/);
 });
 
 test('testing a backup reuses its saved key only for the same address', async () => {
@@ -241,4 +264,27 @@ test('backups can be added, tested, saved and removed without ever showing a sav
   await page.fire(page.field('ai-form'), 'submit');
   assert.equal(page.saved.backups.length, 1);
   assert.equal(page.saved.backups[0].provider, 'openai');
+});
+
+test('the whole chain respects a total time budget, so Nexo never gives up waiting before the classifier answers', async () => {
+  let h;
+  h = harness({ ...primary, backups }, url => {
+    // Con el límite por defecto (20 s) el presupuesto es de 50 s: el principal lo agota y no quedan respaldos.
+    if (url.startsWith('https://primary.example')) { h.advance(49000); return new Response('{}', { status: 500 }); }
+    return new Response('{}', { status: 500 });
+  });
+  const result = await h.ai.classify('budget.com', candidate(), false);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'server');
+  assert.deepEqual(h.calls.map(call => new URL(call.url).host), ['primary.example'], 'no backup started without time left');
+  assert.equal(h.ai.active, null, 'no analysis left "in progress"');
+});
+
+test('keys and models pasted with invisible characters are cleaned (they broke the HTTP header)', () => {
+  const { config } = harness(primary, ok);
+  const saved = config.validate({ provider: 'custom', endpoint: 'https://integrate.api.nvidia.com/v1',
+    model: '​meta/llama-3.3-70b-instruct ', apiKey: ' nvapi-ABC​def﻿\n' });
+  assert.equal(saved.apiKey, 'nvapi-ABCdef');
+  assert.equal(saved.model, 'meta/llama-3.3-70b-instruct');
+  assert.throws(() => config.validate({ provider: 'custom', endpoint: 'https://x.com/v1', model: 'm', apiKey: 'clave-ñ' }), /caracteres no válidos/);
 });

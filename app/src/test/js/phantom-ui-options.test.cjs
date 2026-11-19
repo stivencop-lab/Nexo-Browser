@@ -117,3 +117,12 @@ test('provider presets offer one-tap model suggestions',async()=>{
   const chips=h.field('model-chips').children;assert.ok(chips.length>=3);
   assert.equal(chips[0].textContent,'claude-haiku-5-5');chips[0].listeners.click();assert.equal(h.field('model').value,'claude-haiku-5-5');
 });
+test('saving «only chosen sites» with no site is refused with an explanation (otherwise AI silently never runs)',async()=>{
+  const h=await harness();h.field('enabled').checked=true;await h.fire('enabled','change');
+  h.field('endpoint').value='https://integrate.api.nvidia.com/v1';h.field('model').value='meta/llama-3.3-70b-instruct';h.field('consent').checked=true;
+  h.field('scope').value='selected';h.field('hosts').value='';
+  await h.fire('ai-form','submit');
+  assert.equal(h.writes,0);assert.equal(h.saved.enabled,false);assert.match(h.field('status').textContent,/Añade al menos un sitio/);
+  h.field('hosts').value='noticias.com';h.field('consent').checked=true;await h.fire('ai-form','submit');
+  assert.equal(h.saved.enabled,true);assert.deepEqual(Array.from(h.saved.allowedHosts),['noticias.com']);
+});

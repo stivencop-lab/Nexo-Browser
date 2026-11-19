@@ -37,8 +37,13 @@
   function providerState(reveal = false) {
     const provider = globalThis.PhantomAIConfig.providers[field('provider').value];
     field('model').placeholder = provider.placeholder;
+    const custom = field('provider').value === 'custom';
     field('json-mode-control').hidden = field('provider').value === 'claude';
-    field('provider-advanced').open = reveal && field('provider').value === 'custom';
+    // La API compatible necesita su dirección: se muestra siempre abierta y como obligatoria.
+    // Con OpenAI o Claude la dirección oficial ya está puesta y solo se abre si se pide.
+    field('provider-advanced-summary').textContent = custom ? 'Dirección de tu API compatible (obligatoria)' : 'Dirección de API personalizada (opcional)';
+    if (custom) field('provider-advanced').open = true;
+    else if (reveal) field('provider-advanced').open = false;
     // Modelos sugeridos: un toque evita errores al escribir el identificador.
     field('model-options').replaceChildren();
     field('model-chips').replaceChildren();
@@ -78,7 +83,7 @@
   const STATE_TEXT = {
     ok: 'Última llamada correcta',
     auth: 'La API rechazó la clave',
-    model: 'Modelo o dirección no encontrados',
+    model: 'Modelo no disponible (no existe, retirado o sin acceso)',
     request: 'La API rechazó la solicitud',
     rate: 'Límite del proveedor o sin saldo',
     server: 'Fallo temporal del proveedor',
@@ -86,7 +91,8 @@
     network: 'Sin conexión con el proveedor',
     format: 'Respuesta ilegible',
     refusal: 'El modelo declinó responder',
-    unavailable: 'Ningún proveedor responde ahora'
+    unavailable: 'Ningún proveedor responde ahora',
+    pending: 'El proveedor no respondió a tiempo (HTTP 202)'
   };
   async function showState() {
     const stored = await browser.storage.local.get({ aiStatus: null });
@@ -170,7 +176,8 @@
       status('Sitio añadido al borrador. Guarda para aplicar el cambio.');
     } catch (error) { status(error.message || 'Dominio inválido.', true); }
   }
-  const TIMEOUT_PRESETS = [8, 12, 20];
+  // 60 s para modelos que razonan antes de responder.
+  const TIMEOUT_PRESETS = [8, 20, 60];
   function timeoutPresets() {
     for (const seconds of TIMEOUT_PRESETS) {
       field('timeout-' + seconds).setAttribute('aria-pressed', String(Number(field('timeout').value) === seconds * 1000));
@@ -232,7 +239,8 @@
     for (const [id, preset] of Object.entries(PROVIDERS)) {
       draft.provider.appendChild(element('option', { value: id, textContent: preset.label }));
     }
-    draft.provider.value = saved && saved.provider || 'openrouter';
+    // Un respaldo nuevo propone el otro proveedor oficial: si el principal cae, el respaldo no comparte su fallo.
+    draft.provider.value = saved && PROVIDERS[saved.provider] ? saved.provider : field('provider').value === 'claude' ? 'openai' : 'claude';
     draft.endpoint = element('input', { type: 'url', placeholder: 'https://tu-api.example/v1', autocomplete: 'off',
       value: saved && saved.endpoint || (PROVIDERS[draft.provider.value] || {}).endpoint || '' });
     draft.endpointRow = element('div', {}, [element('label', { textContent: 'URL base de la API' }), draft.endpoint]);
@@ -299,7 +307,7 @@
   const PROVIDER_STATE = {
     ok: 'responde', auth: 'clave rechazada', model: 'modelo no encontrado', request: 'solicitud rechazada',
     rate: 'límite o sin saldo', server: 'fallo del proveedor', timeout: 'tiempo agotado', network: 'sin conexión',
-    format: 'respuesta ilegible', refusal: 'declinó responder'
+    format: 'respuesta ilegible', refusal: 'declinó responder', pending: 'sin respuesta a tiempo (HTTP 202)'
   };
   /** Último estado conocido de cada proveedor de la cadena. */
   async function showProviders() {
@@ -428,6 +436,10 @@
       if (enabled && saved.apiKey && config.endpoint !== saved.endpoint && !newKey) {
         throw new Error('Al cambiar la dirección de la API, introduce una clave nueva o borra la guardada.');
       }
+      // Sin sitios elegidos la IA no se usaría en ninguna página (parecía «guardada pero sin funcionar»).
+      if (enabled && config.scope === 'selected' && !config.allowedHosts.length) {
+        throw new Error('Añade al menos un sitio en «Sitios autorizados» o elige «Automático en todos los sitios públicos»: así, la IA no se usaría en ninguna página. También puedes autorizar un sitio desde el panel con «Usar IA en este sitio».');
+      }
       if (enabled && nativeConsent) {
         // Aviso nativo del navegador. Un «no» explícito se respeta; si el
         // navegador no admite esta petición (lanza un error), vale el
@@ -462,11 +474,11 @@
       // Se prueba lo que hay escrito en el formulario, aunque no esté guardado.
       const config = draft ? {
         slot: 'backup' + (index + 1), provider: draft.provider.value, endpoint: draft.endpoint.value, model: draft.model.value,
-        apiKey: String(draft.key.value || '').trim(), timeoutMs: Number(field('timeout').value) || 12000,
+        apiKey: String(draft.key.value || '').trim(), timeoutMs: Number(field('timeout').value) || 20000,
         jsonMode: draft.json.checked, detail: 'rich'
       } : {
         slot: 'primary', provider: field('provider').value, endpoint: field('endpoint').value, model: field('model').value,
-        apiKey: field('api-key').value.trim(), timeoutMs: Number(field('timeout').value) || 12000,
+        apiKey: field('api-key').value.trim(), timeoutMs: Number(field('timeout').value) || 20000,
         jsonMode: field('json-mode').checked, detail: 'rich'
       };
       const reply = await browser.runtime.sendMessage({ type: 'AI_TEST', config: config });
@@ -478,8 +490,10 @@
             : 'Respondió, pero no reconoció el anuncio de prueba: considera un modelo más capaz.');
       } else {
         result.className = 'test-result bad';
+        // El motivo del proveedor (saneado) es lo que permite arreglarlo: modelo, parámetro, saldo…
         result.textContent = '✕ ' + (reply && reply.error || 'No se pudo completar la prueba.') +
-          (reply && reply.http ? ' (HTTP ' + reply.http + ')' : '');
+          (reply && reply.http ? ' (HTTP ' + reply.http + ')' : '') +
+          (reply && typeof reply.detail === 'string' && reply.detail ? ' Motivo del proveedor: ' + reply.detail.slice(0, 200) : '');
       }
     } catch (_) {
       result.className = 'test-result bad';

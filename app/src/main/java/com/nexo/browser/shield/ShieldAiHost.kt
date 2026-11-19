@@ -23,17 +23,27 @@ import java.io.InterruptedIOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Anfitrión oculto de la IA de PhantomShield: un navegador Chromium sin
- * vista, en el perfil del panel, con `host/ai-host.html` (el clasificador
+ * Anfitrión oculto de la IA de PhantomShield: un navegador Chromium fuera de
+ * pantalla (OSR, sin Activity ni superficie) en un perfil propio
+ * ([PhantomShieldPanel.aiProfile]), con `host/ai-host.html` (el clasificador
  * original de la extensión). Se crea solo cuando hace falta y se cierra tras
  * un rato sin uso; su estado (memoria, dominios, estadísticas) vive en el
  * almacén de PhantomShield.
+ *
+ * Antes era un navegador de superficie de la Activity, en el mismo perfil y
+ * origen que el panel: nunca se adjuntaba a una ventana, dependía de que la
+ * Activity existiera y, en móviles que comparten el proceso de renderizado,
+ * su caída cerraba el panel con los ajustes de IA abiertos. Si el modo fuera
+ * de pantalla no está disponible se vuelve a ese modo como respaldo.
  *
  * Todo en el hilo principal, salvo las llamadas HTTP a la API de IA.
  */
 internal object ShieldAiHost {
     private const val HOST_PAGE = "host/ai-host.html"
-    private const val REQUEST_TIMEOUT_MS = 60_000L
+    /** Por encima del presupuesto total del clasificador (de 45 s a 120 s con respaldos): su respuesta llega antes. */
+    private const val REQUEST_TIMEOUT_MS = 150_000L
+    /** Vista mínima: el anfitrión no dibuja nada, solo ejecuta el clasificador. */
+    private const val OSR_SIZE_PX = 64
     private const val IDLE_CLOSE_MS = 10 * 60_000L
     private const val MAX_RESPONSE_BYTES = 65_536L
     private const val MAX_QUEUE = 32
@@ -49,7 +59,14 @@ internal object ShieldAiHost {
     private val activeCalls = java.util.concurrent.CopyOnWriteArrayList<Call>()
     private val queue = ArrayList<String>()
     private val closeIdle: Runnable = Runnable { close("sin uso") }
+    /** El anfitrión actual es fuera de pantalla; si uno así no llegó a cargar, se usa la superficie. */
+    private var hostOffscreen = false
+    private var offscreenFailed = false
     private val startTimeout: Runnable = Runnable {
+        if (browser != null && !ready && hostOffscreen) {
+            offscreenFailed = true
+            EngineDiagnostics.log("IA de PhantomShield: el modo fuera de pantalla no cargó; se usará la superficie")
+        }
         if (browser != null && !ready) close("no cargó en ${START_TIMEOUT_MS / 1000} s", "No se pudo iniciar la IA de PhantomShield. Inténtalo de nuevo.")
     }
 
@@ -57,7 +74,8 @@ internal object ShieldAiHost {
     private val http by lazy {
         OkHttpClient.Builder()
             .followRedirects(false).followSslRedirects(false)
-            .connectTimeout(15, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS)
+            // Por encima del tiempo límite máximo del clasificador (90 s): quien corta es él, con su mensaje.
+            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(100, TimeUnit.SECONDS).callTimeout(100, TimeUnit.SECONDS)
             .build()
     }
 
@@ -83,7 +101,7 @@ internal object ShieldAiHost {
         main.removeCallbacks(closeIdle)
         main.postDelayed(closeIdle, IDLE_CLOSE_MS)
         if (!ensure()) {
-            done(failure("La IA necesita Nexo abierto en primer plano. Inténtalo de nuevo."))
+            done(failure("No se pudo iniciar la IA de PhantomShield. Abre Nexo e inténtalo de nuevo."))
             return@onMain
         }
         val rid = ++nextRid
@@ -125,13 +143,25 @@ internal object ShieldAiHost {
 
     private fun failure(text: String) = JSONObject().put("ok", false).put("code", "unavailable").put("error", text)
 
+    /** Navegador del anfitrión: fuera de pantalla en su perfil; si no, el modo de superficie anterior. */
+    private fun createHost(): CefriumBrowser? {
+        val context = runCatching { com.nexo.browser.AppContext.get() }.getOrNull()
+            ?: CefriumEngine.activity()?.applicationContext ?: return null
+        val profile = PhantomShieldPanel.aiProfile(context) ?: PhantomShieldPanel.profile(context) ?: return null
+        val offscreen = if (offscreenFailed) null else runCatching { CefriumBrowser(OSR_SIZE_PX, OSR_SIZE_PX, 1f, profile) }
+            .onFailure { EngineDiagnostics.log("IA de PhantomShield: sin modo fuera de pantalla; se usa la superficie", it) }
+            .getOrNull()
+        hostOffscreen = offscreen != null
+        if (offscreen != null) return offscreen
+        val activity = CefriumEngine.activity() ?: return null
+        return runCatching { CefriumBrowser.createWithSurface(activity, profile) }
+            .onFailure { EngineDiagnostics.log("IA de PhantomShield: no se pudo crear el anfitrión", it) }
+            .getOrNull()
+    }
+
     private fun ensure(): Boolean {
         browser?.let { if (!it.isClosed) return true; close("cerrado") }
-        val activity = CefriumEngine.activity() ?: return false
-        val profile = PhantomShieldPanel.profile(activity) ?: return false
-        val web = runCatching { CefriumBrowser.createWithSurface(activity, profile) }
-            .onFailure { EngineDiagnostics.log("IA de PhantomShield: no se pudo crear el anfitrión", it) }
-            .getOrNull() ?: return false
+        val web = createHost() ?: return false
         val pageChannel = PageChannel()
         browser = web
         channel = pageChannel
@@ -166,7 +196,7 @@ internal object ShieldAiHost {
         pageChannel.wake = { main.post { if (!web.isClosed) runCatching { web.evaluateJavaScript("window.__nexoWake&&window.__nexoWake()") } } }
         // Mantener el anfitrión activo aunque su vista no esté adjunta: evita que Chromium pause los temporizadores.
         runCatching { web.onResume(); web.setPageVisible(true) }
-        EngineDiagnostics.log("IA de PhantomShield: anfitrión iniciado")
+        EngineDiagnostics.log("IA de PhantomShield: anfitrión iniciado (${if (hostOffscreen) "fuera de pantalla" else "superficie"})")
         main.postDelayed(startTimeout, START_TIMEOUT_MS)
         web.loadUrl(PhantomShield.BASE_URL + HOST_PAGE)
         return true

@@ -85,10 +85,8 @@ object PageBridge {
     /** Llamada con respuesta (`sendNativeMessage`/`sendMessage`): el resultado, o [LATER] si llegará por [reply]. */
     fun onCall(session: CefriumEngineSession, isMainFrame: Boolean, json: JSONObject, reply: (Any?) -> Unit): Any? =
         when (json.optString("type")) {
-            "get_state" -> JSONObject()
-                .put("ok", true)
-                .put("backgroundMedia", BrowserPrefs.backgroundMedia(AppContext.get()))
-                .put("smartPip", BrowserPrefs.smartPip(AppContext.get()))
+            // Incluye el modo oscuro: el primer mensaje del marco ya lo trae, sin esperar a la conexión.
+            "get_state" -> browserState(AppContext.get(), session).put("ok", true)
             // Dark Reader solo en el marco principal: es el único donde Nexo puede ejecutar código
             // sin depender de la CSP del sitio.
             "nexo_dark_load" -> if (!isMainFrame) false else {
@@ -315,7 +313,9 @@ object PageBridge {
     }
 
     private fun browserState(context: Context, session: EngineSession): JSONObject {
-        val host = TabManager.tabForSession(session)?.url?.let { SuggestionIndex.hostOf(it) }
+        // La dirección ya confirmada del documento (la de la pestaña puede ir un paso por detrás al navegar).
+        val url = (session as? CefriumEngineSession)?.currentLocationUrl() ?: TabManager.tabForSession(session)?.url
+        val host = url?.let { SuggestionIndex.hostOf(it) }
         val policy = com.nexo.browser.dark.DarkEngine.policyFor(context, host)
         return JSONObject()
             .put("type", "browser_state")

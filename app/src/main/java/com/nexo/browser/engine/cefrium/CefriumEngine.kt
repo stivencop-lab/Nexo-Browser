@@ -131,10 +131,6 @@ object CefriumEngine : BrowserEngine {
 
     override fun clearContextData(context: Context, contextId: String) = CefriumProfiles.wipeContext(contextId)
 
-    /** `prefers-color-scheme` de las páginas: el tema oscuro de Nexo las pide oscuras incluso antes de registrar la Activity. */
-    internal fun darkPages(context: Context): Boolean =
-        runCatching { com.nexo.browser.NightMode.effective(context) != null }.getOrDefault(false)
-
     override fun applySettings(context: Context) {
         if (!started) return
         PhantomShield.cookieMode = BrowserPrefs.cookieMode(context)
