@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import com.cefrium.Cefrium
 import com.cefrium.CefriumBrowser
 import com.cefrium.CefriumChromeClient
+import com.cefrium.CefriumContentSetting
 import com.cefrium.CefriumContextMenu
 import com.cefrium.CefriumDownloadClient
 import com.cefrium.CefriumFileChooserCallback
@@ -20,6 +21,7 @@ import com.cefrium.CefriumJsDialogType
 import com.cefrium.CefriumLoadError
 import com.cefrium.CefriumNavigationClient
 import com.cefrium.CefriumNavigationRequest
+import com.cefrium.CefriumPermission
 import com.cefrium.CefriumPermissionRequest
 import com.cefrium.CefriumProfile
 import com.cefrium.CefriumRendererTerminationStatus
@@ -298,8 +300,8 @@ class CefriumEngineSession internal constructor(
             target.setMediaPlaybackRequiresUserGesture(BrowserPrefs.autoplay(context) != BrowserPrefs.AUTOPLAY_ALLOW)
             target.setPullToRefreshEnabled(BrowserPrefs.pullToRefresh(context))
             target.setPinchToZoomEnabled(true)
-            val scale = BrowserPrefs.textScale(context)
-            target.setZoomLevel(if (scale == 100) 0.0 else ln(scale / 100.0) / ln(1.2))
+            applyZoomFor(target, currentUrl)
+            com.nexo.browser.SitePermissionStore.applyAllToBrowser(context, target, currentUrl)
             lastDark = null
             applyCanvasBackground(target)
             applyDarkBoot(target)
@@ -312,6 +314,60 @@ class CefriumEngineSession internal constructor(
             runCatching { target.setResourceInterceptor(PhantomShield.interceptor(shield)) }
         }
     }
+
+    private fun applyZoomFor(target: CefriumBrowser, url: String?) {
+        if (target.isClosed) return
+        val percent = com.nexo.browser.SiteZoomStore.effectivePercent(appContext, url)
+        runCatching { target.setZoomLevel(com.nexo.browser.SiteControlModel.zoomPercentToCefriumLevel(percent)) }
+    }
+
+    /** Aplica y guarda un nivel de zoom por sitio (75%–200%) en la sesión activa. */
+    fun setSiteZoom(url: String?, percent: Int) {
+        val host = com.nexo.browser.SiteControlModel.hostOf(url ?: currentUrl)
+        if (host.isNotEmpty()) com.nexo.browser.SiteZoomStore.set(appContext, host, percent)
+        onMain {
+            val target = liveBrowser() ?: return@onMain
+            runCatching { target.setZoomLevel(com.nexo.browser.SiteControlModel.zoomPercentToCefriumLevel(percent)) }
+        }
+    }
+
+    fun isAudioMuted(): Boolean = runCatching { liveBrowser()?.isAudioMuted == true }.getOrDefault(false)
+
+    fun setAudioMuted(muted: Boolean) {
+        onMain { runCatching { liveBrowser()?.setAudioMuted(muted) } }
+    }
+
+    fun setSiteContentSetting(origin: String, permission: CefriumPermission, decision: com.nexo.browser.SitePermissionStore.Decision) {
+        com.nexo.browser.SitePermissionStore.set(appContext, origin, permission, decision, liveBrowser())
+    }
+
+    /** Cuenta las cookies reales almacenadas en el perfil de Cefrium para [url]. */
+    fun countSiteCookies(url: String, onDone: (Int?) -> Unit) {
+        val origin = com.nexo.browser.SiteControlModel.originOf(url)
+        if (origin == null) { onDone(null); return }
+        val started = runCatching {
+            profile.cookieManager.getCookies(url) { cookies ->
+                main.post { onDone(cookies?.size ?: 0) }
+            }
+        }
+        if (started.isFailure) onDone(null)
+    }
+
+    /** Elimina cookies y datos locales (storage, caché de origen) de [url] en el perfil de Cefrium. */
+    fun clearSiteDataAndCookies(url: String, onDone: () -> Unit) {
+        val origin = com.nexo.browser.SiteControlModel.originOf(url)
+        if (origin == null) { onDone(); return }
+        val run = runCatching {
+            profile.cookieManager.removeCookies(url, null) { _ ->
+                runCatching {
+                    profile.clearSiteData(origin) { main.post(onDone) }
+                }.onFailure { main.post(onDone) }
+            }
+        }
+        if (run.isFailure) main.post(onDone)
+    }
+
+    internal fun lastBlockedSslHost(): String? = sslNoticeFor
 
     private fun applyUserAgent(target: CefriumBrowser) {
         if (!target.isClosed) target.setUserAgentOverride(if (desktopMode) UserAgents.desktop() else null)
@@ -626,6 +682,8 @@ class CefriumEngineSession internal constructor(
             val value = url ?: return
             currentUrl = value
             applyDarkFor(browser, value)
+            applyZoomFor(browser, value)
+            com.nexo.browser.SitePermissionStore.applyAllToBrowser(appContext, browser, value)
             shield.onLocation(value)
             val observer = observer ?: return
             observer.onLocationChange(this@CefriumEngineSession, value, false)

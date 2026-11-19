@@ -12,4 +12,6 @@ object AppContext {
 
     fun get(): Context =
         requireNotNull(app) { "AppContext no inicializado" }
+
+    fun getOrNull(): Context? = app
 }

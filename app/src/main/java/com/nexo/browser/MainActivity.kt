@@ -355,8 +355,8 @@ class MainActivity :
         }
         applyNavigationMode()
         findViewById<ImageButton>(R.id.tabToolsButton).apply {
-            setOnClickListener { TabTools.show(this@MainActivity) }
-            // Pulsación larga: el buzón de la identidad actual. Nunca crea una identidad nueva por accidente.
+            setOnClickListener { SiteControlSheet.show(this@MainActivity) }
+            // Pulsación larga: el buzón de la identidad actual o herramientas de red/Burner.
             setOnLongClickListener {
                 val burner = TabManager.activeTab()?.burnerId
                 if (burner != null) BurnerMailbox.show(this@MainActivity, burner) else TabTools.show(this@MainActivity)
@@ -554,7 +554,7 @@ class MainActivity :
             "nexo_ai" -> com.nexo.browser.ai.NexoAiSheet.show(this)
             "extensions" -> openScreen(ExtensionsActivity::class.java)
             "nav_customize" -> NavCustomizerSheet.show(this) { applyNavigationMode() }
-            "tab_tools" -> TabTools.show(this)
+            "tab_tools" -> SiteControlSheet.show(this)
         }
     }
 

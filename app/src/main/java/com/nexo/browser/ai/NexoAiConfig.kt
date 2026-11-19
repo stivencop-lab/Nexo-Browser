@@ -166,4 +166,26 @@ object NexoAiConfig {
     fun clearLog(context: Context) {
         prefs(context).edit().remove(KEY_LOG).apply()
     }
+
+    private const val KEY_DENIED_HOSTS = "denied_hosts"
+
+    fun normalizeHost(host: String?): String =
+        host.orEmpty().trim().lowercase().removePrefix("www.").trimEnd('.')
+
+    fun deniedHosts(context: Context): Set<String> =
+        prefs(context).getStringSet(KEY_DENIED_HOSTS, emptySet()).orEmpty()
+
+    fun isHostAllowed(context: Context, host: String?): Boolean {
+        val clean = normalizeHost(host)
+        if (clean.isEmpty()) return true
+        return clean !in deniedHosts(context)
+    }
+
+    fun setHostAllowed(context: Context, host: String?, allowed: Boolean) {
+        val clean = normalizeHost(host)
+        if (clean.isEmpty()) return
+        val next = deniedHosts(context).toMutableSet()
+        if (allowed) next.remove(clean) else next.add(clean)
+        prefs(context).edit().putStringSet(KEY_DENIED_HOSTS, next.take(500).toSet()).apply()
+    }
 }

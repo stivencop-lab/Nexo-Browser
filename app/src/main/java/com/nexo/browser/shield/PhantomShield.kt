@@ -303,6 +303,21 @@ object PhantomShield {
 
     private fun activeTab(): ShieldTab? = (TabManager.activeSession() as? CefriumEngineSession)?.shield
 
+    fun isSiteDisabled(host: String?): Boolean =
+        started && settings.isHostDisabled(host)
+
+    fun setSiteDisabled(host: String, disabled: Boolean) {
+        if (!started) return
+        val clean = host.trim().lowercase().removePrefix("www.").trimEnd('.')
+        if (clean.isEmpty()) return
+        val current = ShieldSettings.normalizeDomains(store.stringList("disabled_domains")).toMutableSet()
+        if (disabled) current.add(clean) else current.remove(clean)
+        store.set(JSONObject().put("disabled_domains", JSONArray(current.sorted())))
+    }
+
+    fun tabBlockedCount(tab: ShieldTab? = activeTab()): Int =
+        tab?.blocked?.get() ?: 0
+
     /** Insignia del escudo: bloqueos de la pestaña, "PAUSE" en sitios pausados u "OFF". */
     fun badge(global: Boolean = false): String? {
         if (!started) return null
