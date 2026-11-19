@@ -19,8 +19,10 @@
   const MAX_BACKUPS = 2;
 
   /*
-   * Proveedores. `protocol`: 'claude' (Messages) o 'chat' (Chat Completions,
-   * que también hablan Gemini, Groq, DeepSeek, Mistral, xAI y OpenRouter).
+   * Proveedores. Solo tres, para que la configuración sea clara y fiable:
+   * ChatGPT (OpenAI), Claude (Anthropic) y una API compatible propia (proxy,
+   * OpenRouter, Gemini, Groq, Ollama remoto…, cualquiera que hable Chat
+   * Completions). `protocol`: 'claude' (Messages) o 'chat' (Chat Completions).
    * `minimal`: el proveedor prefiere el cuerpo mínimo (max_completion_tokens).
    * Los modelos son sugerencias de un toque; se puede escribir cualquiera.
    */
@@ -29,28 +31,42 @@
       models: ['gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o-mini'] },
     claude: { label: 'Claude (Anthropic)', protocol: 'claude', endpoint: 'https://api.anthropic.com/v1', placeholder: 'claude-haiku-5-5',
       models: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] },
-    openrouter: { label: 'OpenRouter', protocol: 'chat', endpoint: 'https://openrouter.ai/api/v1', placeholder: 'openai/gpt-4.1-mini',
-      models: ['openai/gpt-4.1-mini', 'google/gemini-2.5-flash', 'anthropic/claude-haiku-5.5', 'meta-llama/llama-3.3-70b-instruct'] },
-    gemini: { label: 'Gemini (Google)', protocol: 'chat', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', placeholder: 'gemini-2.5-flash',
-      models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'] },
-    groq: { label: 'Groq', protocol: 'chat', endpoint: 'https://api.groq.com/openai/v1', placeholder: 'llama-3.3-70b-versatile',
-      models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] },
-    deepseek: { label: 'DeepSeek', protocol: 'chat', endpoint: 'https://api.deepseek.com/v1', placeholder: 'deepseek-chat',
-      models: ['deepseek-chat'] },
-    mistral: { label: 'Mistral', protocol: 'chat', endpoint: 'https://api.mistral.ai/v1', placeholder: 'mistral-small-latest',
-      models: ['mistral-small-latest', 'mistral-medium-latest'] },
-    xai: { label: 'xAI (Grok)', protocol: 'chat', endpoint: 'https://api.x.ai/v1', placeholder: 'grok-3-mini',
-      models: ['grok-3-mini'] },
     custom: { label: 'Compatible / personalizado', protocol: 'chat', endpoint: '', placeholder: 'Identificador del modelo', models: [] }
   });
+
+  /*
+   * Proveedores que existieron en versiones anteriores. Una configuración
+   * guardada con ellos no se pierde ni deja la IA rota: pasa a «Compatible /
+   * personalizado» con la misma dirección (todos hablaban Chat Completions),
+   * el mismo modelo y la misma clave.
+   */
+  const LEGACY_ENDPOINTS = Object.freeze({
+    openrouter: 'https://openrouter.ai/api/v1',
+    gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    groq: 'https://api.groq.com/openai/v1',
+    deepseek: 'https://api.deepseek.com/v1',
+    mistral: 'https://api.mistral.ai/v1',
+    xai: 'https://api.x.ai/v1'
+  });
+
+  /** Proveedor vigente para un valor guardado (o undefined si no es válido). */
+  function migrateProvider(provider, endpoint) {
+    const id = provider === undefined || provider === null || provider === '' ? 'custom' : provider;
+    if (typeof id === 'string' && Object.hasOwn(providers, id)) return { provider: id, endpoint: endpoint };
+    if (typeof id === 'string' && Object.hasOwn(LEGACY_ENDPOINTS, id)) {
+      return { provider: 'custom', endpoint: endpoint || LEGACY_ENDPOINTS[id] };
+    }
+    return undefined;
+  }
 
   /** Valida una conexión (principal o de respaldo): proveedor, URL HTTPS, modelo y clave. */
   function validateConnection(input, label) {
     const prefix = label ? label + ': ' : '';
     const connection = {};
-    connection.provider = input.provider === undefined ? 'custom' : input.provider;
-    if (!Object.hasOwn(providers, connection.provider)) throw new Error(prefix + 'Proveedor IA inválido.');
-    connection.endpoint = String(input.endpoint || providers[connection.provider].endpoint).trim().replace(/\/+$/, '');
+    const migrated = migrateProvider(input.provider, input.endpoint);
+    if (!migrated) throw new Error(prefix + 'Proveedor IA inválido.');
+    connection.provider = migrated.provider;
+    connection.endpoint = String(migrated.endpoint || providers[connection.provider].endpoint).trim().replace(/\/+$/, '');
     connection.model = String(input.model || '').trim();
     connection.apiKey = String(input.apiKey || '').trim();
     connection.jsonMode = input.jsonMode === true;
@@ -85,8 +101,6 @@
   function validate(input) {
     if (!input || typeof input !== 'object') throw new Error('Configuración IA inválida.');
     const config = Object.assign({}, defaults);
-    config.provider = input.provider === undefined ? 'custom' : input.provider;
-    if (!Object.hasOwn(providers, config.provider)) throw new Error('Proveedor IA inválido.');
     config.enabled = input.enabled === true;
     config.consent = input.consent === true;
     config.jsonMode = input.jsonMode === true;
@@ -161,5 +175,5 @@
     return ['websiteContent', 'browsingActivity'].concat(keyed ? ['authenticationInfo'] : []);
   }
   globalThis.PhantomAIConfig = { defaults: defaults, validate: validate, requiredPermissions: requiredPermissions, hostAllowed: hostAllowed, publicHost: publicHost, providers: providers,
-    validateConnection: validateConnection, chain: chain, MAX_BACKUPS: MAX_BACKUPS };
+    validateConnection: validateConnection, chain: chain, MAX_BACKUPS: MAX_BACKUPS, migrateProvider: migrateProvider };
 })();

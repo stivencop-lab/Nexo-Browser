@@ -37,8 +37,13 @@
   function providerState(reveal = false) {
     const provider = globalThis.PhantomAIConfig.providers[field('provider').value];
     field('model').placeholder = provider.placeholder;
+    const custom = field('provider').value === 'custom';
     field('json-mode-control').hidden = field('provider').value === 'claude';
-    field('provider-advanced').open = reveal && field('provider').value === 'custom';
+    // La API compatible necesita su dirección: se muestra siempre abierta y como obligatoria.
+    // Con OpenAI o Claude la dirección oficial ya está puesta y solo se abre si se pide.
+    field('provider-advanced-summary').textContent = custom ? 'Dirección de tu API compatible (obligatoria)' : 'Dirección de API personalizada (opcional)';
+    if (custom) field('provider-advanced').open = true;
+    else if (reveal) field('provider-advanced').open = false;
     // Modelos sugeridos: un toque evita errores al escribir el identificador.
     field('model-options').replaceChildren();
     field('model-chips').replaceChildren();
@@ -232,7 +237,8 @@
     for (const [id, preset] of Object.entries(PROVIDERS)) {
       draft.provider.appendChild(element('option', { value: id, textContent: preset.label }));
     }
-    draft.provider.value = saved && saved.provider || 'openrouter';
+    // Un respaldo nuevo propone el otro proveedor oficial: si el principal cae, el respaldo no comparte su fallo.
+    draft.provider.value = saved && PROVIDERS[saved.provider] ? saved.provider : field('provider').value === 'claude' ? 'openai' : 'claude';
     draft.endpoint = element('input', { type: 'url', placeholder: 'https://tu-api.example/v1', autocomplete: 'off',
       value: saved && saved.endpoint || (PROVIDERS[draft.provider.value] || {}).endpoint || '' });
     draft.endpointRow = element('div', {}, [element('label', { textContent: 'URL base de la API' }), draft.endpoint]);

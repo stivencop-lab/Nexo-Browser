@@ -18,6 +18,11 @@
   const TAGS = new Set(['DIV', 'ASIDE', 'SECTION', 'ARTICLE', 'INS', 'IFRAME', 'LI', 'A', 'FIGURE']);
   const HIDE_CONFIDENCE = 0.8;
   const MAX_RESPONSE_BYTES = 65536;
+  // Tiempo total de una clasificación, sumando principal y respaldos. Nexo
+  // espera como mucho 75 s: así la respuesta (o el error) siempre llega antes
+  // y el análisis nunca queda «en curso» para siempre.
+  const TOTAL_BUDGET_MS = 45000;
+  const MIN_ATTEMPT_MS = 2000;
   const SYSTEM_PROMPT = 'You detect advertising on web pages. For each candidate container you receive DOM signals: ' +
     'tag, size in CSS pixels, heuristic signals and, when available, a short excerpt of its visible text ("text"), ' +
     'hostnames its links point to ("links"), the host of an embedded frame ("frame") and class/id tokens ("cls"). ' +
@@ -402,10 +407,12 @@
      * Un proveedor: presupuesto, tiempo límite y un único reintento con el
      * cuerpo mínimo si rechaza los parámetros (HTTP 400). Devuelve Map(id -> ocultar).
      */
-    async requestOne(config, connection, host, payload, epoch) {
+    async requestOne(config, connection, host, payload, epoch, deadline) {
       const controller = new AbortController();
       this.active = controller;
-      const timeout = setTimeout(() => { controller.timedOut = true; controller.abort(); }, config.timeoutMs);
+      const left = Number.isFinite(deadline) ? deadline - Date.now() : config.timeoutMs;
+      const timeout = setTimeout(() => { controller.timedOut = true; controller.abort(); },
+        Math.max(MIN_ATTEMPT_MS, Math.min(config.timeoutMs, left)));
       const variantKey = connection.endpoint + '|' + connection.model;
       const preset = globalThis.PhantomAIConfig.providers[connection.provider] || {};
       const claude = preset.protocol === 'claude';
@@ -459,12 +466,15 @@
         throw new AIError(limited ? 'rate' : 'unavailable');
       }
       let lastError = null;
+      const deadline = now + TOTAL_BUDGET_MS;
       for (let index = 0; index < ready.length; index++) {
         const connection = ready[index];
         if (epoch !== this.epoch) throw new AIError('changed');
+        // Sin tiempo para otro proveedor: se informa el último fallo en lugar de dejar esperando.
+        if (lastError && deadline - Date.now() < MIN_ATTEMPT_MS) break;
         const started = Date.now();
         try {
-          const decisions = await this.requestOne(config, connection, host, payload, epoch);
+          const decisions = await this.requestOne(config, connection, host, payload, epoch, deadline);
           this.markHealthy(connection);
           this.reportProvider(connection, 'ok', 0, Date.now() - started);
           decisions.connection = connection;

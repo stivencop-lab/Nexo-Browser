@@ -35,19 +35,32 @@ import java.io.ByteArrayInputStream
  */
 object PhantomShieldPanel {
     private const val PROFILE = "nexo_shield_panel"
+    private const val AI_PROFILE = "nexo_shield_ai"
+    /** Recargas automáticas del panel tras perder su proceso, antes de cerrarlo. */
+    private const val MAX_RENDERER_RECOVERIES = 2
     private var current: Dialog? = null
     private var currentBrowser: CefriumBrowser? = null
-    private var serverRegistered = false
+    private val servedProfiles = HashSet<String>()
 
-    /** Perfil del panel con el origen propio ya servido (lo comparte el anfitrión de IA). */
-    internal fun profile(context: Context): CefriumProfile? {
-        val profile = runCatching { CefriumProfile.get(PROFILE) }
-            .onFailure { EngineDiagnostics.log("panel de PhantomShield: perfil no disponible", it) }
+    /** Perfil del panel con el origen propio ya servido. */
+    internal fun profile(context: Context): CefriumProfile? = served(context, PROFILE)
+
+    /**
+     * Perfil propio del anfitrión de IA. Otro perfil es otro contexto de
+     * Chromium, así que su proceso nunca es el del panel: si Android lo cierra
+     * por memoria, o el clasificador falla, el panel (y los ajustes de IA que
+     * se están editando) siguen abiertos. El almacén es nativo y común.
+     */
+    internal fun aiProfile(context: Context): CefriumProfile? = served(context, AI_PROFILE)
+
+    private fun served(context: Context, name: String): CefriumProfile? {
+        val profile = runCatching { CefriumProfile.get(name) }
+            .onFailure { EngineDiagnostics.log("PhantomShield: perfil $name no disponible", it) }
             .getOrNull() ?: return null
-        if (!serverRegistered) {
+        if (name !in servedProfiles) {
             runCatching { profile.registerContentServer(PhantomShield.PANEL_ORIGIN, PanelServer(context.applicationContext)) }
-                .onSuccess { serverRegistered = true }
-                .onFailure { EngineDiagnostics.log("panel de PhantomShield: servidor de contenido rechazado", it); return null }
+                .onSuccess { servedProfiles += name }
+                .onFailure { EngineDiagnostics.log("PhantomShield: servidor de contenido rechazado ($name)", it); return null }
         }
         return profile
     }
@@ -67,6 +80,8 @@ object PhantomShieldPanel {
         fun dp(value: Float) = (value * density).toInt()
         val radius = 24f * density
         val dialog = Dialog(activity)
+        var recoveries = 0
+        var lastRecovery = 0L
 
         val profile = profile(activity) ?: return false
         val web = runCatching { CefriumBrowser.createWithSurface(activity, profile) }
@@ -86,10 +101,25 @@ object PhantomShieldPanel {
                 return true
             }
 
-            /** El proceso del panel terminó: se cierra el panel, no Nexo. */
+            /**
+             * El proceso del panel terminó (memoria, fallo del renderizador): se
+             * recarga la misma página (panel o ajustes de IA) en lugar de cerrar
+             * la hoja de golpe. Solo si vuelve a caer enseguida se cierra.
+             */
             override fun onRenderProcessTerminated(browser: CefriumBrowser, status: CefriumRendererTerminationStatus, errorCode: Int) {
                 EngineDiagnostics.log("panel de PhantomShield: el proceso terminó ($status, $errorCode)")
-                dialog.dismiss()
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastRecovery > 30_000L) recoveries = 0
+                lastRecovery = now
+                val page = runCatching { browser.url }.getOrNull()?.takeIf { it.startsWith(PhantomShield.BASE_URL) }
+                    ?: (PhantomShield.BASE_URL + "popup/popup.html")
+                if (++recoveries > MAX_RENDERER_RECOVERIES || browser.isClosed || !dialog.isShowing) {
+                    dialog.dismiss()
+                    return
+                }
+                activity.window.decorView.post {
+                    if (!browser.isClosed && dialog.isShowing) runCatching { browser.loadUrl(page) }.onFailure { dialog.dismiss() }
+                }
             }
 
             override fun onLoadError(browser: CefriumBrowser, error: com.cefrium.CefriumLoadError) {

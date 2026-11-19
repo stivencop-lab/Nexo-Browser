@@ -188,14 +188,79 @@ object DarkEngine {
         policyFor(context, hostOrUrl).takeIf { it.enabled }?.backgroundHex
 
     /** Color entero para `CefriumBrowser.setBackgroundColor` antes de la primera carga. */
-    fun canvasColorInt(context: Context, hostOrUrl: String? = null): Int {
-        val policy = policyFor(context, hostOrUrl)
-        return runCatching { Color.parseColor(policy.backgroundHex) }
-            .getOrDefault(if (policy.enabled) 0xFF0C1222.toInt() else Color.WHITE)
-    }
+    fun canvasColorInt(context: Context, hostOrUrl: String? = null): Int = canvasColor(policyFor(context, hostOrUrl))
 
     fun isDarkEnabled(context: Context, hostOrUrl: String? = null): Boolean =
         policyFor(context, hostOrUrl).enabled
+
+    /** Color entero del lienzo para [policy] (fondo antes de que la página pinte). */
+    fun canvasColor(policy: Policy): Int =
+        runCatching { Color.parseColor(policy.backgroundHex) }
+            .getOrDefault(if (policy.enabled) 0xFF0C1222.toInt() else Color.WHITE)
+
+    // ------------------------------------------------------------------
+    // Arranque síncrono (document_start)
+    // ------------------------------------------------------------------
+
+    /** Script de arranque y los orígenes en los que corre. */
+    data class BootScript(val script: String, val origins: Set<String>)
+
+    /** Lo que `dark-engine.js` necesita en document_start (sin nombres de sitios). */
+    fun bootConfig(policy: Policy): JSONObject = JSONObject()
+        .put("enabled", policy.enabled)
+        .put("excluded", policy.excluded)
+        .put("background", if (policy.enabled) policy.backgroundHex else "")
+        .put("oled", policy.oled)
+        .put("strategy", policy.strategy)
+
+    /**
+     * Define la política para el motor oscuro de la página antes de que
+     * corra ningún script del sitio. Si el motor ya arrancó (este script se
+     * añadió después que el de contenido), se la entrega por su gancho. Solo
+     * el marco principal: los marcos siguen `prefers-color-scheme` y el puente.
+     */
+    fun bootScript(config: JSONObject): String =
+        "(function(){try{if(window!==window.top)return;var c=Object.freeze(" + config.toString() + ");" +
+            "var h=window.__nexoDarkBootHook;if(typeof h==='function'){h(c);return;}" +
+            "Object.defineProperty(window,'__nexoDarkBoot',{value:c,configurable:true,writable:false,enumerable:false});" +
+            "}catch(_){}})();"
+
+    private val HOST_RULE = Regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+
+    /** Orígenes de un sitio (con y sin `www.`, HTTP y HTTPS), o vacío si el nombre no es válido. */
+    internal fun originsFor(host: String): Set<String> {
+        val clean = normalizeHost(host)
+        if (clean.length > 253 || !HOST_RULE.matches(clean)) return emptySet()
+        return linkedSetOf("https://$clean", "http://$clean", "https://www.$clean", "http://www.$clean")
+    }
+
+    /**
+     * Scripts de arranque, puros para probarlos en la JVM: el global (`*`) y
+     * después uno por cada política distinta de sitio (excepciones y modos
+     * por dominio), que corre más tarde y por tanto manda. Así un sitio
+     * excluido nunca se oscurece «por si acaso» y uno forzado a OLED nace negro.
+     * Cada sitio solo recibe su propia política: la lista no llega a ninguna página.
+     */
+    fun bootScripts(global: Policy, sites: Map<String, Policy>): List<BootScript> {
+        val globalConfig = bootConfig(global).toString()
+        val out = ArrayList<BootScript>()
+        out += BootScript(bootScript(bootConfig(global)), setOf("*"))
+        val groups = LinkedHashMap<String, LinkedHashSet<String>>()
+        sites.toSortedMap().forEach { (host, policy) ->
+            val config = bootConfig(policy).toString()
+            if (config == globalConfig) return@forEach
+            val origins = originsFor(host)
+            if (origins.isNotEmpty()) groups.getOrPut(config) { LinkedHashSet() }.addAll(origins)
+        }
+        groups.forEach { (config, origins) -> out += BootScript(bootScript(JSONObject(config)), origins) }
+        return out
+    }
+
+    /** Scripts de arranque con las preferencias actuales. */
+    fun bootScripts(context: Context): List<BootScript> {
+        val hosts = (BrowserPrefs.nightExceptions(context) + siteModes(context).keys).take(MAX_SITE_RULES * 2)
+        return bootScripts(policyFor(context), hosts.associateWith { policyFor(context, it) })
+    }
 
     fun modeLabel(mode: String): String = when (mode) {
         MODE_LIGHT -> "Claro (desactivado)"
