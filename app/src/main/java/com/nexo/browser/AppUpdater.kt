@@ -75,10 +75,12 @@ object AppUpdater {
         val sha256SumsUrl: String?
     )
 
-    private val io = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "NexoAppUpdater").apply { isDaemon = true }
+    private val io by lazy {
+        Executors.newSingleThreadExecutor { task ->
+            Thread(task, "NexoAppUpdater").apply { isDaemon = true }
+        }
     }
-    private val main = Handler(Looper.getMainLooper())
+    private val main: Handler by lazy { Handler(Looper.getMainLooper()) }
     private val checking = AtomicBoolean(false)
     @Volatile private var autoCheckedThisProcess = false
     @Volatile private var pendingInstallFile: File? = null
