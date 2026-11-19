@@ -25,6 +25,26 @@ object EngineDiagnostics {
 
     @Volatile internal var initialized: Boolean? = null
     @Volatile internal var initError: String? = null
+    private val documentLoads = java.util.concurrent.atomic.AtomicLong(0)
+    private val rendererCrashes = java.util.concurrent.atomic.AtomicLong(0)
+    private val rendererKills = java.util.concurrent.atomic.AtomicLong(0)
+    private val surfaceRebinds = java.util.concurrent.atomic.AtomicLong(0)
+    private val bridgeMessages = java.util.concurrent.atomic.AtomicLong(0)
+    private val bridgeRejected = java.util.concurrent.atomic.AtomicLong(0)
+
+    internal fun recordDocumentLoad() { documentLoads.incrementAndGet() }
+    internal fun recordRendererExit(isKill: Boolean) {
+        if (isKill) rendererKills.incrementAndGet() else rendererCrashes.incrementAndGet()
+    }
+    internal fun recordSurfaceRebind() { surfaceRebinds.incrementAndGet() }
+    internal fun recordBridgeMessage(accepted: Boolean) {
+        if (accepted) bridgeMessages.incrementAndGet() else bridgeRejected.incrementAndGet()
+    }
+
+    fun countersSummary(): String =
+        "cargas=${documentLoads.get()} · rebinds=${surfaceRebinds.get()} · " +
+            "kills=${rendererKills.get()} · crashes=${rendererCrashes.get()} · " +
+            "bridge=${bridgeMessages.get()} (rechazados=${bridgeRejected.get()})"
 
     /** Evento del motor: al registro de Android (NexoEngine) y al diagnóstico de la app. */
     fun log(message: String, error: Throwable? = null) {
@@ -43,6 +63,7 @@ object EngineDiagnostics {
         appendLine("Motor iniciado: ${initialized ?: "aún no"}" + (initError?.let { " ($it)" } ?: ""))
         appendLine("Navegadores vivos: ${runCatching { CefriumBrowser.liveBrowserCount() }.getOrDefault(-1)} · " +
             "procesos de página: ${runCatching { CefriumBrowser.activeRenderProcessCount() }.getOrDefault(-1)}")
+        appendLine("Contadores: ${countersSummary()}")
         appendLine("Activity registrada: ${CefriumEngine.activity() != null}")
 
         val session = TabManager.activeSession() as? CefriumEngineSession

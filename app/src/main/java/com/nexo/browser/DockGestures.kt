@@ -39,8 +39,12 @@ class GestureDock @JvmOverloads constructor(
     private var tracker: VelocityTracker? = null
 
     private fun hasInteractiveChild(x: Float, y: Float): Boolean {
-        val child = findChildAt(x, y) ?: return false
-        return child.isClickable || child.isLongClickable || child is ViewGroup && child.isClickable
+        var view = findChildAt(x, y)
+        while (view != null && view !== this) {
+            if (view.isClickable || view.isLongClickable || view.isFocusableInTouchMode) return true
+            view = view.parent as? View
+        }
+        return false
     }
 
     private fun findChildAt(x: Float, y: Float): View? {
@@ -76,6 +80,7 @@ class GestureDock @JvmOverloads constructor(
                 tracker?.recycle()
                 tracker = if (tracking) VelocityTracker.obtain().apply { addMovement(event) } else null
             }
+            MotionEvent.ACTION_POINTER_DOWN -> recycle()
             MotionEvent.ACTION_MOVE -> {
                 if (!tracking || event.pointerCount > 1) return false
                 tracker?.addMovement(event)
@@ -95,7 +100,7 @@ class GestureDock @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!intercepted) {
-            // Toques sobre el fondo de la barra: también pueden iniciar un gesto.
+            // Toques sobre el fondo de la barra: iniciar seguimiento sin interceptar si hay hijo interactivo.
             if (event.actionMasked == MotionEvent.ACTION_DOWN && gesturesEnabled() && !hasInteractiveChild(event.x, event.y)) {
                 startX = event.rawX
                 startY = event.rawY
@@ -106,6 +111,10 @@ class GestureDock @JvmOverloads constructor(
                 return true
             }
             return super.onTouchEvent(event)
+        }
+        if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN || event.pointerCount > 1) {
+            recycle()
+            return false
         }
         tracker?.addMovement(event)
         when (event.actionMasked) {

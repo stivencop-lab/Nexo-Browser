@@ -29,7 +29,7 @@ object PageBridge {
     private const val OFFER_WINDOW_MS = 200L
     private const val DARK_READER_ASSET = "nexo/bridge/darkreader.js"
 
-    private val main = Handler(Looper.getMainLooper())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
 
     private data class PipState(val resume: Boolean, val isolate: Boolean = true)
 
@@ -57,7 +57,9 @@ object PageBridge {
      * Chromium, no la página.
      */
     fun onMessage(session: CefriumEngineSession, frame: String, isMainFrame: Boolean, json: JSONObject) {
-        if (!BridgeLimits.accept(json)) return
+        val accepted = BridgeLimits.accept(json)
+        com.nexo.browser.engine.cefrium.EngineDiagnostics.recordBridgeMessage(accepted)
+        if (!accepted) return
         val state = state(session)
         val type = json.optString("type")
         if (type == "content_script_ready") {

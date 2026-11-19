@@ -564,6 +564,7 @@ object TabManager {
 
     fun setDesktopMode(enabled: Boolean) {
         val tab = activeTab() ?: return
+        if (tab.desktopMode == enabled) return
         tab.desktopMode = enabled
 
         tab.session?.setDesktopMode(enabled)

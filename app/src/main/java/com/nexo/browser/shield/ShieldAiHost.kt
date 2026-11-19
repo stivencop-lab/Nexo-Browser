@@ -39,13 +39,14 @@ internal object ShieldAiHost {
     private const val MAX_QUEUE = 32
     private const val START_TIMEOUT_MS = 20_000L
 
-    private val main = Handler(Looper.getMainLooper())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
     @Volatile private var browser: CefriumBrowser? = null
     private var channel: PageChannel? = null
     @Volatile private var ready = false
     private var nextRid = 0
     private val pending = LinkedHashMap<Int, (Any?) -> Unit>()
     private val timeouts = HashMap<Int, Runnable>()
+    private val activeCalls = java.util.concurrent.CopyOnWriteArrayList<Call>()
     private val queue = ArrayList<String>()
     private val closeIdle: Runnable = Runnable { close("sin uso") }
     private val startTimeout: Runnable = Runnable {
@@ -112,6 +113,8 @@ internal object ShieldAiHost {
         channel = null
         ready = false
         queue.clear()
+        activeCalls.forEach { runCatching { it.cancel() } }
+        activeCalls.clear()
         timeouts.values.forEach { main.removeCallbacks(it) }
         timeouts.clear()
         val waiting = pending.values.toList()
@@ -241,14 +244,17 @@ internal object ShieldAiHost {
         val call = runCatching {
             http.newCall(Request.Builder().url(url).headers(headers.toHeaders()).post(body).build())
         }.getOrElse { done(null, "Dirección no válida"); return }
+        activeCalls.add(call)
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
+                activeCalls.remove(call)
                 EngineDiagnostics.log("IA de PhantomShield: error de red (${e.javaClass.simpleName})")
                 val error = if (e is InterruptedIOException) "timeout" else "Sin conexión"
                 main.post { done(null, error) }
             }
 
             override fun onResponse(call: Call, response: Response) {
+                activeCalls.remove(call)
                 val result = runCatching {
                     response.use {
                         val source = it.body?.source()

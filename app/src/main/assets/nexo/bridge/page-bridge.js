@@ -652,7 +652,7 @@
     active: false, live: false, lang: "multi", granted: false, choosing: false, token: 0,
     video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
     track: null, trackMode: "", trackTimer: 0, knownCues: 0,
-    dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
+    dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false, ytTimer: 0,
     restartTimer: 0, capturing: false, waitCancel: null, pausedNotified: false,
     target: "", file: null, fileTimer: 0, fileUrls: 0
   };
@@ -1090,9 +1090,10 @@
           resolve(true);
           return;
         }
-        if (++attempts >= 10) { resolve(false); return; }
-        setTimeout(check, 300);
+        if (++attempts >= 10) { captions.ytTimer = 0; resolve(false); return; }
+        captions.ytTimer = setTimeout(check, 300);
       };
+      clearTimeout(captions.ytTimer);
       check();
     });
   }
@@ -1303,6 +1304,8 @@
     captions.token++;
     clearTimeout(captions.restartTimer);
     captions.restartTimer = 0;
+    clearTimeout(captions.ytTimer);
+    captions.ytTimer = 0;
     captions.choosing = false;
     stopRecording(notify);
     releaseTrack();
@@ -1552,22 +1555,6 @@
   // ---------------------------------------------------------------
   // Conexión con Nexo (con reconexión)
   // ---------------------------------------------------------------
-
-  /*
-   * Captura de Android: un salto al mismo punto hace que el motor cierre y
-   * vuelva a abrir el flujo de audio del video. Abierto con la captura ya
-   * activa, Android lo enruta por la vía que puede oír (no por la de baja latencia).
-   */
-  function nudgeMedia() {
-    const media = new Set(collectVideos().concat(Array.from(document.getElementsByTagName("audio"))));
-    for (const element of media) {
-      try {
-        if (element.paused || element.ended || element.muted || element.readyState < 2) continue;
-        const time = Number(element.currentTime);
-        if (Number.isFinite(time)) element.currentTime = time;
-      } catch (_) {}
-    }
-  }
 
   function onNativeMessage(message) {
     if (!message || typeof message !== "object") return;

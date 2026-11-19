@@ -26,15 +26,23 @@ object PerfLog {
     val KINDS = listOf("arranque" to "ms", "carga" to "ms", "memoria" to "MB", "fluidez" to "% lentos")
 
     private val pageStarts = java.util.WeakHashMap<EngineSession, Long>()
+    private val frameListeners = java.util.WeakHashMap<Activity, android.view.Window.OnFrameMetricsAvailableListener>()
     @Volatile private var startupRecorded = false
     private val frameThread by lazy { HandlerThread("NexoFrames").apply { start() } }
+    private val io by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
 
     fun record(context: Context, kind: String, value: Double) {
-        val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-        val list = runCatching { JSONArray(prefs.getString(kind, "[]")) }.getOrDefault(JSONArray())
-        list.put(value)
-        while (list.length() > MAX) list.remove(0)
-        prefs.edit().putString(kind, list.toString()).apply()
+        if (!value.isFinite()) return
+        val app = context.applicationContext
+        io.execute {
+            runCatching {
+                val prefs = app.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+                val list = runCatching { JSONArray(prefs.getString(kind, "[]")) }.getOrDefault(JSONArray())
+                list.put(value)
+                while (list.length() > MAX) list.remove(0)
+                prefs.edit().putString(kind, list.toString()).apply()
+            }
+        }
     }
 
     fun values(context: Context, kind: String): List<Double> {
@@ -65,10 +73,12 @@ object PerfLog {
             else append("n=").append(values.size).append(" · mediana ").append("%.1f".format(stats.first))
                 .append(" · p95 ").append("%.1f".format(stats.second)).append(' ').append(unit).append('\n')
         }
+        append("motor: ").append(com.nexo.browser.engine.cefrium.EngineDiagnostics.countersSummary())
     }.trimEnd()
 
     /** Arranque hasta el primer fotograma y fluidez continua de la ventana principal. */
     fun attach(activity: Activity) {
+        detach(activity)
         val decor = activity.window.decorView
         if (!startupRecorded) {
             decor.viewTreeObserver.addOnDrawListener(object : android.view.ViewTreeObserver.OnDrawListener {
@@ -83,17 +93,25 @@ object PerfLog {
         }
         var frames = 0
         var slow = 0
-        runCatching {
-            activity.window.addOnFrameMetricsAvailableListener({ _, metrics, _ ->
-                val total = metrics.getMetric(FrameMetrics.TOTAL_DURATION) / 1_000_000.0
-                frames++
-                if (total > 17.0) slow++
-                if (frames >= 120) {
-                    record(activity, "fluidez", slow * 100.0 / frames)
-                    frames = 0; slow = 0
-                }
-            }, Handler(frameThread.looper))
+        val listener = android.view.Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+            val total = metrics.getMetric(FrameMetrics.TOTAL_DURATION) / 1_000_000.0
+            frames++
+            if (total > 17.0) slow++
+            if (frames >= 120) {
+                record(activity, "fluidez", slow * 100.0 / frames)
+                frames = 0; slow = 0
+            }
         }
+        runCatching {
+            activity.window.addOnFrameMetricsAvailableListener(listener, Handler(frameThread.looper))
+            synchronized(frameListeners) { frameListeners[activity] = listener }
+        }
+    }
+
+    /** Retira el observador de fotogramas al destruir la Activity para evitar fugas. */
+    fun detach(activity: Activity) {
+        val listener = synchronized(frameListeners) { frameListeners.remove(activity) } ?: return
+        runCatching { activity.window.removeOnFrameMetricsAvailableListener(listener) }
     }
 
     fun onPageStart(session: EngineSession) { pageStarts[session] = SystemClock.elapsedRealtime() }

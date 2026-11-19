@@ -64,8 +64,8 @@ object PhantomShield {
     private val PANEL_WRITABLE = setOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled",
         "disabled_domains", "aiConfig")
 
-    private val main = Handler(Looper.getMainLooper())
-    private val io = Executors.newSingleThreadScheduledExecutor()
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val io by lazy { Executors.newSingleThreadScheduledExecutor() }
     private lateinit var appContext: Context
     private lateinit var store: ShieldStore
     @Volatile private var started = false
@@ -116,6 +116,7 @@ object PhantomShield {
             topUrl = url
             topHost = UrlParts.host(url)
             blocked.set(0)
+            answers.clear()
             newPage()
             channel.reset()
         }
@@ -129,6 +130,20 @@ object PhantomShield {
                 val stale = replies.values.toList()
                 replies.clear()
                 stale.forEach { it(JSONObject().put("ok", false).put("error", "La página cambió.")) }
+            }
+        }
+
+        /** Libera temporizadores, respuestas pendientes y referencias al cerrar la pestaña. */
+        internal fun dispose() {
+            answers.clear()
+            session = null
+            tabs.removeAll { it.get() == null || it.get() === this }
+            main.post {
+                replyTimeouts.values.forEach { main.removeCallbacks(it) }
+                replyTimeouts.clear()
+                val stale = replies.values.toList()
+                replies.clear()
+                stale.forEach { it(JSONObject().put("ok", false).put("error", "La pestaña se cerró.")) }
             }
         }
 

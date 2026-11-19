@@ -1936,15 +1936,22 @@ class MainActivity :
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (MigrationMode.enabled(this)) return
-        // La Activity gestiona la rotación: el motor debe enterarse para
-        // actualizar screen.orientation y las media queries.
+        // La Activity gestiona la rotación y cambios de modo claro/oscuro sin destruirse
+        // (evita recrear sesiones Chromium y recargar páginas abiertas).
         com.nexo.browser.engine.Engines.current.onConfigurationChanged(this, newConfig)
         ViewCompat.requestApplyInsets(findViewById(android.R.id.content))
+        if (themeKey.isNotBlank() && themeKey != ThemeManager.themeKey(this)) {
+            ThemeManager.applyWindow(this)
+            applyTheme()
+            com.nexo.browser.engine.Engines.current.applySettings(this)
+            ExtensionManager.sendBrowserState(this)
+        }
         if (BrowserPrefs.isNexoHome(TabManager.activeTab()?.url)) startPage.render(TabManager.activeTab()?.isPrivate == true)
     }
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
+        PerfLog.detach(this)
         pendingPipEntry?.let { pageView.removeCallbacks(it) }
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }
