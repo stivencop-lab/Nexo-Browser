@@ -17,9 +17,12 @@ import java.util.zip.ZipInputStream
  * Instalador seguro de paquetes `.crx`, `.xpi` y `.zip` para NXR.
  *
  * Controles de seguridad:
- * - Protección estricta contra Zip Slip (normalización + validación de ruta canónica).
- * - Límites duros de tamaño total descomprimido (10 MB), archivo individual (2 MB) y archivos (200).
- * - Verificación criptográfica CRX2/CRX3 mediante [CrxPackage].
+ * - Protección estricta contra Zip Slip (normalización + validación de ruta canónica) y entradas duplicadas.
+ * - Límites duros de tamaño total descomprimido (10 MB), archivo individual (2 MB), archivos (200) y ratio zip bomb.
+ * - Verificación criptográfica CRX2/CRX3 mediante [CrxPackage] (anti-políglota EOCD).
+ * - Continuidad de clave pública ([publicKeySha256]): bloquea degradaciones a paquetes sin firma o con clave distinta.
+ * - Activación segura por defecto (`enabled = false`) en paquetes no firmados, incompatibles, parciales con APIs
+ *   sin soporte o con acceso amplio a todos los sitios, salvo confirmación explícita del usuario.
  * - Desinstalación limpia que borra archivos, almacenamiento aislado y permisos.
  * Puro sobre [File]: probado en la JVM.
  */
@@ -27,10 +30,31 @@ object NxrPackageInstaller {
     const val MAX_UNCOMPRESSED_BYTES = 10L * 1024L * 1024L
     const val MAX_SINGLE_FILE_BYTES = 2 * 1024 * 1024
     const val MAX_FILES = 200
+    const val ORIGIN_CHROME_WEB_STORE = "chrome_web_store"
+    const val ORIGIN_EDGE_ADDONS = "edge_addons"
+    const val ORIGIN_LOCAL_FILE = "local_file"
+    const val ORIGIN_DIRECT_URL = "direct_url"
     private const val META_FILE = "meta.json"
     private const val FILES_DIR = "files"
 
     class InstallException(message: String) : Exception(message)
+
+    data class SourceInfo(
+        val sourceOrigin: String = ORIGIN_LOCAL_FILE,
+        val storeId: String? = null,
+        val sourceUrl: String? = null,
+        val updateUrl: String? = null,
+        val publicKeySha256: String? = null,
+        val developer: String? = null,
+        val signatureVerified: Boolean = false
+    ) {
+        fun originLabel(): String = when (sourceOrigin) {
+            ORIGIN_CHROME_WEB_STORE -> "Chrome Web Store"
+            ORIGIN_EDGE_ADDONS -> "Microsoft Edge Add-ons"
+            ORIGIN_DIRECT_URL -> "URL HTTPS directa"
+            else -> "Archivo local"
+        }
+    }
 
     data class Inspection(
         val id: String,
@@ -42,7 +66,13 @@ object NxrPackageInstaller {
         val requestedHosts: List<String>,
         val missingFiles: List<String>,
         val fileCount: Int,
-        val totalUncompressedBytes: Long
+        val totalUncompressedBytes: Long,
+        val publicKeySha256: String? = null,
+        val signatureVerified: Boolean = false,
+        val signerCount: Int = 0,
+        val installVerdict: ExtensionCompatibility.InstallVerdict = capabilities.verdict,
+        val recommendedEnabled: Boolean = false,
+        val riskReasons: List<String> = emptyList()
     )
 
     data class InstalledExtension(
@@ -58,8 +88,25 @@ object NxrPackageInstaller {
         val hostPermissions: List<String>,
         val unsupportedApis: List<String>,
         val limitedApis: Map<String, String>,
-        val compatibilityLevel: String
+        val compatibilityLevel: String,
+        val sourceOrigin: String = ORIGIN_LOCAL_FILE,
+        val storeId: String? = null,
+        val sourceUrl: String? = null,
+        val updateUrl: String? = null,
+        val publicKeySha256: String? = null,
+        val developer: String? = null,
+        val signatureVerified: Boolean = false
     ) {
+        fun sourceInfo(): SourceInfo = SourceInfo(
+            sourceOrigin = sourceOrigin,
+            storeId = storeId,
+            sourceUrl = sourceUrl,
+            updateUrl = updateUrl,
+            publicKeySha256 = publicKeySha256,
+            developer = developer,
+            signatureVerified = signatureVerified
+        )
+
         fun toJson(): JSONObject = JSONObject()
             .put("id", id)
             .put("name", name)
@@ -74,6 +121,13 @@ object NxrPackageInstaller {
             .put("unsupportedApis", JSONArray(unsupportedApis))
             .put("limitedApis", JSONObject().apply { limitedApis.forEach { (k, v) -> put(k, v) } })
             .put("compatibilityLevel", compatibilityLevel)
+            .put("sourceOrigin", sourceOrigin)
+            .put("storeId", storeId ?: JSONObject.NULL)
+            .put("sourceUrl", sourceUrl ?: JSONObject.NULL)
+            .put("updateUrl", updateUrl ?: JSONObject.NULL)
+            .put("publicKeySha256", publicKeySha256 ?: JSONObject.NULL)
+            .put("developer", developer ?: JSONObject.NULL)
+            .put("signatureVerified", signatureVerified)
 
         companion object {
             fun fromJson(json: JSONObject): InstalledExtension {
@@ -81,6 +135,8 @@ object NxrPackageInstaller {
                     val arr = json.optJSONArray(key) ?: return emptyList()
                     return (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
                 }
+                fun optClean(key: String): String? =
+                    json.optString(key).takeIf { it.isNotBlank() && it != "null" }
                 val limited = linkedMapOf<String, String>()
                 json.optJSONObject("limitedApis")?.let { obj ->
                     val it = obj.keys()
@@ -89,93 +145,183 @@ object NxrPackageInstaller {
                         limited[k] = obj.optString(k)
                     }
                 }
+                val sourceType = json.optString("sourceType", "ZIP")
                 return InstalledExtension(
                     id = json.getString("id"),
                     name = json.getString("name"),
                     version = json.getString("version"),
                     description = json.optString("description"),
                     manifestVersion = json.optInt("manifestVersion", 3),
-                    sourceType = json.optString("sourceType", "ZIP"),
+                    sourceType = sourceType,
                     installedAt = json.optLong("installedAt", 0L),
-                    iconPath = json.optString("iconPath").takeIf { it.isNotBlank() && it != "null" },
+                    iconPath = optClean("iconPath"),
                     permissions = list("permissions"),
                     hostPermissions = list("hostPermissions"),
                     unsupportedApis = list("unsupportedApis"),
                     limitedApis = limited,
-                    compatibilityLevel = json.optString("compatibilityLevel", ExtensionCompatibility.Level.PARTIAL.name)
+                    compatibilityLevel = json.optString("compatibilityLevel", ExtensionCompatibility.Level.PARTIAL.name),
+                    sourceOrigin = optClean("sourceOrigin") ?: ORIGIN_LOCAL_FILE,
+                    storeId = optClean("storeId"),
+                    sourceUrl = optClean("sourceUrl"),
+                    updateUrl = optClean("updateUrl"),
+                    publicKeySha256 = optClean("publicKeySha256"),
+                    developer = optClean("developer"),
+                    signatureVerified = json.optBoolean("signatureVerified", sourceType.startsWith("CRX"))
                 )
             }
         }
     }
 
+    private data class VerifiedArchive(
+        val sourceType: String,
+        val crxId: String?,
+        val publicKeySha256: String?,
+        val signatureVerified: Boolean,
+        val signerCount: Int,
+        val entries: Map<String, ByteArray>
+    )
+
+    /** Evalúa si es seguro activar automáticamente una nueva instalación sin confirmación adicional. */
+    fun evaluateRisk(
+        capabilities: NxrPermissions.CapabilitySummary,
+        signatureVerified: Boolean,
+        missingFiles: List<String>
+    ): Pair<Boolean, List<String>> {
+        val reasons = mutableListOf<String>()
+        if (!signatureVerified) {
+            reasons += "Paquete sin firma criptográfica CRX verificable."
+        }
+        if (capabilities.level == ExtensionCompatibility.Level.UNSUPPORTED) {
+            reasons += "No contiene content scripts ejecutables compatibles con Cefrium 0.21.0."
+        }
+        if (capabilities.unsupportedApis.isNotEmpty()) {
+            reasons += "Solicita APIs sin soporte en Cefrium (${capabilities.unsupportedApis.take(4).joinToString(", ")})."
+        }
+        if (capabilities.hasBroadHostAccess) {
+            reasons += "Solicita acceso amplio a todos los sitios web (<all_urls> / *://*/*)."
+        }
+        if (missingFiles.isNotEmpty()) {
+            reasons += "Faltan archivos referenciados por el manifiesto (${missingFiles.size})."
+        }
+        val safeByDefault = reasons.isEmpty()
+        return safeByDefault to reasons
+    }
+
     /** Inspecciona un paquete `.crx`/`.xpi`/`.zip` sin instalarlo (para pantalla de consentimiento). */
-    fun inspect(packageFile: File, localeTag: String = Locale.getDefault().toLanguageTag()): Inspection {
-        val (sourceType, crxId, entries) = readVerifiedZip(packageFile)
-        val manifestBytes = entries["manifest.json"]
+    fun inspect(
+        packageFile: File,
+        localeTag: String = Locale.getDefault().toLanguageTag(),
+        expectedId: String? = null
+    ): Inspection {
+        val archive = readVerifiedZip(packageFile, expectedId)
+        val manifestBytes = archive.entries["manifest.json"]
             ?: throw InstallException("El paquete no contiene manifest.json en la raíz.")
         val manifestText = manifestBytes.toString(Charsets.UTF_8)
         val manifest = runCatching { ExtensionManifest.parse(manifestText) }
             .getOrElse { throw InstallException(it.message ?: "manifest.json no es válido.") }
 
         val messages = ExtensionMessages.load("", manifest.defaultLocale, localeTag) { folder ->
-            entries["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
+            archive.entries["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
         }
-        val id = deriveExtensionId(crxId, manifest, manifestBytes)
+        val id = deriveExtensionId(archive.crxId, manifest, manifestBytes)
+        if (expectedId != null && id != expectedId) {
+            throw InstallException("El identificador del paquete ($id) no coincide con el esperado ($expectedId).")
+        }
         val capabilities = NxrPermissions.summarizeCapabilities(manifest)
         val requestedHosts = NxrPermissions.requestedHostPatterns(manifest)
         val requiredScriptFiles = manifest.contentScripts.flatMap { it.js + it.css }
             .mapNotNull { ExtensionManifest.normalizePath(it) }
             .distinct()
-        val missingFiles = requiredScriptFiles.filterNot { it in entries }
-        val totalBytes = entries.values.sumOf { it.size.toLong() }
+        val missingFiles = requiredScriptFiles.filterNot { it in archive.entries }
+        val totalBytes = archive.entries.values.sumOf { it.size.toLong() }
+        val (recommendedEnabled, riskReasons) = evaluateRisk(capabilities, archive.signatureVerified, missingFiles)
+        val verdict = when {
+            capabilities.level == ExtensionCompatibility.Level.UNSUPPORTED -> ExtensionCompatibility.InstallVerdict.UNSUPPORTED
+            !archive.signatureVerified -> ExtensionCompatibility.InstallVerdict.UNVERIFIABLE
+            else -> capabilities.verdict
+        }
 
         return Inspection(
             id = id,
-            sourceType = sourceType,
+            sourceType = archive.sourceType,
             manifest = manifest,
             localizedName = messages.localize(manifest.name),
             localizedDescription = messages.localize(manifest.description),
             capabilities = capabilities,
             requestedHosts = requestedHosts,
             missingFiles = missingFiles,
-            fileCount = entries.size,
-            totalUncompressedBytes = totalBytes
+            fileCount = archive.entries.size,
+            totalUncompressedBytes = totalBytes,
+            publicKeySha256 = archive.publicKeySha256,
+            signatureVerified = archive.signatureVerified,
+            signerCount = archive.signerCount,
+            installVerdict = verdict,
+            recommendedEnabled = recommendedEnabled,
+            riskReasons = riskReasons
         )
     }
 
     /**
      * Instala el paquete validado en `[rootDir]/<id>/` con los hosts explícitamente
-     * autorizados en [grantedHosts] y limpieza segura si falla a mitad.
+     * autorizados en [grantedHosts], comprobando continuidad de clave criptográfica
+     * frente a instalaciones previas y aplicando activación segura por defecto.
      */
     fun install(
         rootDir: File,
         packageFile: File,
         grantedHosts: List<String>? = null,
-        localeTag: String = Locale.getDefault().toLanguageTag()
+        localeTag: String = Locale.getDefault().toLanguageTag(),
+        sourceInfo: SourceInfo? = null,
+        enableAfterInstall: Boolean? = null,
+        expectedId: String? = null
     ): InstalledExtension {
-        val (sourceType, crxId, entries) = readVerifiedZip(packageFile)
-        val manifestBytes = entries["manifest.json"]
+        val archive = readVerifiedZip(packageFile, expectedId)
+        val manifestBytes = archive.entries["manifest.json"]
             ?: throw InstallException("El paquete no contiene manifest.json.")
         val manifestText = manifestBytes.toString(Charsets.UTF_8)
         val manifest = runCatching { ExtensionManifest.parse(manifestText) }
             .getOrElse { throw InstallException(it.message ?: "manifest.json no es válido.") }
         val messages = ExtensionMessages.load("", manifest.defaultLocale, localeTag) { folder ->
-            entries["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
+            archive.entries["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
         }
-        val id = deriveExtensionId(crxId, manifest, manifestBytes)
+        val id = deriveExtensionId(archive.crxId, manifest, manifestBytes)
+        if (expectedId != null && id != expectedId) {
+            throw InstallException("El identificador del paquete ($id) no coincide con el esperado ($expectedId).")
+        }
         val capabilities = NxrPermissions.summarizeCapabilities(manifest)
         val requestedHosts = NxrPermissions.requestedHostPatterns(manifest)
         val effectiveHosts = (grantedHosts ?: requestedHosts).filter { it.isNotBlank() }.distinct()
+        val requiredScriptFiles = manifest.contentScripts.flatMap { it.js + it.css }
+            .mapNotNull { ExtensionManifest.normalizePath(it) }
+            .distinct()
+        val missingFiles = requiredScriptFiles.filterNot { it in archive.entries }
+        val (recommendedEnabled, _) = evaluateRisk(capabilities, archive.signatureVerified, missingFiles)
 
         rootDir.mkdirs()
         val extDir = File(rootDir, id)
+        val existingMeta = readInstalledMeta(extDir)
+
+        // Continuidad de clave criptográfica: nunca permitir degradación sin firma o cambio de clave.
+        if (existingMeta != null && !existingMeta.publicKeySha256.isNullOrBlank()) {
+            if (!archive.signatureVerified || archive.publicKeySha256.isNullOrBlank()) {
+                throw InstallException(
+                    "Actualización bloqueada por seguridad: un paquete sin firma no puede sobrescribir la extensión firmada «${existingMeta.name}»."
+                )
+            }
+            if (archive.publicKeySha256 != existingMeta.publicKeySha256) {
+                throw InstallException(
+                    "Actualización bloqueada por seguridad: la huella de la clave pública no coincide con la extensión instalada «${existingMeta.name}»."
+                )
+            }
+        }
+
         val staging = File(rootDir, "$id.staging-${System.nanoTime()}")
         val filesDir = File(staging, FILES_DIR)
         filesDir.mkdirs()
         val canonicalRoot = filesDir.canonicalPath + File.separator
 
         try {
-            for ((relPath, bytes) in entries) {
+            for ((relPath, bytes) in archive.entries) {
                 val dest = File(filesDir, relPath)
                 if (!dest.canonicalPath.startsWith(canonicalRoot)) {
                     throw InstallException("Ruta peligrosa detectada en el paquete: $relPath")
@@ -186,29 +332,41 @@ object NxrPackageInstaller {
 
             val bestIcon = manifest.icons.entries.maxByOrNull { it.key }?.value
                 ?.let { ExtensionManifest.normalizePath(it) }
-                ?.takeIf { it in entries }
+                ?.takeIf { it in archive.entries }
 
+            val mergedSource = sourceInfo ?: existingMeta?.sourceInfo() ?: SourceInfo()
             val installed = InstalledExtension(
                 id = id,
                 name = messages.localize(manifest.name),
                 version = manifest.version,
                 description = messages.localize(manifest.description),
                 manifestVersion = manifest.manifestVersion,
-                sourceType = sourceType,
+                sourceType = archive.sourceType,
                 installedAt = System.currentTimeMillis(),
                 iconPath = bestIcon,
                 permissions = manifest.permissions.sorted(),
                 hostPermissions = requestedHosts,
                 unsupportedApis = capabilities.unsupportedApis,
                 limitedApis = capabilities.limitedApis,
-                compatibilityLevel = capabilities.level.name
+                compatibilityLevel = capabilities.level.name,
+                sourceOrigin = mergedSource.sourceOrigin,
+                storeId = mergedSource.storeId ?: archive.crxId,
+                sourceUrl = mergedSource.sourceUrl,
+                updateUrl = mergedSource.updateUrl,
+                publicKeySha256 = archive.publicKeySha256 ?: mergedSource.publicKeySha256,
+                developer = mergedSource.developer,
+                signatureVerified = archive.signatureVerified
             )
             File(staging, META_FILE).writeText(installed.toJson().toString(), Charsets.UTF_8)
 
             // Conservar almacenamiento existente (global y particionado por origen) si es una actualización.
             val existingPolicy = if (extDir.isDirectory) NxrPermissions.readPolicy(extDir) else null
-            val policy = (existingPolicy ?: NxrPermissions.Policy(enabled = true, allowInPrivate = false))
-                .copy(grantedHostPatterns = effectiveHosts)
+            val initialEnabled = enableAfterInstall ?: existingPolicy?.enabled ?: recommendedEnabled
+            val policy = (existingPolicy ?: NxrPermissions.Policy(enabled = initialEnabled, allowInPrivate = false))
+                .copy(
+                    enabled = initialEnabled,
+                    grantedHostPatterns = effectiveHosts
+                )
             NxrPermissions.writePolicy(staging, policy)
 
             val existingStorage = File(extDir, NxrStorage.STORAGE_FILE)
@@ -251,6 +409,12 @@ object NxrPackageInstaller {
         }
     }
 
+    fun readInstalledMeta(extDir: File): InstalledExtension? {
+        val meta = File(extDir, META_FILE)
+        if (!meta.isFile) return null
+        return runCatching { InstalledExtension.fromJson(JSONObject(meta.readText(Charsets.UTF_8))) }.getOrNull()
+    }
+
     /** Elimina directorios temporales huérfanos `.staging-*` o `.backup-*` tras cierres bruscos. */
     fun cleanupOrphanDirs(rootDir: File) {
         if (!rootDir.isDirectory) return
@@ -274,11 +438,7 @@ object NxrPackageInstaller {
         if (!rootDir.isDirectory) return emptyList()
         return rootDir.listFiles()
             ?.filter { it.isDirectory && !it.name.contains(".staging-") && !it.name.contains(".backup-") }
-            ?.mapNotNull { dir ->
-                val meta = File(dir, META_FILE)
-                if (!meta.isFile) return@mapNotNull null
-                runCatching { InstalledExtension.fromJson(JSONObject(meta.readText(Charsets.UTF_8))) }.getOrNull()
-            }
+            ?.mapNotNull { dir -> readInstalledMeta(dir) }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
     }
@@ -316,23 +476,32 @@ object NxrPackageInstaller {
     private const val MAX_COMPRESSION_RATIO = 100L
     private const val RATIO_CHECK_MIN_BYTES = 2L * 1024L * 1024L
 
-    private fun readVerifiedZip(packageFile: File): Triple<String, String?, Map<String, ByteArray>> {
+    private fun readVerifiedZip(packageFile: File, expectedId: String? = null): VerifiedArchive {
         if (!packageFile.isFile || packageFile.length() == 0L) {
             throw InstallException("Archivo de extensión vacío o inaccesible.")
         }
         val compressedSize = packageFile.length().coerceAtLeast(1L)
         val sourceType: String
         val crxId: String?
+        val publicKeySha256: String?
+        val signatureVerified: Boolean
+        val signerCount: Int
         val zipStream: InputStream
         if (CrxPackage.isCrx(packageFile)) {
-            val verified = runCatching { CrxPackage.verify(packageFile) }
+            val verified = runCatching { CrxPackage.verify(packageFile, expectedId = expectedId) }
                 .getOrElse { throw InstallException(it.message ?: "Firma CRX no válida.") }
             sourceType = "CRX${verified.formatVersion}"
             crxId = verified.extensionId
+            publicKeySha256 = verified.publicKeySha256
+            signatureVerified = true
+            signerCount = verified.signerCount
             zipStream = CrxPackage.openZip(packageFile, verified)
         } else {
             sourceType = if (packageFile.name.endsWith(".xpi", ignoreCase = true)) "XPI" else "ZIP"
             crxId = null
+            publicKeySha256 = null
+            signatureVerified = false
+            signerCount = 0
             zipStream = packageFile.inputStream()
         }
 
@@ -376,6 +545,6 @@ object NxrPackageInstaller {
                 files[normalized] = out.toByteArray()
             }
         }
-        return Triple(sourceType, crxId, files)
+        return VerifiedArchive(sourceType, crxId, publicKeySha256, signatureVerified, signerCount, files)
     }
 }

@@ -14,19 +14,14 @@ import java.io.File
  * - Nunca autoriza esquemas internos (`about:`, `chrome:`, `file:`, `data:`, `javascript:`).
  * - En pestañas privadas requiere autorización explícita (`allowInPrivate = true`).
  * - Distingue entre permisos concedidos en instalación, sitios bloqueados por el usuario
- *   y APIs no soportadas bajo las APIs públicas de Cefrium.
+ *   y APIs no soportadas bajo las APIs públicas de Cefrium 0.21.0.
  * Puro sobre [File]: probado en la JVM.
  */
 object NxrPermissions {
     private const val PERMS_FILE = "permissions.json"
 
-    /** APIs cuya ejecución completa no existe en la API pública de Cefrium. */
-    val ENGINE_UNSUPPORTED_APIS = setOf(
-        "debugger", "devtools", "nativeMessaging", "proxy", "privacy", "management",
-        "webRequestBlocking", "webRequestFilterResponse", "cookies", "tabCapture",
-        "desktopCapture", "pageCapture", "offscreen", "vpnProvider", "certificateProvider",
-        "platformKeys", "fileSystemProvider", "browsingData", "dns", "sessions"
-    )
+    /** APIs cuya ejecución no existe para terceros en la API pública de Cefrium 0.21.0. */
+    val ENGINE_UNSUPPORTED_APIS: Set<String> = ExtensionCompatibility.UNSUPPORTED_PERMS
 
     data class Policy(
         val enabled: Boolean = true,
@@ -65,11 +60,14 @@ object NxrPermissions {
 
     data class CapabilitySummary(
         val level: ExtensionCompatibility.Level,
+        val verdict: ExtensionCompatibility.InstallVerdict,
         val runnableContentScripts: Int,
         val hasServiceWorkerBackground: Boolean,
+        val hasBroadHostAccess: Boolean,
         val supportedApis: List<String>,
         val limitedApis: Map<String, String>,
-        val unsupportedApis: List<String>
+        val unsupportedApis: List<String>,
+        val apiBreakdown: List<ExtensionCompatibility.ApiMatrixRow> = emptyList()
     )
 
     fun readPolicy(extDir: File): Policy {
@@ -108,40 +106,23 @@ object NxrPermissions {
         }
     }
 
-    /** Evalúa de forma honesta qué partes del manifiesto puede ejecutar NXR sobre Cefrium. */
+    /** Evalúa de forma honesta qué partes del manifiesto puede ejecutar NXR sobre Cefrium 0.21.0. */
     fun summarizeCapabilities(manifest: ExtensionManifest): CapabilitySummary {
-        val base = ExtensionCompatibility.evaluate(manifest)
-        val unsupported = LinkedHashSet<String>(base.unsupported)
-        val limited = LinkedHashMap<String, String>(base.limited)
-
-        for (perm in manifest.permissions + manifest.optionalPermissions) {
-            if (perm in ENGINE_UNSUPPORTED_APIS) {
-                unsupported += perm
-                limited.remove(perm)
-            }
-        }
+        val report = ExtensionCompatibility.evaluate(manifest)
         val hasSw = manifest.background?.serviceWorker != null
-        if (hasSw) {
-            unsupported += "background.service_worker (MV3)"
-        } else if (manifest.background != null) {
-            limited["background"] = "Scripts de fondo persistentes no se ejecutan en proceso separado sobre Cefrium."
-        }
-        if (manifest.dnrRulesets.isNotEmpty()) {
-            limited["declarativeNetRequest"] = "Los rulesets DNR de terceros no se inyectan aún en el interceptor nativo."
-        }
         val runnableScripts = manifest.contentScripts.count { it.js.isNotEmpty() || it.css.isNotEmpty() }
-        val level = when {
-            runnableScripts == 0 && manifest.action == null -> ExtensionCompatibility.Level.UNSUPPORTED
-            unsupported.isNotEmpty() || limited.isNotEmpty() -> ExtensionCompatibility.Level.PARTIAL
-            else -> ExtensionCompatibility.Level.FULL
-        }
+        val requestedHosts = requestedHostPatterns(manifest)
+        val broadHost = requestedHosts.any { ExtensionCompatibility.isBroadHostPattern(it) }
         return CapabilitySummary(
-            level = level,
+            level = report.level,
+            verdict = report.verdict,
             runnableContentScripts = runnableScripts,
             hasServiceWorkerBackground = hasSw,
-            supportedApis = base.supported.filterNot { it in unsupported },
-            limitedApis = limited,
-            unsupportedApis = unsupported.toList().sorted()
+            hasBroadHostAccess = broadHost,
+            supportedApis = report.supported,
+            limitedApis = report.limited,
+            unsupportedApis = report.unsupported,
+            apiBreakdown = report.apiBreakdown
         )
     }
 

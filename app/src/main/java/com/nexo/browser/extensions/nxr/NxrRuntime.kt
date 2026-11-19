@@ -17,6 +17,7 @@ import com.nexo.browser.TabManager
 import com.nexo.browser.ThemeManager
 import com.nexo.browser.Toastish
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
+import com.nexo.browser.extensions.ExtensionCompatibility
 import com.nexo.browser.extensions.ExtensionManifest
 import com.nexo.browser.extensions.ExtensionMessages
 import org.json.JSONArray
@@ -38,6 +39,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - `chrome.storage.local` aislado por extensión con cuota estricta.
  * - `chrome.runtime` (`id`, `getManifest`, `sendMessage`, `onMessage`) y `chrome.i18n`.
  * - Registro de errores por extensión y notificación transparente de APIs no soportadas.
+ * - Estado de ciclo de vida honesto: Descargada / Instalada / Habilitada / Funcionando.
  *
  * Limitaciones honestas documentadas:
  * - Los service workers MV3 persistentes, `debugger`, `proxy`, `webRequestBlocking` de
@@ -52,6 +54,12 @@ object NxrRuntime {
     private const val MAX_CALLS_PER_WINDOW = 30
 
     data class DiagnosticEntry(val timestampMs: Long, val source: String, val message: String)
+
+    data class RuntimeStats(
+        val injectionCount: Long = 0L,
+        val lastInjectedAtMs: Long = 0L,
+        val lastHost: String = ""
+    )
 
     internal data class CapabilityGrant(
         val token: String,
@@ -71,6 +79,7 @@ object NxrRuntime {
     @Volatile private var storage: NxrStorage? = null
     @Volatile private var shimSource: String? = null
     private val errors = ConcurrentHashMap<String, CopyOnWriteArrayList<DiagnosticEntry>>()
+    private val runtimeStatsMap = ConcurrentHashMap<String, RuntimeStats>()
     private val grants = ConcurrentHashMap<String, CapabilityGrant>()
     private val actionNonces = ConcurrentHashMap<Pair<Int, String>, Pair<Long, String>>()
     private val injectedStages = ConcurrentHashMap<Int, Pair<Long, MutableSet<String>>>()
@@ -105,6 +114,7 @@ object NxrRuntime {
         storage = NxrStorage(dir)
         shimSource = shim
         errors.clear()
+        runtimeStatsMap.clear()
         grants.clear()
         actionNonces.clear()
         injectedStages.clear()
@@ -138,13 +148,49 @@ object NxrRuntime {
         return NxrPermissions.readPolicy(NxrPackageInstaller.extensionDir(dir, extId))
     }
 
+    fun runtimeStats(extId: String): RuntimeStats? = runtimeStatsMap[extId]
+
+    internal fun recordInjection(extId: String, host: String, nowMs: Long = System.currentTimeMillis()) {
+        runtimeStatsMap.compute(extId) { _, prev ->
+            RuntimeStats(
+                injectionCount = (prev?.injectionCount ?: 0L) + 1L,
+                lastInjectedAtMs = nowMs,
+                lastHost = host
+            )
+        }
+    }
+
+    /**
+     * Devuelve el estado real y honesto del ciclo de vida de [extId]:
+     * - [ExtensionCompatibility.LifecycleState.DOWNLOADED] si no está instalada.
+     * - [ExtensionCompatibility.LifecycleState.INSTALLED] si está instalada pero desactivada.
+     * - [ExtensionCompatibility.LifecycleState.ENABLED] si está habilitada pero aún no ha inyectado código en esta sesión.
+     * - [ExtensionCompatibility.LifecycleState.RUNNING] solo cuando está habilitada y ha inyectado realmente CSS/JS en una pestaña.
+     */
+    fun lifecycleState(extId: String, context: Context? = null): ExtensionCompatibility.LifecycleState {
+        val dir = rootDir ?: context?.let { rootDirectory(it) } ?: return ExtensionCompatibility.LifecycleState.DOWNLOADED
+        val extDir = NxrPackageInstaller.extensionDir(dir, extId)
+        if (!extDir.isDirectory) return ExtensionCompatibility.LifecycleState.DOWNLOADED
+        val policy = NxrPermissions.readPolicy(extDir)
+        if (!policy.enabled) return ExtensionCompatibility.LifecycleState.INSTALLED
+        val stats = runtimeStatsMap[extId]
+        return if (stats != null && stats.injectionCount > 0L) {
+            ExtensionCompatibility.LifecycleState.RUNNING
+        } else {
+            ExtensionCompatibility.LifecycleState.ENABLED
+        }
+    }
+
     fun setEnabled(context: Context, extId: String, enabled: Boolean): Boolean {
         val dir = rootDirectory(context)
         val extDir = NxrPackageInstaller.extensionDir(dir, extId)
         if (!extDir.isDirectory) return false
         val updated = NxrPermissions.readPolicy(extDir).copy(enabled = enabled)
         NxrPermissions.writePolicy(extDir, updated)
-        if (!enabled) revokeGrantsForExtension(extId)
+        if (!enabled) {
+            revokeGrantsForExtension(extId)
+            runtimeStatsMap.remove(extId)
+        }
         return true
     }
 
@@ -185,6 +231,7 @@ object NxrRuntime {
         val dir = rootDirectory(context)
         revokeGrantsForExtension(extId)
         errors.remove(extId)
+        runtimeStatsMap.remove(extId)
         return NxrPackageInstaller.uninstall(dir, extId)
     }
 
@@ -338,12 +385,15 @@ object NxrRuntime {
                 .put("description", ext.description)
             val hasStoragePerm = "storage" in manifest.permissions
 
+            val host = NxrPermissions.extractHost(url)
             for ((idx, cs) in matching) {
                 if (!markStageInjected(sessionKey, docGen, "${ext.id}:${stage.name}:$idx")) continue
+                var injectedAny = false
                 for (cssPath in cs.css) {
                     val cssText = NxrPackageInstaller.readPackagedText(dir, ext.id, cssPath) ?: continue
                     val cssScript = buildCssInjectionScript(ext.id, cssPath, cssText)
                     session.evaluateInMainFrame(cssScript) {}
+                    injectedAny = true
                 }
                 if (cs.js.isNotEmpty()) {
                     val sources = cs.js.mapNotNull { path ->
@@ -371,8 +421,10 @@ object NxrRuntime {
                             scripts = sources
                         )
                         session.evaluateInMainFrame(jsBundle) {}
+                        injectedAny = true
                     }
                 }
+                if (injectedAny) recordInjection(ext.id, host)
             }
         }
     }
@@ -603,14 +655,60 @@ object NxrRuntime {
     }
 
     /** Hoja nativa de gestión y diagnóstico para una extensión instalada en NXR. */
-    fun showExtensionSheet(activity: Activity, extId: String, onChanged: () -> Unit = {}) {
+    fun showExtensionSheet(
+        activity: Activity,
+        extId: String,
+        onCheckUpdate: (() -> Unit)? = null,
+        onChanged: () -> Unit = {}
+    ) {
         val dir = rootDirectory(activity)
         val ext = NxrPackageInstaller.listInstalled(dir).firstOrNull { it.id == extId } ?: return
         val policy = NxrPermissions.readPolicy(NxrPackageInstaller.extensionDir(dir, ext.id))
+        val state = lifecycleState(ext.id, activity)
+        val stats = runtimeStats(ext.id)
         val activeTab = TabManager.activeTab()
         val activeHost = activeTab?.url?.takeIf { NxrPermissions.isWebHttpUrl(it) }?.let { NxrPermissions.extractHost(it) }
         lateinit var sheet: Dialog
         val body = NexoUi.column(activity)
+
+        // Estado real del ciclo de vida + firma criptográfica
+        val statusRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, NexoUi.dp(activity, 8f))
+        }
+        val stateTone = when (state) {
+            ExtensionCompatibility.LifecycleState.RUNNING -> NexoUi.Tone.SUCCESS
+            ExtensionCompatibility.LifecycleState.ENABLED -> NexoUi.Tone.INFO
+            ExtensionCompatibility.LifecycleState.INSTALLED -> NexoUi.Tone.NEUTRAL
+            ExtensionCompatibility.LifecycleState.DOWNLOADED -> NexoUi.Tone.WARNING
+        }
+        statusRow.addView(NexoUi.statusPill(activity, "Estado: ${state.label}", stateTone))
+        statusRow.addView(
+            NexoUi.statusPill(
+                activity,
+                if (ext.signatureVerified) "Firma CRX verificada" else "Sin firma CRX",
+                if (ext.signatureVerified) NexoUi.Tone.SUCCESS else NexoUi.Tone.WARNING
+            ),
+            LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = NexoUi.dp(activity, 8f) }
+        )
+        body.addView(statusRow)
+
+        if (stats != null && stats.injectionCount > 0L) {
+            val fmt = SimpleDateFormat("HH:mm:ss", Locale.US)
+            body.addView(NexoUi.note(
+                activity,
+                "Ejecuciones reales en esta sesión: ${stats.injectionCount} · Último sitio: ${stats.lastHost} (${fmt.format(Date(stats.lastInjectedAtMs))})"
+            ))
+        } else if (policy.enabled) {
+            body.addView(NexoUi.note(
+                activity,
+                "Habilitada y en espera: aún no se ha inyectado en ninguna página coincidente en esta sesión."
+            ))
+        }
 
         body.addView(NexoUi.switchRow(
             activity,
@@ -653,24 +751,44 @@ object NxrRuntime {
             }
         }
 
-        // Permisos y alcance real
-        body.addView(NexoUi.section(activity, "Permisos y compatibilidad"))
+        // Procedencia y verificación criptográfica
+        body.addView(NexoUi.section(activity, "Origen y verificación"))
+        val provenance = buildString {
+            appendLine("Fuente: ${ext.sourceInfo().originLabel()} · Formato: ${ext.sourceType} · Manifest V${ext.manifestVersion} · v${ext.version}")
+            if (!ext.developer.isNullOrBlank()) appendLine("Desarrollador: ${ext.developer}")
+            appendLine("ID: ${ext.id}")
+            if (!ext.publicKeySha256.isNullOrBlank()) {
+                append("Clave pública SHA-256: ${ext.publicKeySha256.take(16)}…${ext.publicKeySha256.takeLast(8)}")
+            } else {
+                append("Clave pública: paquete sin firma CRX (continuidad no aplicable).")
+            }
+        }.trim()
+        body.addView(NexoUi.note(activity, provenance))
+
+        // Permisos y alcance real (matriz de compatibilidad sobre Cefrium 0.21.0)
+        body.addView(NexoUi.section(activity, "Permisos y compatibilidad (Cefrium 0.21.0)"))
         val info = buildString {
-            appendLine("Formato: ${ext.sourceType} · Manifest V${ext.manifestVersion} · v${ext.version}")
             if (ext.hostPermissions.isNotEmpty()) {
                 appendLine("Sitios solicitados: ${ext.hostPermissions.take(6).joinToString(", ")}")
             }
             if (ext.permissions.isNotEmpty()) {
-                appendLine("Permisos: ${ext.permissions.joinToString(", ")}")
+                appendLine("Permisos declarados: ${ext.permissions.joinToString(", ")}")
             }
             if (ext.limitedApis.isNotEmpty()) {
-                appendLine("Con límites: ${ext.limitedApis.keys.joinToString(", ")}")
+                appendLine("Con límites: ${ext.limitedApis.entries.joinToString("; ") { "${it.key} (${it.value})" }}")
             }
             if (ext.unsupportedApis.isNotEmpty()) {
-                append("No soportado sobre Cefrium: ${ext.unsupportedApis.joinToString(", ")}")
+                append("No soportado en Cefrium: ${ext.unsupportedApis.joinToString(", ")}")
             }
-        }.trim()
+        }.trim().ifBlank { "Sin permisos privilegiados ni APIs restringidas." }
         body.addView(NexoUi.note(activity, info))
+
+        if (onCheckUpdate != null) {
+            body.addView(NexoUi.button(activity, "Buscar actualización", primary = false) {
+                sheet.dismiss()
+                onCheckUpdate()
+            }, NexoUi.buttonParams(activity, 8f))
+        }
 
         // Registro de errores recientes
         val logs = diagnostics(ext.id)

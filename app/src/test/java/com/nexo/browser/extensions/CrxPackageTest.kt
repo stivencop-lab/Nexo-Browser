@@ -80,6 +80,9 @@ class CrxPackageTest {
         val verified = CrxPackage.verify(file)
         assertEquals(3, verified.formatVersion)
         assertEquals(CrxPackage.extensionIdFor(rsa.public.encoded), verified.extensionId)
+        assertEquals(CrxPackage.sha256Hex(rsa.public.encoded), verified.publicKeySha256)
+        assertEquals(64, verified.publicKeySha256.length)
+        assertEquals(1, verified.signerCount)
         assertTrue(verified.extensionId.matches(Regex("[a-p]{32}")))
         assertTrue(CrxPackage.isCrx(file))
         val names = ZipInputStream(CrxPackage.openZip(file, verified)).use { input ->
@@ -91,6 +94,8 @@ class CrxPackageTest {
     @Test fun acceptsEcdsaDevelopersAndExtraPublisherProofs() {
         val verified = CrxPackage.verify(crx3(ec, extra = rsa))
         assertEquals(CrxPackage.extensionIdFor(ec.public.encoded), verified.extensionId)
+        assertEquals(2, verified.signerCount)
+        assertEquals(CrxPackage.sha256Hex(ec.public.encoded), verified.publicKeySha256)
     }
 
     @Test fun rejectsTamperedArchivesAndWrongIds() {
@@ -128,6 +133,21 @@ class CrxPackageTest {
         assertThrows(CrxPackage.InvalidCrxException::class.java) { CrxPackage.verify(forged) }
     }
 
+    @Test fun rejectsCrx3HeaderWithEmbeddedZipEocdPolyglot() {
+        val archive = zip()
+        val crxId = MessageDigest.getInstance("SHA-256").digest(rsa.public.encoded).copyOf(16)
+        val signedHeader = field(1, crxId)
+        // Incrusta la firma ZIP EOCD (PK\x05\x06) en un campo protobuf desconocido de la cabecera.
+        val eocdSmuggle = field(99, byteArrayOf(0x50, 0x4B, 0x05, 0x06, 0x00, 0x00))
+        val header = field(2, field(1, rsa.public.encoded) + field(2, sign("SHA256withRSA", rsa, signedHeader, archive))) +
+            eocdSmuggle + field(10000, signedHeader)
+        val polyglot = folder.newFile().apply {
+            writeBytes("Cr24".toByteArray() + CrxPackage.u32le(3) + CrxPackage.u32le(header.size.toLong()) + header + archive)
+        }
+        val err = assertThrows(CrxPackage.InvalidCrxException::class.java) { CrxPackage.verify(polyglot) }
+        assertTrue(err.message.orEmpty().contains("EOCD", ignoreCase = true))
+    }
+
     @Test fun verifiesLegacyCrx2() {
         val archive = zip()
         val signature = Signature.getInstance("SHA1withRSA").run { initSign(rsa.private); update(archive); sign() }
@@ -141,5 +161,6 @@ class CrxPackageTest {
         val verified = CrxPackage.verify(file)
         assertEquals(2, verified.formatVersion)
         assertEquals(CrxPackage.extensionIdFor(key), verified.extensionId)
+        assertEquals(CrxPackage.sha256Hex(key), verified.publicKeySha256)
     }
 }

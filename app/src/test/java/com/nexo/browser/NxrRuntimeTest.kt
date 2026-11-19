@@ -77,7 +77,7 @@ class NxrRuntimeTest {
         assertEquals(1, inspection.capabilities.runnableContentScripts)
         assertTrue(inspection.missingFiles.isEmpty())
 
-        val installed = NxrPackageInstaller.install(root, pkg, inspection.requestedHosts)
+        val installed = NxrPackageInstaller.install(root, pkg, inspection.requestedHosts, enableAfterInstall = true)
         assertEquals("sample@ext.test", installed.id)
         assertEquals(1, NxrPackageInstaller.listInstalled(root).size)
 
@@ -221,7 +221,7 @@ class NxrRuntimeTest {
                 "c.js" to "console.log(1);".toByteArray()
             )
         )
-        val installed = NxrPackageInstaller.install(root, noStoragePkg, listOf("https://example.com/*"))
+        val installed = NxrPackageInstaller.install(root, noStoragePkg, listOf("https://example.com/*"), enableAfterInstall = true)
         val sessionKey = 2002
         val grant = NxrRuntime.issueGrant(
             sessionKey = sessionKey,
@@ -403,5 +403,186 @@ class NxrRuntimeTest {
         assertFalse(NxrPermissions.isAuthorizedForUrl(policy, "about:blank", isPrivate = false))
         assertFalse(NxrPermissions.isAuthorizedForUrl(policy, "file:///etc/passwd", isPrivate = false))
         assertFalse(NxrPermissions.isAuthorizedForUrl(policy, "https://allowed.example/page", isPrivate = true))
+    }
+
+    private fun buildSignedCrx3(
+        name: String,
+        keyPair: java.security.KeyPair,
+        files: Map<String, ByteArray>
+    ): File {
+        val zipBytes = java.io.ByteArrayOutputStream().also { out ->
+            ZipOutputStream(out).use { zos ->
+                for ((k, v) in files) {
+                    zos.putNextEntry(ZipEntry(k))
+                    zos.write(v)
+                    zos.closeEntry()
+                }
+            }
+        }.toByteArray()
+        fun varint(value: Long): ByteArray {
+            val out = java.io.ByteArrayOutputStream()
+            var v = value
+            while (true) {
+                if (v and 0x7f.inv().toLong() == 0L) { out.write(v.toInt()); break }
+                out.write(((v and 0x7f) or 0x80).toInt())
+                v = v ushr 7
+            }
+            return out.toByteArray()
+        }
+        fun pb(num: Int, bytes: ByteArray): ByteArray =
+            varint((num.toLong() shl 3) or 2) + varint(bytes.size.toLong()) + bytes
+        val crxId = java.security.MessageDigest.getInstance("SHA-256").digest(keyPair.public.encoded).copyOf(16)
+        val signedHeader = pb(1, crxId)
+        val sig = java.security.Signature.getInstance("SHA256withRSA").run {
+            initSign(keyPair.private)
+            update("CRX3 SignedData\u0000".toByteArray(Charsets.US_ASCII))
+            update(com.nexo.browser.extensions.CrxPackage.u32le(signedHeader.size.toLong()))
+            update(signedHeader)
+            update(zipBytes)
+            sign()
+        }
+        val header = pb(2, pb(1, keyPair.public.encoded) + pb(2, sig)) + pb(10000, signedHeader)
+        return temp.newFile(name).apply {
+            writeBytes(
+                "Cr24".toByteArray() +
+                    com.nexo.browser.extensions.CrxPackage.u32le(3) +
+                    com.nexo.browser.extensions.CrxPackage.u32le(header.size.toLong()) +
+                    header + zipBytes
+            )
+        }
+    }
+
+    @Test
+    fun enforcesKeyContinuityAndBlocksUnsignedDowngradeOrKeySwap() {
+        val root = temp.newFolder("nxr_key_cont")
+        NxrRuntime.initializeForTest(root, "/* shim */")
+        val kpg = java.security.KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }
+        val devKey = kpg.generateKeyPair()
+        val attackerKey = kpg.generateKeyPair()
+        val devId = com.nexo.browser.extensions.CrxPackage.extensionIdFor(devKey.public.encoded)
+
+        val cleanManifestV1 = """
+            {
+              "manifest_version": 3,
+              "name": "Signed Tool",
+              "version": "1.0.0",
+              "permissions": ["storage"],
+              "host_permissions": ["https://example.com/*"],
+              "content_scripts": [{ "matches": ["https://example.com/*"], "js": ["c.js"], "world": "MAIN" }]
+            }
+        """.trimIndent()
+        val crxV1 = buildSignedCrx3("v1.crx", devKey, mapOf("manifest.json" to cleanManifestV1.toByteArray(), "c.js" to "void 0;".toByteArray()))
+        val installed = NxrPackageInstaller.install(
+            root,
+            crxV1,
+            sourceInfo = NxrPackageInstaller.SourceInfo(sourceOrigin = NxrPackageInstaller.ORIGIN_CHROME_WEB_STORE, storeId = devId)
+        )
+        assertEquals(devId, installed.id)
+        assertTrue(installed.signatureVerified)
+        assertEquals(com.nexo.browser.extensions.CrxPackage.sha256Hex(devKey.public.encoded), installed.publicKeySha256)
+        // Firmada, compatible completa y con host acotado -> activa por defecto
+        assertTrue(NxrPermissions.readPolicy(NxrPackageInstaller.extensionDir(root, devId)).enabled)
+
+        // Ataque 1: intentar degradar con un ZIP sin firma usando el mismo ID (vía gecko.id)
+        val unsignedSpoof = buildZip(
+            "unsigned_spoof.zip",
+            mapOf(
+                "manifest.json" to """
+                    {
+                      "manifest_version": 3,
+                      "name": "Spoofed Unsigned",
+                      "version": "9.9.9",
+                      "browser_specific_settings": { "gecko": { "id": "$devId" } },
+                      "content_scripts": [{ "matches": ["https://example.com/*"], "js": ["c.js"] }]
+                    }
+                """.trimIndent().toByteArray(),
+                "c.js" to "evil();".toByteArray()
+            )
+        )
+        val unsignedErr = runCatching { NxrPackageInstaller.install(root, unsignedSpoof) }.exceptionOrNull()
+        assertNotNull("Unsigned downgrade must be blocked", unsignedErr)
+        assertTrue(unsignedErr!!.message!!.contains("sin firma", ignoreCase = true))
+
+        // Ataque 2: intentar sobrescribir pasando expectedId con otra clave criptográfica
+        val attackerCrx = buildSignedCrx3("attacker.crx", attackerKey, mapOf("manifest.json" to cleanManifestV1.toByteArray(), "c.js" to "evil();".toByteArray()))
+        val keySwapErr = runCatching { NxrPackageInstaller.install(root, attackerCrx, expectedId = devId) }.exceptionOrNull()
+        assertNotNull("Key mismatch must be blocked", keySwapErr)
+
+        // Actualización legítima firmada por la misma clave -> éxito y conserva procedencia
+        val cleanManifestV2 = cleanManifestV1.replace("1.0.0", "2.0.0")
+        val crxV2 = buildSignedCrx3("v2.crx", devKey, mapOf("manifest.json" to cleanManifestV2.toByteArray(), "c.js" to "void 2;".toByteArray()))
+        val updated = NxrPackageInstaller.install(root, crxV2, expectedId = devId)
+        assertEquals("2.0.0", updated.version)
+        assertEquals(NxrPackageInstaller.ORIGIN_CHROME_WEB_STORE, updated.sourceOrigin)
+    }
+
+    @Test
+    fun defaultsToDisabledForUnsignedBroadHostAndUnsupportedPackages() {
+        val root = temp.newFolder("nxr_safe_defaults")
+        NxrRuntime.initializeForTest(root, "/* shim */")
+        val kpg = java.security.KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }
+        val key = kpg.generateKeyPair()
+
+        // 1) ZIP sin firma -> desactivada por defecto
+        val unsignedZip = buildZip(
+            "local.zip",
+            mapOf("manifest.json" to sampleManifest(geckoId = "unsigned@test").toByteArray(), "content.js" to "void 0;".toByteArray(), "style.css" to "body{}".toByteArray())
+        )
+        val unsignedInsp = NxrPackageInstaller.inspect(unsignedZip)
+        assertFalse(unsignedInsp.recommendedEnabled)
+        assertEquals(ExtensionCompatibility.InstallVerdict.UNVERIFIABLE, unsignedInsp.installVerdict)
+        val unsignedInst = NxrPackageInstaller.install(root, unsignedZip)
+        assertFalse(NxrPermissions.readPolicy(NxrPackageInstaller.extensionDir(root, unsignedInst.id)).enabled)
+
+        // 2) CRX firmada pero con <all_urls> -> desactivada por defecto hasta confirmación explícita
+        val broadCrx = buildSignedCrx3(
+            "broad.crx",
+            key,
+            mapOf(
+                "manifest.json" to """
+                    {
+                      "manifest_version": 3,
+                      "name": "Broad Ext",
+                      "version": "1.0",
+                      "content_scripts": [{ "matches": ["<all_urls>"], "js": ["c.js"], "world": "MAIN" }]
+                    }
+                """.trimIndent().toByteArray(),
+                "c.js" to "void 0;".toByteArray()
+            )
+        )
+        val broadInsp = NxrPackageInstaller.inspect(broadCrx)
+        assertFalse(broadInsp.recommendedEnabled)
+        assertTrue(broadInsp.capabilities.hasBroadHostAccess)
+        val broadInst = NxrPackageInstaller.install(root, broadCrx)
+        assertFalse(NxrPermissions.readPolicy(NxrPackageInstaller.extensionDir(root, broadInst.id)).enabled)
+    }
+
+    @Test
+    fun tracksHonestFourStateLifecycle() {
+        val root = temp.newFolder("nxr_lifecycle")
+        NxrRuntime.initializeForTest(root, "/* shim */")
+        assertEquals(ExtensionCompatibility.LifecycleState.DOWNLOADED, NxrRuntime.lifecycleState("sample@ext.test"))
+
+        val pkg = buildZip(
+            "life.zip",
+            mapOf(
+                "manifest.json" to sampleManifest().toByteArray(),
+                "content.js" to "void 0;".toByteArray(),
+                "style.css" to "body{}".toByteArray()
+            )
+        )
+        // Instalada desactivada por defecto -> INSTALLED
+        val inst = NxrPackageInstaller.install(root, pkg)
+        assertEquals(ExtensionCompatibility.LifecycleState.INSTALLED, NxrRuntime.lifecycleState(inst.id))
+
+        // Habilitada sin inyecciones aún -> ENABLED
+        NxrPermissions.writePolicy(NxrPackageInstaller.extensionDir(root, inst.id), NxrPermissions.Policy(enabled = true))
+        assertEquals(ExtensionCompatibility.LifecycleState.ENABLED, NxrRuntime.lifecycleState(inst.id))
+
+        // Tras inyección real -> RUNNING
+        NxrRuntime.recordInjection(inst.id, "example.com", 123456L)
+        assertEquals(ExtensionCompatibility.LifecycleState.RUNNING, NxrRuntime.lifecycleState(inst.id))
+        assertEquals(1L, NxrRuntime.runtimeStats(inst.id)?.injectionCount)
+        assertEquals("example.com", NxrRuntime.runtimeStats(inst.id)?.lastHost)
     }
 }
