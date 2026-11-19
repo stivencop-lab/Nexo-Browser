@@ -130,7 +130,8 @@ object NexoAiSheet {
         resultCard.addView(usageText)
         resultCard.addView(actionsBox)
 
-        val cancelBtn = NexoUi.button(activity, "Cancelar solicitud", danger = true) {
+        lateinit var cancelBtn: View
+        cancelBtn = NexoUi.button(activity, "Cancelar solicitud", danger = true) {
             requestGen++
             activeCancel?.cancel()
             activeCancel = null
