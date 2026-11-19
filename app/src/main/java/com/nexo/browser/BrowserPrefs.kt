@@ -228,6 +228,14 @@ object BrowserPrefs {
     /** Deslizar la barra inferior: a los lados cambia de pestaña, hacia arriba abre el selector. */
     fun dockGestures(c: Context) = p(c).getBoolean("dock_gestures", true)
     fun setDockGestures(c: Context, v: Boolean) = p(c).edit().putBoolean("dock_gestures", v).apply()
+    /** Modo de barra de navegación adaptable: classic, compact o custom. */
+    fun navMode(c: Context) = p(c).getString("nav_mode", NavConfig.Mode.CLASSIC.id) ?: NavConfig.Mode.CLASSIC.id
+    fun setNavMode(c: Context, v: String) = p(c).edit().putString("nav_mode", v).apply()
+    fun navActions(c: Context) = p(c).getString("nav_actions", NavConfig.serializeActions(NavConfig.DEFAULT_ACTIONS))
+        ?: NavConfig.serializeActions(NavConfig.DEFAULT_ACTIONS)
+    fun setNavActions(c: Context, v: String) = p(c).edit().putString("nav_actions", v).apply()
+    fun autoHideBars(c: Context) = p(c).getBoolean("auto_hide_bars", true)
+    fun setAutoHideBars(c: Context, v: Boolean) = p(c).edit().putBoolean("auto_hide_bars", v).apply()
     /** Repartir archivos grandes en varias conexiones (si el servidor lo admite). */
     fun parallelDownloads(c: Context) = p(c).getBoolean("parallel_downloads", true)
     fun setParallelDownloads(c: Context, v: Boolean) = p(c).edit().putBoolean("parallel_downloads", v).apply()

@@ -63,6 +63,11 @@ class MainActivity :
     private lateinit var tabButton: Button
     private lateinit var backButton: ImageButton
     private lateinit var forwardButton: ImageButton
+    private lateinit var compactBackButton: ImageButton
+    private lateinit var homeButton: ImageButton
+    private lateinit var reloadButton: ImageButton
+    private lateinit var newTabButton: ImageButton
+    private lateinit var browserDock: GestureDock
     private lateinit var clearOmniboxButton: Button
     private lateinit var privateBanner: TextView
     private lateinit var miniPlayerButton: Button
@@ -79,13 +84,24 @@ class MainActivity :
      */
     private var pipCrop: Rect? = null
     private lateinit var topBar: View
-    private lateinit var navBar: View
+    private lateinit var navBar: LinearLayout
     private lateinit var viewModel: BrowserViewModel
     private var attachedSession: EngineSession? = null
     private var settingsFingerprint = ""
     private var themeKey = ""
     private var mediaNotificationPermissionAsked = false
     private var suppressAutoPipOnce = false
+    private var imeVisible = false
+    private var dockScrollHidden = false
+    private var lastDockToggleMs = 0L
+    private var backCallbackRegistered = false
+    private val predictiveBackCallback: Any? by lazy {
+        if (Build.VERSION.SDK_INT >= 33) {
+            android.window.OnBackInvokedCallback {
+                if (!handleBackNavigation()) finish()
+            }
+        } else null
+    }
 
     // Estado capturado ANTES de que Android/YouTube cambien
     // la Activity de foreground a PiP/background.
@@ -206,6 +222,9 @@ class MainActivity :
         ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val wasIme = imeVisible
+            imeVisible = ime > 0
+            if (imeVisible && !wasIme) setDockScrollHidden(false)
             view.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, ime))
             WindowInsetsCompat.Builder(insets)
                 .setInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE)
@@ -230,6 +249,7 @@ class MainActivity :
         root = findViewById(R.id.rootView)
         topBar = findViewById(R.id.topBar)
         navBar = findViewById(R.id.navBar)
+        browserDock = findViewById(R.id.browserDock)
         pageView = installPageView()
         engineView = pageView as EngineView
         browserFrame = findViewById(R.id.browserFrame)
@@ -269,6 +289,10 @@ class MainActivity :
         tabButton = findViewById(R.id.tabButton)
         backButton = findViewById(R.id.backButton)
         forwardButton = findViewById(R.id.forwardButton)
+        compactBackButton = findViewById(R.id.compactBackButton)
+        homeButton = findViewById(R.id.homeButton)
+        reloadButton = findViewById(R.id.reloadButton)
+        newTabButton = findViewById(R.id.newTabButton)
         clearOmniboxButton = findViewById(R.id.clearOmniboxButton)
         privateBanner = findViewById(R.id.privateBanner)
         miniPlayerButton = findViewById(R.id.miniPlayerButton)
@@ -281,7 +305,7 @@ class MainActivity :
 
     private fun configureUi() {
         findViewById<TextView>(R.id.brandText).setOnClickListener { viewModel.goHome() }
-        findViewById<ImageButton>(R.id.reloadButton).apply {
+        reloadButton.apply {
             setOnClickListener { TabManager.reload() }
             // Mantener pulsado: recarga completa, sin caché.
             setOnLongClickListener {
@@ -291,9 +315,10 @@ class MainActivity :
             }
         }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
+        compactBackButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
-        findViewById<ImageButton>(R.id.homeButton).setOnClickListener { viewModel.goHome() }
-        findViewById<ImageButton>(R.id.newTabButton).apply {
+        homeButton.setOnClickListener { viewModel.goHome() }
+        newTabButton.apply {
             setOnClickListener { viewModel.newTab(false) }
             // Mantener pulsado: pestaña privada.
             setOnLongClickListener { viewModel.newTab(true); true }
@@ -301,13 +326,34 @@ class MainActivity :
         tabButton.setOnClickListener { showTabsDialog() }
         tabButton.setOnLongClickListener { showTabQuickMenu(); true }
         // Gestos de la barra: a los lados cambia de pestaña, hacia arriba abre el selector.
-        findViewById<GestureDock>(R.id.browserDock).apply {
+        browserDock.apply {
             gesturesEnabled = {
                 BrowserPrefs.dockGestures(this@MainActivity) && !omnibox.hasFocus() && !fullScreenActive && !isInPictureInPictureMode
             }
             onSwipeTab = { offset -> switchAdjacentTab(offset) }
             onSwipeUp = { showTabsDialog() }
         }
+        PageBridge.onScrollDirection = { session, scrollingDown, scrollY ->
+            if (session === attachedSession) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    val hide = NavConfig.shouldAutoHideDock(
+                        mode = NavConfig.mode(this),
+                        autoHideEnabled = BrowserPrefs.autoHideBars(this),
+                        scrollingDown = scrollingDown,
+                        scrollY = scrollY,
+                        isStartPage = startPage.visibility == View.VISIBLE,
+                        omniboxFocused = omnibox.hasFocus(),
+                        findBarVisible = findBar.visibility == View.VISIBLE,
+                        imeVisible = imeVisible,
+                        fullScreen = fullScreenActive,
+                        isPip = isInPictureInPictureMode
+                    )
+                    setDockScrollHidden(hide)
+                }
+            }
+        }
+        applyNavigationMode()
         findViewById<ImageButton>(R.id.tabToolsButton).apply {
             setOnClickListener { TabTools.show(this@MainActivity) }
             // Pulsación larga: el buzón de la identidad actual. Nunca crea una identidad nueva por accidente.
@@ -365,6 +411,7 @@ class MainActivity :
         omnibox.setOnFocusChangeListener { _, focused ->
             val tab = TabManager.activeTab()
             if (focused) {
+                setDockScrollHidden(false)
                 // Al editar se muestra la URL completa, seleccionada.
                 tab?.takeUnless { BrowserPrefs.isNexoHome(it.url) }?.let { omnibox.setText(it.url) }
                 omnibox.selectAll()
@@ -376,6 +423,7 @@ class MainActivity :
                 suggestions.hide()
                 tab?.let { renderOmnibox(it) }
             }
+            syncPredictiveBack()
         }
 
         findInput.addTextChangedListener(object : TextWatcher {
@@ -401,12 +449,14 @@ class MainActivity :
             Toast.makeText(this, "Abre una página para buscar en ella", Toast.LENGTH_SHORT).show()
             return
         }
+        setDockScrollHidden(false)
         findBar.visibility = View.VISIBLE
         findCount.text = ""
         findInput.requestFocus()
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .showSoftInput(findInput, 0)
         if (!findInput.text.isNullOrEmpty()) findInPage(restart = true)
+        syncPredictiveBack()
     }
 
     private fun hideFindBar() {
@@ -416,6 +466,7 @@ class MainActivity :
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(findInput.windowToken, 0)
         findInput.clearFocus()
+        syncPredictiveBack()
     }
 
     private fun findInPage(backwards: Boolean = false, restart: Boolean = false) {
@@ -725,6 +776,9 @@ class MainActivity :
         if (current != null) actions += SheetAction(R.drawable.ic_menu_close, "Cerrar esta pestaña", danger = true) {
             TabManager.closeTab(current.id)
         }
+        actions += SheetAction(R.drawable.ic_menu_settings, "Personalizar barra de navegación") {
+            NavCustomizerSheet.show(this) { applyNavigationMode() }
+        }
         sheet = NexoSheets.show(this, NexoSheets.column(this,
             NexoSheets.header(this, "Pestañas", "Desliza la barra inferior para cambiar de pestaña"),
             NexoSheets.list(this, actions, dismiss)))
@@ -973,7 +1027,7 @@ class MainActivity :
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
         root.setBackgroundColor(p.background)
-        findViewById<View>(R.id.browserDock).apply {
+        browserDock.apply {
             background = ThemeManager.rounded(this@MainActivity, p.surface, 28f, p.outline)
             elevation = if (p.isDark) 0f else 4f * resources.displayMetrics.density
         }
@@ -982,7 +1036,8 @@ class MainActivity :
         browserFrame.applyPalette(p.surface, p.accent, p.outlineVariant)
         pageView.setBackgroundColor(p.background)
         ThemeManager.styleEdit(this, omnibox)
-        ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
+        ThemeManager.styleIconButton(this, compactBackButton)
+        ThemeManager.styleIconButton(this, findViewById(R.id.tabToolsButton), TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
         styleMiniPlayerChip()
         ThemeManager.styleTabCounter(this, tabButton)
         ThemeManager.styleFlatButton(this, findViewById(R.id.menuButton))
@@ -991,9 +1046,9 @@ class MainActivity :
         listOf(
             backButton,
             forwardButton,
-            findViewById<ImageButton>(R.id.homeButton),
-            findViewById<ImageButton>(R.id.reloadButton),
-            findViewById<ImageButton>(R.id.newTabButton)
+            homeButton,
+            reloadButton,
+            newTabButton
         ).forEach { ThemeManager.styleIconButton(this, it) }
 
         findBar.background = ThemeManager.barBackground(this, lineOnTop = false)
@@ -1008,8 +1063,130 @@ class MainActivity :
         progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
         progress.progressBackgroundTintList =
             android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+        applyNavigationMode()
         settingsFingerprint = fingerprint()
         themeKey = ThemeManager.themeKey(this)
+    }
+
+    /** Aplica el modo de navegación elegido (Clásico, Compacto o Personalizado) sin perder los controles esenciales. */
+    private fun applyNavigationMode() {
+        val mode = NavConfig.mode(this)
+        val hideChrome = immersive
+        compactBackButton.visibility = if (mode == NavConfig.Mode.COMPACT && !hideChrome) View.VISIBLE else View.GONE
+        compactBackButton.isEnabled = TabManager.canGoBackOrPrevious()
+        compactBackButton.alpha = if (compactBackButton.isEnabled) 1f else 0.45f
+
+        val targetActions = when (mode) {
+            NavConfig.Mode.CLASSIC -> NavConfig.DEFAULT_ACTIONS
+            NavConfig.Mode.CUSTOM -> NavConfig.actions(this)
+            NavConfig.Mode.COMPACT -> emptyList()
+        }
+
+        if (mode == NavConfig.Mode.COMPACT) {
+            dockScrollHidden = false
+            browserDock.animate().cancel()
+            browserDock.translationY = 0f
+            browserDock.alpha = 1f
+            browserDock.visibility = View.GONE
+            return
+        }
+
+        navBar.removeAllViews()
+        val touchTarget = resources.getDimensionPixelSize(R.dimen.touch_target)
+        targetActions.forEach { action ->
+            val btn = when (action) {
+                NavConfig.Action.BACK -> backButton
+                NavConfig.Action.FORWARD -> forwardButton
+                NavConfig.Action.HOME -> homeButton
+                NavConfig.Action.RELOAD -> reloadButton
+                NavConfig.Action.NEW_TAB -> newTabButton
+                else -> ImageButton(this).apply {
+                    setImageResource(NavConfig.iconFor(action))
+                    contentDescription = action.label
+                    scaleType = ImageView.ScaleType.CENTER
+                    setOnClickListener { executeNavAction(action) }
+                }
+            }
+            (btn.parent as? android.view.ViewGroup)?.removeView(btn)
+            ThemeManager.styleIconButton(this, btn)
+            navBar.addView(btn, LinearLayout.LayoutParams(0, touchTarget, 1f))
+        }
+        backButton.isEnabled = TabManager.canGoBackOrPrevious()
+        backButton.alpha = if (backButton.isEnabled) 1f else 0.45f
+        forwardButton.isEnabled = TabManager.activeTab()?.canGoForward == true
+        forwardButton.alpha = if (forwardButton.isEnabled) 1f else 0.45f
+
+        if (hideChrome) {
+            browserDock.visibility = View.GONE
+        } else if (!dockScrollHidden) {
+            browserDock.visibility = View.VISIBLE
+            browserDock.alpha = 1f
+            browserDock.translationY = 0f
+        }
+    }
+
+    private fun executeNavAction(action: NavConfig.Action) {
+        when (action) {
+            NavConfig.Action.BACK -> TabManager.goBackOrPrevious()
+            NavConfig.Action.FORWARD -> TabManager.goForward()
+            NavConfig.Action.HOME -> viewModel.goHome()
+            NavConfig.Action.RELOAD -> TabManager.reload()
+            NavConfig.Action.NEW_TAB -> viewModel.newTab(false)
+            NavConfig.Action.HISTORY -> openScreen(HistoryActivity::class.java)
+            NavConfig.Action.DOWNLOADS -> openScreen(DownloadsActivity::class.java)
+            NavConfig.Action.AI -> com.nexo.browser.ai.NexoAiSheet.show(this)
+            NavConfig.Action.SHIELD -> openShieldPanel()
+            NavConfig.Action.EXTENSIONS -> openScreen(ExtensionsActivity::class.java)
+        }
+    }
+
+    /** Ocultación inteligente y suave del dock inferior al desplazarse (respeta reducción de movimiento). */
+    private fun setDockScrollHidden(hide: Boolean) {
+        if (NavConfig.mode(this) == NavConfig.Mode.COMPACT || immersive) return
+        if (dockScrollHidden == hide) return
+        val now = android.os.SystemClock.uptimeMillis()
+        // Al ocultar aplica histéresis breve para evitar parpadeos; al mostrar responde al instante.
+        if (hide && now - lastDockToggleMs < 350L) return
+        lastDockToggleMs = now
+        dockScrollHidden = hide
+
+        val duration = NexoUi.animDuration(this, 160L)
+        browserDock.animate().cancel()
+        if (hide) {
+            if (duration == 0L) {
+                browserDock.visibility = View.GONE
+                browserDock.translationY = 0f
+                browserDock.alpha = 1f
+            } else {
+                val shift = NexoUi.dp(this, 24f).toFloat()
+                browserDock.animate()
+                    .translationY(shift)
+                    .alpha(0f)
+                    .setDuration(duration)
+                    .withEndAction {
+                        if (dockScrollHidden) {
+                            browserDock.visibility = View.GONE
+                            browserDock.translationY = 0f
+                            browserDock.alpha = 1f
+                        }
+                    }
+                    .start()
+            }
+        } else {
+            browserDock.visibility = View.VISIBLE
+            if (duration == 0L) {
+                browserDock.translationY = 0f
+                browserDock.alpha = 1f
+            } else {
+                browserDock.translationY = NexoUi.dp(this, 20f).toFloat()
+                browserDock.alpha = 0f
+                browserDock.animate()
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(duration)
+                    .start()
+            }
+        }
     }
 
     private fun fingerprint(): String =
@@ -1021,7 +1198,9 @@ class MainActivity :
             BrowserPrefs.dnsProvider(this), BrowserPrefs.cookieMode(this),
             BrowserPrefs.httpsOnly(this).toString(), BrowserPrefs.globalPrivacyControl(this).toString(),
             BrowserPrefs.smartPip(this).toString(), BrowserPrefs.backgroundMedia(this).toString(),
-            BrowserPrefs.captionsEnabled(this).toString()
+            BrowserPrefs.captionsEnabled(this).toString(),
+            BrowserPrefs.navMode(this), BrowserPrefs.navActions(this),
+            BrowserPrefs.autoHideBars(this).toString()
         ).joinToString("|")
 
     /*
@@ -1092,6 +1271,7 @@ class MainActivity :
     override fun onActiveTabChanged(tab: BrowserTab, session: EngineSession) {
         if (attachedSession !== session) {
             hideFindBar()
+            setDockScrollHidden(false)
             // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
             attachedSession?.let { LiveCaptions.stop(it) }
             // Un permiso pedido desde otra pestaña no se concede desde esta.
@@ -1112,6 +1292,7 @@ class MainActivity :
     override fun onFullScreenChanged(tab: BrowserTab, fullScreen: Boolean) {
         fullScreenActive = fullScreen
         applyChromeVisibility()
+        syncPredictiveBack()
     }
 
     private val immersive: Boolean
@@ -1125,10 +1306,18 @@ class MainActivity :
         val pip = forcePip || isInPictureInPictureMode
         val hideChrome = pip || fullScreenActive
         val tab = TabManager.activeTab()
+        val compact = NavConfig.mode(this) == NavConfig.Mode.COMPACT
 
-        findViewById<View>(R.id.browserDock).visibility = if (hideChrome) View.GONE else View.VISIBLE
+        if (hideChrome) {
+            browserDock.animate().cancel()
+            browserDock.visibility = View.GONE
+            navBar.visibility = View.GONE
+        } else {
+            navBar.visibility = View.VISIBLE
+            browserDock.visibility = if (compact || dockScrollHidden) View.GONE else View.VISIBLE
+        }
+        compactBackButton.visibility = if (!hideChrome && compact) View.VISIBLE else View.GONE
         topBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
-        navBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
         privateBanner.visibility =
             if (!hideChrome && tab?.isPrivate == true) View.VISIBLE else View.GONE
         progress.visibility =
@@ -1223,6 +1412,7 @@ class MainActivity :
     private fun updateStartPage(tab: BrowserTab) {
         val show = BrowserPrefs.isNexoHome(tab.url) && !immersive
         if (show) {
+            setDockScrollHidden(false)
             // Re-dibujar solo si cambió la pestaña, el tema o la privacidad.
             val key = tab.id + "|" + tab.isPrivate + "|" + ThemeManager.themeKey(this)
             if (key != startPageKey || startPage.visibility != View.VISIBLE) {
@@ -1268,15 +1458,21 @@ class MainActivity :
         } else "Navegación privada"
         privateBanner.isClickable = tab.burnerId != null
         privateBanner.contentDescription = if (tab.burnerId != null) "Abrir el buzón de esta identidad Burner" else null
-        ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),tab.burnerId != null || tab.networkProfile != null)
+        ThemeManager.styleIconButton(this, findViewById(R.id.tabToolsButton), tab.burnerId != null || tab.networkProfile != null)
         if (!omnibox.hasFocus()) renderOmnibox(tab)
         updateStartPage(tab)
-        backButton.isEnabled = TabManager.canGoBackOrPrevious()
+        val canBack = TabManager.canGoBackOrPrevious()
+        backButton.isEnabled = canBack
+        backButton.alpha = if (canBack) 1f else 0.45f
+        compactBackButton.isEnabled = canBack
+        compactBackButton.alpha = if (canBack) 1f else 0.45f
         forwardButton.isEnabled = tab.canGoForward
+        forwardButton.alpha = if (tab.canGoForward) 1f else 0.45f
         privateBanner.visibility =
             if (!immersive && tab.isPrivate) View.VISIBLE else View.GONE
         title = if (tab.isPrivate) "Navegación privada" else tab.title
         updateMiniPlayerChip()
+        syncPredictiveBack()
     }
 
     override fun onStart() {
@@ -1968,6 +2164,8 @@ class MainActivity :
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
+        PageBridge.onScrollDirection = null
+        unregisterPredictiveBack()
         PerfLog.detach(this)
         fullscreenMediaOverlay?.detach()
         pendingPipEntry?.let { pageView.removeCallbacks(it) }
@@ -1996,15 +2194,66 @@ class MainActivity :
         super.onDestroy()
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
+    private fun canInterceptBack(): Boolean =
+        findBar.visibility == View.VISIBLE ||
+            omnibox.hasFocus() ||
+            fullScreenActive ||
+            TabManager.canGoBackOrPrevious()
+
+    /**
+     * Predictive Back (Android 13+): registra el callback solo cuando Nexo tiene
+     * una acción interna pendiente; en la raíz de la pestaña lo suelta para que
+     * Android muestre la animación nativa de regreso al inicio.
+     */
+    private fun syncPredictiveBack() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val cb = predictiveBackCallback as? android.window.OnBackInvokedCallback ?: return
+        val shouldRegister = canInterceptBack()
+        if (shouldRegister && !backCallbackRegistered) {
+            runCatching {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    cb
+                )
+                backCallbackRegistered = true
+            }
+        } else if (!shouldRegister && backCallbackRegistered) {
+            unregisterPredictiveBack()
+        }
+    }
+
+    private fun unregisterPredictiveBack() {
+        if (Build.VERSION.SDK_INT < 33 || !backCallbackRegistered) return
+        val cb = predictiveBackCallback as? android.window.OnBackInvokedCallback ?: return
+        runCatching { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cb) }
+        backCallbackRegistered = false
+    }
+
+    private fun handleBackNavigation(): Boolean {
         if (findBar.visibility == View.VISIBLE) {
             hideFindBar()
-            return
+            return true
         }
-        if (TabManager.exitFullScreen()) return
-        if (TabManager.canGoBackOrPrevious()) TabManager.goBackOrPrevious()
-        else super.onBackPressed()
+        if (omnibox.hasFocus()) {
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(omnibox.windowToken, 0)
+            omnibox.clearFocus()
+            return true
+        }
+        if (TabManager.exitFullScreen()) return true
+        if (TabManager.canGoBackOrPrevious()) {
+            TabManager.goBackOrPrevious()
+            return true
+        }
+        return false
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!handleBackNavigation()) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
     }
 
     companion object {

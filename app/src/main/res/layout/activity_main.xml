@@ -194,10 +194,19 @@
             android:visibility="gone" />
 
         <ImageButton
+            android:id="@+id/compactBackButton"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
+            android:contentDescription="@string/back"
+            android:scaleType="center"
+            android:src="@drawable/ic_nav_back"
+            android:visibility="gone" />
+
+        <ImageButton
             android:id="@+id/tabToolsButton"
             android:layout_width="@dimen/touch_target"
             android:layout_height="@dimen/touch_target"
-            android:contentDescription="Red, grupos e identidad Burner de esta pestaña"
+            android:contentDescription="Control del sitio, permisos, red e identidad Burner"
             android:src="@drawable/ic_tab_tools"
             android:scaleType="center" />
 
