@@ -132,20 +132,36 @@ object NexoSheets {
         return dialog
     }
 
-    /** Encabezado de hoja: título y subtítulo opcionales. */
-    fun header(activity: Activity, title: String, subtitle: String? = null): View {
+    /** Encabezado de hoja: título, subtítulo y píldora de estado opcionales. */
+    fun header(
+        activity: Activity,
+        title: String,
+        subtitle: String? = null,
+        badge: String? = null,
+        badgeTone: NexoUi.Tone = NexoUi.Tone.ACCENT
+    ): View {
         val p = ThemeManager.palette(activity)
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(activity, 24f), dp(activity, 4f), dp(activity, 24f), dp(activity, 12f))
-            addView(TextView(activity).apply {
+            val topRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            topRow.addView(TextView(activity).apply {
                 text = title
-                textSize = 17f
+                textSize = 17.5f
                 setTextColor(p.text)
                 typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-            })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (!badge.isNullOrBlank()) {
+                topRow.addView(NexoUi.statusPill(activity, badge, badgeTone), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { marginStart = dp(activity, 8f) })
+            }
+            addView(topRow)
             if (!subtitle.isNullOrBlank()) {
                 addView(TextView(activity).apply {
                     text = subtitle

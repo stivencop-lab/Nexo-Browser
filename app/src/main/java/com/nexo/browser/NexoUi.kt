@@ -1,16 +1,21 @@
 package com.nexo.browser
 
 import android.app.Activity
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.provider.Settings
+import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.HorizontalScrollView
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Switch
@@ -18,13 +23,35 @@ import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 
 /**
- * Piezas comunes de las hojas inferiores (herramientas de pestaña, grupos,
- * Burner, DNS): todas usan dp, la paleta del tema y esquinas redondeadas,
- * para que lo nuevo se vea igual que el resto de Nexo.
+ * Piezas comunes de Nexo Flow 3.0 (hojas inferiores, tarjetas, píldoras de estado,
+ * estados vacíos, barras de búsqueda y controles): todas usan dp, la paleta del tema
+ * y radios coherentes.
  */
 object NexoUi {
+    /** Tono semántico unificado para insignias, estados y métricas. */
+    enum class Tone { NEUTRAL, ACCENT, SUCCESS, WARNING, DANGER, INFO }
+
     fun dp(activity: Activity, value: Float): Int =
         (value * activity.resources.displayMetrics.density).toInt()
+
+    /** Respeta la preferencia del sistema para reducir o desactivar animaciones. */
+    fun reducedMotion(context: Context): Boolean = runCatching {
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    }.getOrDefault(false)
+
+    /** Devuelve 0 ms si el usuario desactivó animaciones en el sistema. */
+    fun animDuration(context: Context, baseMs: Long): Long =
+        if (reducedMotion(context)) 0L else baseMs
+
+    /** Devuelve (fondo contenedor, color de texto) con contraste AA/AAA garantizado. */
+    fun toneColors(p: BrowserPalette, tone: Tone): Pair<Int, Int> = when (tone) {
+        Tone.NEUTRAL -> p.surfaceContainerHighest to p.text
+        Tone.ACCENT -> p.primary.container to p.primary.onContainer
+        Tone.SUCCESS -> p.success.container to p.success.onContainer
+        Tone.WARNING -> p.warning.container to p.warning.onContainer
+        Tone.DANGER -> p.error.container to p.error.onContainer
+        Tone.INFO -> p.info.container to p.info.onContainer
+    }
 
     private fun bold(activity: Activity): Typeface =
         Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
@@ -59,6 +86,168 @@ object NexoUi {
             setTextColor(p.muted)
             setPadding(dp(activity, 4f), dp(activity, 6f), dp(activity, 4f), dp(activity, 4f))
         }
+    }
+
+    /** Separador fino de 1dp respetando el contorno de la paleta. */
+    fun divider(activity: Activity, horizontalMarginDp: Float = 16f): View =
+        View(activity).apply {
+            setBackgroundColor(ThemeManager.palette(activity).outlineVariant)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(activity, 1f).coerceAtLeast(1)
+            ).apply {
+                marginStart = dp(activity, horizontalMarginDp)
+                marginEnd = dp(activity, horizontalMarginDp)
+            }
+        }
+
+    /** Píldora compacta de estado semántico (p. ej. "HTTPS", "Activa", "Duplicada ×2"). */
+    fun statusPill(activity: Activity, label: String, tone: Tone = Tone.NEUTRAL): TextView {
+        val p = ThemeManager.palette(activity)
+        val (bg, fg) = toneColors(p, tone)
+        return TextView(activity).apply {
+            text = label
+            textSize = 11.5f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            typeface = bold(activity)
+            setTextColor(fg)
+            gravity = Gravity.CENTER
+            setPadding(dp(activity, 9f), dp(activity, 3f), dp(activity, 9f), dp(activity, 3f))
+            background = ThemeManager.rounded(activity, bg, 10f)
+        }
+    }
+
+    /** Tarjeta compacta de métrica (valor destacado + etiqueta). */
+    fun metricTile(activity: Activity, value: String, label: String, tone: Tone = Tone.NEUTRAL): LinearLayout {
+        val p = ThemeManager.palette(activity)
+        val (bg, fg) = toneColors(p, tone)
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = ThemeManager.rounded(activity, bg, 14f, p.outlineVariant)
+            setPadding(dp(activity, 10f), dp(activity, 10f), dp(activity, 10f), dp(activity, 10f))
+            addView(TextView(activity).apply {
+                text = value
+                textSize = 17f
+                typeface = bold(activity)
+                fontFeatureSettings = "tnum"
+                setTextColor(fg)
+                maxLines = 1
+            })
+            addView(TextView(activity).apply {
+                text = label
+                textSize = 11f
+                setTextColor(fg)
+                alpha = 0.85f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(activity, 2f), 0, 0)
+            })
+        }
+    }
+
+    /** Estado vacío o de error coherente con icono en burbuja, título, subtítulo y CTA opcional. */
+    fun emptyState(
+        activity: Activity,
+        icon: Int,
+        title: String,
+        subtitle: String,
+        actionLabel: String? = null,
+        onAction: (() -> Unit)? = null
+    ): LinearLayout {
+        val p = ThemeManager.palette(activity)
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(activity, 28f), dp(activity, 36f), dp(activity, 28f), dp(activity, 36f))
+            addView(ImageView(activity).apply {
+                setImageResource(icon)
+                imageTintList = ColorStateList.valueOf(p.onAccentSoft)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                setPadding(dp(activity, 15f), dp(activity, 15f), dp(activity, 15f), dp(activity, 15f))
+                background = ThemeManager.rounded(activity, p.accentSoft, 20f)
+            }, LinearLayout.LayoutParams(dp(activity, 56f), dp(activity, 56f)).apply {
+                bottomMargin = dp(activity, 14f)
+            })
+            addView(TextView(activity).apply {
+                text = title
+                textSize = 16.5f
+                typeface = bold(activity)
+                gravity = Gravity.CENTER
+                setTextColor(p.text)
+            })
+            addView(TextView(activity).apply {
+                text = subtitle
+                textSize = 13.5f
+                gravity = Gravity.CENTER
+                setLineSpacing(0f, 1.22f)
+                setTextColor(p.muted)
+                setPadding(0, dp(activity, 6f), 0, 0)
+            })
+            if (!actionLabel.isNullOrBlank() && onAction != null) {
+                addView(button(activity, actionLabel, primary = true) { onAction() }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(activity, 18f) })
+            }
+        }
+    }
+
+    /** Barra de búsqueda tipo píldora con icono y botón de limpieza instantánea. */
+    fun searchBar(
+        activity: Activity,
+        hint: String,
+        initial: String = "",
+        onTextChanged: (String) -> Unit
+    ): Pair<LinearLayout, EditText> {
+        val p = ThemeManager.palette(activity)
+        val container = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(activity, 48f)
+            background = ThemeManager.rounded(activity, p.elevated, 24f, p.outlineVariant)
+            setPadding(dp(activity, 14f), 0, dp(activity, 6f), 0)
+        }
+        container.addView(ImageView(activity).apply {
+            setImageResource(R.drawable.ic_search)
+            imageTintList = ColorStateList.valueOf(p.muted)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(activity, 18f), dp(activity, 18f)).apply {
+            marginEnd = dp(activity, 10f)
+        })
+        lateinit var clearBtn: ImageButton
+        val edit = EditText(activity).apply {
+            this.hint = hint
+            setText(initial)
+            setSingleLine(true)
+            textSize = 14.5f
+            background = null
+            setTextColor(p.text)
+            setHintTextColor(p.muted)
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_FILTER
+            minHeight = dp(activity, 48f)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(s: Editable?) {
+                    val value = s?.toString().orEmpty()
+                    clearBtn.visibility = if (value.isEmpty()) View.GONE else View.VISIBLE
+                    onTextChanged(value)
+                }
+            })
+        }
+        clearBtn = ImageButton(activity).apply {
+            setImageResource(R.drawable.ic_menu_close)
+            contentDescription = "Limpiar búsqueda"
+            visibility = if (initial.isEmpty()) View.GONE else View.VISIBLE
+            ThemeManager.styleIconButton(activity, this)
+            setOnClickListener { edit.setText("") }
+        }
+        container.addView(edit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        container.addView(clearBtn, LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f)))
+        return container to edit
     }
 
     /** Tarjeta: superficie elevada redondeada con borde fino. */
