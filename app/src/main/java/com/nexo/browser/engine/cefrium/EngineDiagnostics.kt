@@ -31,8 +31,22 @@ object EngineDiagnostics {
     private val surfaceRebinds = java.util.concurrent.atomic.AtomicLong(0)
     private val bridgeMessages = java.util.concurrent.atomic.AtomicLong(0)
     private val bridgeRejected = java.util.concurrent.atomic.AtomicLong(0)
+    private val totalLoadMs = java.util.concurrent.atomic.AtomicLong(0)
+    private val completedLoads = java.util.concurrent.atomic.AtomicLong(0)
+    @Volatile internal var lastLoadMs: Long = -1L
+        private set
 
     internal fun recordDocumentLoad() { documentLoads.incrementAndGet() }
+    internal fun recordLoadDuration(durationMs: Long) {
+        if (durationMs < 0L || durationMs > 300_000L) return
+        lastLoadMs = durationMs
+        totalLoadMs.addAndGet(durationMs)
+        completedLoads.incrementAndGet()
+    }
+    internal fun averageLoadMs(): Long {
+        val count = completedLoads.get()
+        return if (count > 0L) totalLoadMs.get() / count else -1L
+    }
     internal fun recordRendererExit(isKill: Boolean) {
         if (isKill) rendererKills.incrementAndGet() else rendererCrashes.incrementAndGet()
     }
@@ -41,10 +55,13 @@ object EngineDiagnostics {
         if (accepted) bridgeMessages.incrementAndGet() else bridgeRejected.incrementAndGet()
     }
 
-    fun countersSummary(): String =
-        "cargas=${documentLoads.get()} · rebinds=${surfaceRebinds.get()} · " +
+    fun countersSummary(): String {
+        val avg = averageLoadMs()
+        val timing = if (lastLoadMs >= 0L) " · última=${lastLoadMs}ms (media=${avg}ms)" else ""
+        return "cargas=${documentLoads.get()}$timing · rebinds=${surfaceRebinds.get()} · " +
             "kills=${rendererKills.get()} · crashes=${rendererCrashes.get()} · " +
             "bridge=${bridgeMessages.get()} (rechazados=${bridgeRejected.get()})"
+    }
 
     /** Evento del motor: al registro de Android (NexoEngine) y al diagnóstico de la app. */
     fun log(message: String, error: Throwable? = null) {
