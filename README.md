@@ -6,7 +6,7 @@
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
-Nexo Browser es un navegador Android nativo en **Kotlin/XML** con Chromium embebido (Cefrium), sistema de diseño unificado (**Nexo Flow 3.0**), buscador universal (**Nexo Command**), organización avanzada de pestañas (**Nexo Tabs Pro**), panel unificado por sitio (**Nexo Site Control**), tienda/gestor de extensiones Chromium (**Nexo Extension Hub** sobre **NXR**), modo lectura con voz alta y guardado offline (**Nexo Reader**), favoritos y espacios de trabajo (**Nexo Workspace**), bloqueo integrado (**PhantomShield**), reproductor multimedia (**Nexo Media Engine**), modo oscuro temprano (**Nexo Dark Engine**), asistente opcional (**Nexo AI**), subtítulos en vivo y traducción completa en el DOM.
+Nexo Browser es un navegador Android nativo en **Kotlin/XML** con Chromium embebido (Cefrium), sistema de diseño unificado (**Nexo Flow 3.0**), buscador universal (**Nexo Command**), organización avanzada de pestañas (**Nexo Tabs Pro**), panel unificado por sitio (**Nexo Site Control**), tienda/gestor de extensiones Chromium (**Nexo Extension Hub** sobre **NXR**), modo lectura con voz alta y guardado offline (**Nexo Reader**), favoritos y espacios de trabajo (**Nexo Workspace**), bloqueo integrado (**PhantomShield**), reproductor multimedia (**Nexo Media Engine**), modo oscuro temprano (**Nexo Dark Engine**), asistente opcional (**Nexo AI**, con botón permanente ✨ en la barra y asistente contextual por dominio), subtítulos en vivo y traducción completa en el DOM.
 
 Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a Chromium nativo](docs/CHROMIUM-NATIVE-MIGRATION.md)). Desde `0.25.0`, el identificador Android es `com.nexo.browser` (ver [cambio de identidad](docs/IDENTIDAD-NEXO.md)).
 
@@ -155,6 +155,8 @@ Para publicar un APK firmado: *Actions → Nexo Secure CI and Release → Run wo
 
 ## Documentación técnica
 
+- **Evolución V4 (Nexo Flow 4.0 — botón ✨ de Nexo AI, asistente contextual y rediseño del inicio):**
+  - [Implementación Nexo Flow 4.0](docs/NEXO-FLOW-V4-IMPLEMENTATION.md)
 - **Evolución V3 (Nexo Flow 3.0, Extension Hub y mejoras):**
   - [Sistema de diseño Nexo Flow 3.0](docs/NEXO-FLOW-V3-DESIGN.md)
   - [Arquitectura, seguridad y matriz real de Nexo Extension Hub](docs/NEXO-EXTENSION-HUB.md)

@@ -246,11 +246,49 @@ class StartPageView(
             imageTintList = if (isPrivate) ColorStateList.valueOf(p.onAccentSoft) else null
             background = if (isPrivate) ThemeManager.rounded(activity, p.accentSoft, 16f, p.outlineVariant) else null
 
-        }, params(dp(64f), dp(64f)).apply { topMargin = dp(28f); bottomMargin = dp(16f) })
-        content.addView(text(if (isPrivate) "Navegación privada" else "Nexo", 34f, p.text, true).apply { gravity = Gravity.START })
-        content.addView(text(if (isPrivate) "Un espacio separado para navegar" else "Navegación rápida, privacidad bajo tu control", 12f, p.muted).apply {
-            gravity = Gravity.START; setPadding(0, dp(6f), 0, dp(20f))
+        }, params(dp(56f), dp(56f)).apply { topMargin = dp(22f); bottomMargin = dp(12f) })
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val greeting = when {
+            hour < 6 -> "Buenas noches"
+            hour < 13 -> "Buenos días"
+            hour < 20 -> "Buenas tardes"
+            else -> "Buenas noches"
+        }
+        content.addView(text(if (isPrivate) "Navegación privada" else greeting, 34f, p.text, true).apply { gravity = Gravity.START })
+        content.addView(text(if (isPrivate) "Un espacio separado para navegar" else "Nexo Flow · navega con tu IA a un toque", 12f, p.muted).apply {
+            gravity = Gravity.START; setPadding(0, dp(6f), 0, dp(16f))
         }, params())
+        if (!isPrivate) {
+            content.addView(LinearLayout(activity).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14f), dp(12f), dp(14f), dp(12f))
+                background = ThemeManager.ripple(
+                    activity,
+                    ThemeManager.rounded(activity, p.accentSoft, 18f, p.outlineVariant),
+                    18f
+                )
+                isClickable = true; isFocusable = true
+                contentDescription = "Pregúntale a Nexo AI sobre esta página o tus pestañas"
+                setOnClickListener { onAction("ai") }
+                addView(ImageView(activity).apply {
+                    setImageResource(R.drawable.ic_nexo_ai_spark)
+                    imageTintList = ColorStateList.valueOf(p.accent)
+                }, params(dp(22f), dp(22f)).apply { marginEnd = dp(12f) })
+                addView(LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(text("Pregúntale a Nexo AI ✨", 13.5f, p.text, true))
+                    addView(text("Resume, traduce o pregunta sobre lo que lees", 11f, p.muted).apply {
+                        maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                        setPadding(0, dp(2f), 0, 0)
+                    })
+                }, params(0).apply { weight = 1f })
+                addView(ImageView(activity).apply {
+                    setImageResource(R.drawable.ic_nav_chevron)
+                    imageTintList = ColorStateList.valueOf(p.onAccentSoft)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, params(dp(18f), dp(18f)).apply { marginStart = dp(8f) })
+            }, params().apply { bottomMargin = dp(16f) })
+        }
         if (isPrivate) {
             content.addView(text("Estas pestañas no se guardan en el historial ni en las miniaturas. Sus cookies se eliminan al cerrar todas las pestañas privadas. Los archivos que descargues permanecen guardados. Tu proveedor de internet y los sitios que visitas pueden seguir viendo tu actividad.", 14f, p.muted).apply {
                 setLineSpacing(0f, 1.2f); setPadding(dp(4f), dp(16f), dp(4f), dp(16f))
