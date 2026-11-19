@@ -13,6 +13,14 @@ function nexoCefriumPort(isTop, options) {
   'use strict';
   const query = globalThis.cefriumQuery;
   if (typeof query !== 'function') return false;
+  // Congelar cefriumQuery en document_start impide que scripts de la página la reemplacen para espiar tokens NXR.
+  try {
+    Object.defineProperty(globalThis, 'cefriumQuery', {
+      value: query,
+      writable: false,
+      configurable: false
+    });
+  } catch (_) {}
   const alwaysPoll = Boolean(options && options.alwaysPoll);
   const pollMs = options && typeof options.pollMs === 'number' && options.pollMs > 0
     ? options.pollMs

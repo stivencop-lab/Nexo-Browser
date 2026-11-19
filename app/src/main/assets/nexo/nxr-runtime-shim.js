@@ -18,6 +18,9 @@ function createNxrScope(config) {
   const queryFn = (config && typeof config.query === 'function')
     ? config.query
     : (typeof globalThis.cefriumQuery === 'function' ? globalThis.cefriumQuery : null);
+  const jsonStringify = JSON.stringify;
+  const jsonParse = JSON.parse;
+  const MAX_ENVELOPE_CHARS = 32 * 1024;
 
   let nextCallId = 1;
   const messageListeners = [];
@@ -29,19 +32,29 @@ function createNxrScope(config) {
         return;
       }
       const id = nextCallId++;
-      const envelope = JSON.stringify({
-        id: id,
-        kind: kind,
-        payload: Object.assign({}, payload || {}, { extId: extId, token: token })
-      });
+      let envelope;
+      try {
+        envelope = jsonStringify({
+          id: id,
+          kind: kind,
+          payload: Object.assign({}, payload || {}, { extId: extId, token: token })
+        });
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      if (envelope.length > MAX_ENVELOPE_CHARS) {
+        reject(new Error('Mensaje NXR demasiado grande.'));
+        return;
+      }
       try {
         queryFn({
-          request: JSON.stringify({ m: envelope, s: -1 }),
+          request: jsonStringify({ m: envelope, s: -1 }),
           onSuccess: function(raw) {
             try {
-              const parsed = typeof raw === 'string' && raw ? JSON.parse(raw) : null;
+              const parsed = typeof raw === 'string' && raw ? jsonParse(raw) : null;
               const replyText = parsed && typeof parsed.reply === 'string' ? parsed.reply : null;
-              const reply = replyText ? JSON.parse(replyText) : null;
+              const reply = replyText ? jsonParse(replyText) : null;
               if (reply && reply.error) {
                 reject(new Error(String(reply.error)));
               } else {

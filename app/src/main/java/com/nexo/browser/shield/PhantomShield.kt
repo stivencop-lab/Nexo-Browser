@@ -569,7 +569,8 @@ object PhantomShield {
         if (call.kind == "nxr_storage" || call.kind == "nxr_message" || call.kind == "nxr_error") {
             if (session == null) return answer(call.id, null, "Sesión no disponible.")
             val reply = com.nexo.browser.extensions.nxr.NxrRuntime.onPageMessage(
-                sessionToken = session.nxrToken,
+                sessionKey = System.identityHashCode(session),
+                docGen = session.documentGeneration(),
                 isPrivate = session.isPrivate,
                 origin = origin,
                 isMainFrame = isMainFrame,

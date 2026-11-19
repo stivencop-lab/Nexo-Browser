@@ -47,18 +47,47 @@ object NxrRuntime {
     private const val SHIM_ASSET = "nexo/nxr-runtime-shim.js"
     private const val ROOT_FOLDER = "nxr_extensions"
     private const val MAX_ERRORS_PER_EXT = 25
+    private const val MAX_PAYLOAD_BYTES = 32 * 1024
+    private const val RATE_WINDOW_MS = 10_000L
+    private const val MAX_CALLS_PER_WINDOW = 30
 
     data class DiagnosticEntry(val timestampMs: Long, val source: String, val message: String)
+
+    internal data class CapabilityGrant(
+        val token: String,
+        val sessionKey: Int,
+        val extId: String,
+        val originHost: String,
+        val docGen: Long,
+        val isPrivate: Boolean,
+        val hasStoragePermission: Boolean
+    )
+
+    private class RateWindow {
+        val timestamps = ArrayDeque<Long>()
+    }
 
     @Volatile private var rootDir: File? = null
     @Volatile private var storage: NxrStorage? = null
     @Volatile private var shimSource: String? = null
     private val errors = ConcurrentHashMap<String, CopyOnWriteArrayList<DiagnosticEntry>>()
+    private val grants = ConcurrentHashMap<String, CapabilityGrant>()
+    private val actionNonces = ConcurrentHashMap<Pair<Int, String>, Pair<Long, String>>()
+    private val injectedStages = ConcurrentHashMap<Int, Pair<Long, MutableSet<String>>>()
+    private val rateWindows = ConcurrentHashMap<Pair<Int, String>, RateWindow>()
+    private val random = java.security.SecureRandom()
     private val main by lazy { Handler(Looper.getMainLooper()) }
+
+    private fun nextSecretHex(bytes: Int = 32): String {
+        val buf = ByteArray(bytes)
+        random.nextBytes(buf)
+        return buf.joinToString("") { "%02x".format(it) }
+    }
 
     fun initialize(context: Context) {
         val dir = File(context.applicationContext.filesDir, ROOT_FOLDER)
         dir.mkdirs()
+        NxrPackageInstaller.cleanupOrphanDirs(dir)
         rootDir = dir
         storage = NxrStorage(dir)
         if (shimSource == null) {
@@ -71,15 +100,21 @@ object NxrRuntime {
     /** Inicializa con un directorio personalizado (usado en pruebas JVM). */
     internal fun initializeForTest(dir: File, shim: String) {
         dir.mkdirs()
+        NxrPackageInstaller.cleanupOrphanDirs(dir)
         rootDir = dir
         storage = NxrStorage(dir)
         shimSource = shim
         errors.clear()
+        grants.clear()
+        actionNonces.clear()
+        injectedStages.clear()
+        rateWindows.clear()
     }
 
     fun rootDirectory(context: Context): File {
         return rootDir ?: File(context.applicationContext.filesDir, ROOT_FOLDER).also {
             it.mkdirs()
+            NxrPackageInstaller.cleanupOrphanDirs(it)
             rootDir = it
             if (storage == null) storage = NxrStorage(it)
         }
@@ -109,6 +144,7 @@ object NxrRuntime {
         if (!extDir.isDirectory) return false
         val updated = NxrPermissions.readPolicy(extDir).copy(enabled = enabled)
         NxrPermissions.writePolicy(extDir, updated)
+        if (!enabled) revokeGrantsForExtension(extId)
         return true
     }
 
@@ -118,6 +154,7 @@ object NxrRuntime {
         if (!extDir.isDirectory) return false
         val updated = NxrPermissions.readPolicy(extDir).copy(allowInPrivate = allow)
         NxrPermissions.writePolicy(extDir, updated)
+        if (!allow) revokeGrantsForExtension(extId, onlyPrivate = true)
         return true
     }
 
@@ -140,13 +177,74 @@ object NxrRuntime {
             )
         }
         NxrPermissions.writePolicy(extDir, next)
+        if (!allowed) revokeGrantsForExtension(extId, originHost = normalized)
         return true
     }
 
     fun uninstall(context: Context, extId: String): Boolean {
         val dir = rootDirectory(context)
+        revokeGrantsForExtension(extId)
         errors.remove(extId)
         return NxrPackageInstaller.uninstall(dir, extId)
+    }
+
+    /** Revoca inmediatamente las capacidades activas de [extId] (total, privadas o de un host). */
+    internal fun revokeGrantsForExtension(
+        extId: String,
+        originHost: String? = null,
+        onlyPrivate: Boolean = false
+    ) {
+        val cleanHost = originHost?.lowercase()?.removePrefix("www.")?.trim()
+        val it = grants.entries.iterator()
+        while (it.hasNext()) {
+            val g = it.next().value
+            if (g.extId != extId) continue
+            if (onlyPrivate && !g.isPrivate) continue
+            if (cleanHost != null && g.originHost != cleanHost) continue
+            it.remove()
+        }
+        if (cleanHost == null && !onlyPrivate) {
+            actionNonces.keys.removeIf { it.second == extId }
+        }
+    }
+
+    /** Emite un token de capacidad efímero ligado estrictamente a `(sessionKey, extId, originHost, docGen)`. */
+    internal fun issueGrant(
+        sessionKey: Int,
+        extId: String,
+        url: String,
+        docGen: Long,
+        isPrivate: Boolean,
+        hasStoragePermission: Boolean
+    ): CapabilityGrant {
+        val host = NxrPermissions.extractHost(url)
+        val token = nextSecretHex(32)
+        val grant = CapabilityGrant(
+            token = token,
+            sessionKey = sessionKey,
+            extId = extId,
+            originHost = host,
+            docGen = docGen,
+            isPrivate = isPrivate,
+            hasStoragePermission = hasStoragePermission
+        )
+        grants[token] = grant
+        return grant
+    }
+
+    internal fun onNewDocument(session: CefriumEngineSession) {
+        clearSessionGrants(System.identityHashCode(session))
+    }
+
+    internal fun forgetSession(session: CefriumEngineSession) {
+        clearSessionGrants(System.identityHashCode(session))
+    }
+
+    internal fun clearSessionGrants(sessionKey: Int) {
+        grants.entries.removeIf { it.value.sessionKey == sessionKey }
+        actionNonces.keys.removeIf { it.first == sessionKey }
+        injectedStages.remove(sessionKey)
+        rateWindows.keys.removeIf { it.first == sessionKey }
     }
 
     fun loadIcon(context: Context, extId: String, maxSizePx: Int): Bitmap? {
@@ -167,6 +265,12 @@ object NxrRuntime {
 
     fun diagnostics(extId: String): List<DiagnosticEntry> = errors[extId]?.toList() ?: emptyList()
 
+    fun diagnosticsSummary(): String {
+        val count = rootDir?.let { NxrPackageInstaller.listInstalled(it).size } ?: 0
+        val totalErrors = errors.values.sumOf { it.size }
+        return "instaladas=$count · grants=${grants.size} · errores=$totalErrors"
+    }
+
     fun clearDiagnostics(extId: String) {
         errors.remove(extId)
     }
@@ -183,32 +287,46 @@ object NxrRuntime {
 
     fun onDocumentAvailable(session: CefriumEngineSession, url: String?) {
         if (url.isNullOrBlank()) return
-        injectForStage(session, url, setOf(ExtensionManifest.RunAt.DOCUMENT_START, ExtensionManifest.RunAt.DOCUMENT_END))
+        // Orden estricto: primero document_start y después document_end, deduplicados por generación.
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START)
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END)
     }
 
     fun onDocumentIdle(session: CefriumEngineSession, url: String?) {
         if (url.isNullOrBlank()) return
-        injectForStage(session, url, setOf(ExtensionManifest.RunAt.DOCUMENT_IDLE))
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_IDLE)
+    }
+
+    /** Marca `(sessionKey, docGen, marker)` como inyectado; devuelve false si ya se ejecutó en este documento. */
+    internal fun markStageInjected(sessionKey: Int, docGen: Long, marker: String): Boolean {
+        val current = injectedStages.compute(sessionKey) { _, prev ->
+            if (prev == null || prev.first != docGen) {
+                docGen to java.util.Collections.synchronizedSet(HashSet())
+            } else prev
+        } ?: return false
+        return current.second.add(marker)
     }
 
     private fun injectForStage(
         session: CefriumEngineSession,
         url: String,
-        stages: Set<ExtensionManifest.RunAt>
+        stage: ExtensionManifest.RunAt
     ) {
         val dir = rootDir ?: return
         val shim = shimSource ?: return
         if (!NxrPermissions.isWebHttpUrl(url)) return
         val installed = NxrPackageInstaller.listInstalled(dir)
         if (installed.isEmpty()) return
+        val sessionKey = System.identityHashCode(session)
+        val docGen = session.documentGeneration()
 
         for (ext in installed) {
             val extDir = NxrPackageInstaller.extensionDir(dir, ext.id)
             val policy = NxrPermissions.readPolicy(extDir)
             if (!NxrPermissions.isAuthorizedForUrl(policy, url, session.isPrivate)) continue
             val manifest = NxrPackageInstaller.readManifest(dir, ext.id) ?: continue
-            val matching = manifest.contentScripts.filter { cs ->
-                cs.runAt in stages && cs.matcher.matches(url)
+            val matching = manifest.contentScripts.mapIndexedNotNull { idx, cs ->
+                if (cs.runAt == stage && cs.matcher.matches(url)) idx to cs else null
             }
             if (matching.isEmpty()) continue
 
@@ -218,8 +336,10 @@ object NxrRuntime {
                 .put("name", ext.name)
                 .put("version", manifest.version)
                 .put("description", ext.description)
+            val hasStoragePerm = "storage" in manifest.permissions
 
-            for (cs in matching) {
+            for ((idx, cs) in matching) {
+                if (!markStageInjected(sessionKey, docGen, "${ext.id}:${stage.name}:$idx")) continue
                 for (cssPath in cs.css) {
                     val cssText = NxrPackageInstaller.readPackagedText(dir, ext.id, cssPath) ?: continue
                     val cssScript = buildCssInjectionScript(ext.id, cssPath, cssText)
@@ -230,10 +350,22 @@ object NxrRuntime {
                         NxrPackageInstaller.readPackagedText(dir, ext.id, path)?.let { path to it }
                     }
                     if (sources.isNotEmpty()) {
+                        val grant = issueGrant(
+                            sessionKey = sessionKey,
+                            extId = ext.id,
+                            url = url,
+                            docGen = docGen,
+                            isPrivate = session.isPrivate,
+                            hasStoragePermission = hasStoragePerm
+                        )
+                        val actionNonce = actionNonces.compute(sessionKey to ext.id) { _, prev ->
+                            if (prev != null && prev.first == docGen) prev else docGen to nextSecretHex(16)
+                        }!!.second
                         val jsBundle = buildJsBundleScript(
                             shim = shim,
                             extId = ext.id,
-                            token = session.nxrToken,
+                            token = grant.token,
+                            actionNonce = actionNonce,
                             manifestSummary = manifestSummary,
                             localeMap = localeMap,
                             scripts = sources
@@ -265,12 +397,15 @@ object NxrRuntime {
 
     /**
      * Envuelve los content scripts de una extensión en un cierre estricto con `chrome`/`browser`
-     * acotado al token de la sesión. No usa `eval()` ni expone APIs nativas del navegador.
+     * acotado al token efímero de capacidad. Nunca escribe tokens ni tablas en `window`.
+     * Las acciones del usuario se despachan mediante un `CustomEvent` con [actionNonce] independiente
+     * del token de capacidad.
      */
     internal fun buildJsBundleScript(
         shim: String,
         extId: String,
         token: String,
+        actionNonce: String,
         manifestSummary: JSONObject,
         localeMap: JSONObject,
         scripts: List<Pair<String, String>>
@@ -285,9 +420,10 @@ object NxrRuntime {
             .append(",messages:").append(localeMap.toString())
             .append("});\n")
         sb.append("var chrome = __scope.chrome; var browser = __scope.browser;\n")
-        // Registro privado de despacho de acciones autenticado por token+extId.
-        sb.append("if(!window.__nxrDispatch){try{Object.defineProperty(window,'__nxrDispatch',{value:Object.create(null),enumerable:false,configurable:false});}catch(_){}}\n")
-        sb.append("try{window.__nxrDispatch[").append(JSONObject.quote("$token:$extId")).append("]=__scope.dispatchIncoming;}catch(_){}\n")
+        // Canal de acciones independiente del token de capacidad (cero propiedades en window).
+        sb.append("if(typeof window!=='undefined'&&typeof window.addEventListener==='function'){")
+            .append("window.addEventListener(").append(JSONObject.quote("nxr-act:$actionNonce"))
+            .append(",function(ev){try{if(ev&&ev.detail)__scope.dispatchIncoming(ev.detail);}catch(_){}});}\n")
         for ((path, code) in scripts) {
             sb.append("try{\n")
                 .append("(function(chrome,browser){\n")
@@ -334,12 +470,26 @@ object NxrRuntime {
 
     data class MessageReply(val result: Any? = null, val error: String? = null)
 
+    private fun checkRateLimit(sessionKey: Int, extId: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val win = rateWindows.getOrPut(sessionKey to extId) { RateWindow() }
+        synchronized(win) {
+            while (win.timestamps.isNotEmpty() && nowMs - win.timestamps.first() > RATE_WINDOW_MS) {
+                win.timestamps.removeFirst()
+            }
+            if (win.timestamps.size >= MAX_CALLS_PER_WINDOW) return false
+            win.timestamps.addLast(nowMs)
+            return true
+        }
+    }
+
     /**
      * Valida y ejecuta un mensaje `nxr_storage`, `nxr_message` o `nxr_error`.
-     * Requiere marco principal, token de sesión válido y autorización de origen.
+     * Requiere marco principal, token de capacidad efímero válido para `(sessionKey, extId, originHost, docGen)`,
+     * límite de tamaño y tasa, autorización vigente de origen y permiso `"storage"` cuando aplica.
      */
     fun onPageMessage(
-        sessionToken: String,
+        sessionKey: Int,
+        docGen: Long,
         isPrivate: Boolean,
         origin: String,
         isMainFrame: Boolean,
@@ -347,22 +497,46 @@ object NxrRuntime {
         payload: JSONObject?
     ): MessageReply {
         if (!isMainFrame || payload == null) return MessageReply(error = "Contexto no autorizado.")
-        val token = payload.optString("token")
-        if (token.isEmpty() || token != sessionToken) {
-            return MessageReply(error = "Token NXR no válido.")
+        if (payload.toString().toByteArray(Charsets.UTF_8).size > MAX_PAYLOAD_BYTES) {
+            return MessageReply(error = "Carga útil NXR demasiado grande.")
         }
+        val token = payload.optString("token")
+        if (token.isEmpty()) return MessageReply(error = "Token NXR no válido.")
+        val grant = grants[token] ?: return MessageReply(error = "Token NXR no válido o revocado.")
+
         val extId = payload.optString("extId").takeIf { it.isNotBlank() }
             ?: return MessageReply(error = "Extensión no especificada.")
+        val originHost = NxrPermissions.extractHost(origin)
+        if (grant.sessionKey != sessionKey ||
+            grant.docGen != docGen ||
+            grant.extId != extId ||
+            grant.isPrivate != isPrivate ||
+            grant.originHost != originHost
+        ) {
+            return MessageReply(error = "Capacidad NXR no coincide con el contexto actual.")
+        }
+
         val dir = rootDir ?: return MessageReply(error = "NXR no inicializado.")
         val extDir = NxrPackageInstaller.extensionDir(dir, extId)
         if (!extDir.isDirectory) return MessageReply(error = "Extensión no instalada.")
         val policy = NxrPermissions.readPolicy(extDir)
         if (!NxrPermissions.isAuthorizedForUrl(policy, origin, isPrivate)) {
+            grants.remove(token)
             return MessageReply(error = "Sin permiso para este origen.")
+        }
+        if (!checkRateLimit(sessionKey, extId)) {
+            recordError(extId, "rate_limit", "Demasiadas llamadas NXR en ${RATE_WINDOW_MS / 1000} s.")
+            return MessageReply(error = "Límite de frecuencia NXR excedido.")
         }
 
         return when (kind) {
-            "nxr_storage" -> handleStorage(extId, payload)
+            "nxr_storage" -> {
+                if (!grant.hasStoragePermission) {
+                    recordError(extId, "storage.local", "Permiso 'storage' no declarado en manifest.json.")
+                    return MessageReply(error = "La extensión no declara el permiso 'storage'.")
+                }
+                handleStorage(extId, grant.originHost, payload)
+            }
             "nxr_error" -> {
                 recordError(extId, payload.optString("source", "script"), payload.optString("message", "Error"))
                 MessageReply(result = true)
@@ -380,23 +554,23 @@ object NxrRuntime {
         }
     }
 
-    private fun handleStorage(extId: String, payload: JSONObject): MessageReply {
+    private fun handleStorage(extId: String, originHost: String, payload: JSONObject): MessageReply {
         val store = storage ?: return MessageReply(error = "Almacenamiento NXR no inicializado.")
         return runCatching {
             when (payload.optString("op")) {
-                "get" -> MessageReply(result = store.get(extId, payload.opt("keys")))
+                "get" -> MessageReply(result = store.get(extId, payload.opt("keys"), originHost))
                 "set" -> {
                     val values = payload.optJSONObject("values")
                         ?: return MessageReply(error = "Se esperaba un objeto en storage.local.set.")
-                    store.set(extId, values)
+                    store.set(extId, values, originHost)
                     MessageReply(result = true)
                 }
                 "remove" -> {
-                    store.remove(extId, payload.opt("keys"))
+                    store.remove(extId, payload.opt("keys"), originHost)
                     MessageReply(result = true)
                 }
                 "clear" -> {
-                    store.clear(extId)
+                    store.clear(extId, originHost)
                     MessageReply(result = true)
                 }
                 else -> MessageReply(error = "Operación de almacenamiento no válida.")
@@ -407,19 +581,23 @@ object NxrRuntime {
         }
     }
 
-    /** Envía un evento de acción al content script de [extId] en la pestaña activa. */
+    /** Envía un evento de acción al content script de [extId] en la pestaña activa mediante `CustomEvent` efímero. */
     fun dispatchActionToActiveTab(extId: String): Boolean {
         val tab = TabManager.activeTab() ?: return false
         val session = tab.session as? CefriumEngineSession ?: return false
         val policy = policyFor(extId)
         if (!NxrPermissions.isAuthorizedForUrl(policy, tab.url, tab.isPrivate)) return false
-        val key = JSONObject.quote("${session.nxrToken}:$extId")
+        val sessionKey = System.identityHashCode(session)
+        val docGen = session.documentGeneration()
+        val slot = actionNonces[sessionKey to extId] ?: return false
+        if (slot.first != docGen) return false
+        val eventName = JSONObject.quote("nxr-act:${slot.second}")
         val payload = JSONObject()
             .put("type", "NXR_ACTION_CLICKED")
             .put("url", tab.url)
             .put("title", tab.title)
             .toString()
-        val script = "(function(){try{var fn=window.__nxrDispatch&&window.__nxrDispatch[$key];if(typeof fn==='function')fn($payload);}catch(_){}})();"
+        val script = "(function(){try{window.dispatchEvent(new CustomEvent($eventName,{detail:$payload}));}catch(_){}})();"
         session.evaluateInMainFrame(script) {}
         return true
     }

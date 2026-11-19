@@ -241,6 +241,7 @@ class CefriumEngineSession internal constructor(
         val target = browser ?: return
         browser = null
         docGen.incrementAndGet()
+        com.nexo.browser.extensions.nxr.NxrRuntime.forgetSession(this)
         host?.detachBrowser(this, target)
         runCatching {
             if (!target.isClosed) {
@@ -419,6 +420,7 @@ class CefriumEngineSession internal constructor(
         docGen.incrementAndGet()
         observer = null
         ExtensionManager.forgetSession(this)
+        com.nexo.browser.extensions.nxr.NxrRuntime.forgetSession(this)
         shield.dispose()
         main.removeCallbacks(stateTask)
         releaseBrowser()
@@ -602,6 +604,7 @@ class CefriumEngineSession internal constructor(
             onMediaState(active = false, playing = false, title = null)
             com.nexo.browser.PageBridge.onNewDocument(this@CefriumEngineSession)
             com.nexo.browser.TranslatorManager.forget(this@CefriumEngineSession)
+            com.nexo.browser.extensions.nxr.NxrRuntime.onNewDocument(this@CefriumEngineSession)
             observer?.onPageStart(this@CefriumEngineSession, url ?: currentUrl.orEmpty())
         }
 
