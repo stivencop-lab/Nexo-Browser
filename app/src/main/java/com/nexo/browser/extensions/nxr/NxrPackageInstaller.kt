@@ -205,27 +205,59 @@ object NxrPackageInstaller {
             )
             File(staging, META_FILE).writeText(installed.toJson().toString(), Charsets.UTF_8)
 
-            // Conservar almacenamiento existente si es una actualización de la misma extensión.
+            // Conservar almacenamiento existente (global y particionado por origen) si es una actualización.
             val existingPolicy = if (extDir.isDirectory) NxrPermissions.readPolicy(extDir) else null
             val policy = (existingPolicy ?: NxrPermissions.Policy(enabled = true, allowInPrivate = false))
                 .copy(grantedHostPatterns = effectiveHosts)
             NxrPermissions.writePolicy(staging, policy)
 
-            val existingStorage = File(extDir, "storage_local.json")
+            val existingStorage = File(extDir, NxrStorage.STORAGE_FILE)
             if (existingStorage.isFile) {
-                existingStorage.copyTo(File(staging, "storage_local.json"), overwrite = true)
+                existingStorage.copyTo(File(staging, NxrStorage.STORAGE_FILE), overwrite = true)
+            }
+            val existingOrigins = File(extDir, NxrStorage.ORIGINS_DIR)
+            if (existingOrigins.isDirectory) {
+                existingOrigins.copyRecursively(File(staging, NxrStorage.ORIGINS_DIR), overwrite = true)
             }
 
-            if (extDir.exists()) extDir.deleteRecursively()
-            if (!staging.renameTo(extDir)) {
-                staging.copyRecursively(extDir, overwrite = true)
-                staging.deleteRecursively()
+            // Intercambio transaccional con respaldo y reversión automática si falla el cambio.
+            val backup = if (extDir.exists()) File(rootDir, "$id.backup-${System.nanoTime()}") else null
+            if (backup != null) {
+                if (!extDir.renameTo(backup)) {
+                    throw InstallException("No se pudo preparar la actualización atómica de la extensión.")
+                }
+            }
+            try {
+                if (!staging.renameTo(extDir)) {
+                    staging.copyRecursively(extDir, overwrite = true)
+                    if (!File(extDir, META_FILE).isFile || !File(File(extDir, FILES_DIR), "manifest.json").isFile) {
+                        throw InstallException("La copia de la extensión quedó incompleta.")
+                    }
+                    staging.deleteRecursively()
+                }
+                backup?.deleteRecursively()
+            } catch (swapErr: Throwable) {
+                if (extDir.exists()) extDir.deleteRecursively()
+                if (backup != null && backup.exists()) {
+                    backup.renameTo(extDir)
+                }
+                throw swapErr
             }
             return installed
         } catch (t: Throwable) {
             staging.deleteRecursively()
             if (t is InstallException) throw t
             throw InstallException(t.message ?: "Error al instalar la extensión.")
+        }
+    }
+
+    /** Elimina directorios temporales huérfanos `.staging-*` o `.backup-*` tras cierres bruscos. */
+    fun cleanupOrphanDirs(rootDir: File) {
+        if (!rootDir.isDirectory) return
+        rootDir.listFiles()?.forEach { dir ->
+            if (dir.isDirectory && (dir.name.contains(".staging-") || dir.name.contains(".backup-"))) {
+                runCatching { dir.deleteRecursively() }
+            }
         }
     }
 
@@ -241,7 +273,7 @@ object NxrPackageInstaller {
     fun listInstalled(rootDir: File): List<InstalledExtension> {
         if (!rootDir.isDirectory) return emptyList()
         return rootDir.listFiles()
-            ?.filter { it.isDirectory && !it.name.contains(".staging-") }
+            ?.filter { it.isDirectory && !it.name.contains(".staging-") && !it.name.contains(".backup-") }
             ?.mapNotNull { dir ->
                 val meta = File(dir, META_FILE)
                 if (!meta.isFile) return@mapNotNull null
@@ -281,10 +313,14 @@ object NxrPackageInstaller {
         return "nxr_$hex"
     }
 
+    private const val MAX_COMPRESSION_RATIO = 100L
+    private const val RATIO_CHECK_MIN_BYTES = 2L * 1024L * 1024L
+
     private fun readVerifiedZip(packageFile: File): Triple<String, String?, Map<String, ByteArray>> {
         if (!packageFile.isFile || packageFile.length() == 0L) {
             throw InstallException("Archivo de extensión vacío o inaccesible.")
         }
+        val compressedSize = packageFile.length().coerceAtLeast(1L)
         val sourceType: String
         val crxId: String?
         val zipStream: InputStream
@@ -315,6 +351,9 @@ object NxrPackageInstaller {
                 val normalized = ExtensionManifest.normalizePath(rawName)
                     ?: throw InstallException("Ruta de archivo no válida en el paquete: $rawName")
                 if (entry.isDirectory) continue
+                if (files.containsKey(normalized)) {
+                    throw InstallException("El paquete contiene entradas duplicadas: $normalized")
+                }
                 if (++fileCount > MAX_FILES) {
                     throw InstallException("El paquete supera el límite de $MAX_FILES archivos.")
                 }
@@ -328,6 +367,9 @@ object NxrPackageInstaller {
                     }
                     if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
                         throw InstallException("El paquete descomprimido supera el límite de ${MAX_UNCOMPRESSED_BYTES / (1024 * 1024)} MB.")
+                    }
+                    if (totalBytes > RATIO_CHECK_MIN_BYTES && totalBytes > compressedSize * MAX_COMPRESSION_RATIO) {
+                        throw InstallException("Relación de compresión anómala detectada (posible zip bomb).")
                     }
                     out.write(buf, 0, read)
                 }

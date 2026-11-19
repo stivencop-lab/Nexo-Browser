@@ -16,4 +16,20 @@ class CrashReportRedactorTest {
         assertFalse(clean.contains("private.json"))
         assertTrue(clean.contains("Browser.load(Browser.kt:42)"))
     }
+
+    @Test fun engineDiagnosticsSanitizesApiKeysAndParsesMetrics() {
+        val raw = "Pestaña: https://user:pw@bank.example/tx?token=abc sk-proj-1234567890abcdef AIzaSyD1234567890abcdef12345"
+        val clean = com.nexo.browser.engine.cefrium.EngineDiagnostics.sanitizeReport(raw)
+        assertFalse(clean.contains("bank.example"))
+        assertFalse(clean.contains("sk-proj-1234567890abcdef"))
+        assertFalse(clean.contains("AIzaSyD1234567890abcdef12345"))
+        assertTrue(clean.contains("<url-redacted>"))
+        assertTrue(clean.contains("<secret-redacted>"))
+
+        val metrics = com.nexo.browser.engine.cefrium.EngineDiagnostics.parsePageMetrics(
+            org.json.JSONObject.quote("""{"domNodes":420,"domInteractiveMs":185,"loadEventMs":410}""")
+        )
+        assertEquals("DOM=420 nodos · domInteractive=185ms · loadEvent=410ms", metrics)
+        assertNull(com.nexo.browser.engine.cefrium.EngineDiagnostics.parsePageMetrics("null"))
+    }
 }

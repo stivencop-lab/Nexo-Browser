@@ -75,8 +75,14 @@ class CefriumEngineSession internal constructor(
     /** PhantomShield de esta pestaña (página principal, bloqueos y puente). */
     internal val shield: PhantomShield.ShieldTab = PhantomShield.newTab(params.isPrivate)
     internal val isPrivate: Boolean = params.isPrivate
-    /** Token privado por sesión para autenticar llamadas de NXR Runtime desde esta pestaña. */
-    internal val nxrToken: String = java.util.UUID.randomUUID().toString().replace("-", "")
+
+    /** Generación monotónica del documento activo; se incrementa en cada `onLoadStart`, `releaseBrowser` y `close`. */
+    private val docGen = java.util.concurrent.atomic.AtomicLong(0L)
+    internal fun documentGeneration(): Long = docGen.get()
+    internal fun currentLocationUrl(): String? = currentUrl
+    private var loadStartedAtMs = 0L
+    @Volatile internal var lastLoadDurationMs: Long? = null
+        private set
 
     internal var browser: CefriumBrowser? = null
         private set
@@ -110,15 +116,22 @@ class CefriumEngineSession internal constructor(
     private var mediaPlaying = false
     private var mediaTitle: String? = null
 
+    /** Devuelve el navegador solo si sigue vivo (Cefrium 0.21 lanza IllegalStateException tras close()). */
+    private fun liveBrowser(): CefriumBrowser? = browser?.takeIf { !closed && !it.isClosed }
+
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
+    }
+
     /**
      * Controles de la notificación: Chromium pausa y reanuda en el proceso del
      * navegador, así que funcionan aunque la página esté en segundo plano.
      */
     private val media = object : EngineMedia {
         override val isActive: Boolean get() = mediaActive
-        override fun play() { runCatching { browser?.resumeMedia() } }
-        override fun pause() { runCatching { browser?.suspendMedia() } }
-        override fun stop() { runCatching { browser?.suspendMedia() } }
+        override fun play() { onMain { runCatching { liveBrowser()?.resumeMedia() } } }
+        override fun pause() { onMain { runCatching { liveBrowser()?.suspendMedia() } } }
+        override fun stop() { onMain { runCatching { liveBrowser()?.suspendMedia() } } }
     }
 
     override val isOpen: Boolean get() = opened && !closed
@@ -127,17 +140,17 @@ class CefriumEngineSession internal constructor(
 
     override val finder: EngineFinder = object : EngineFinder {
         override fun find(term: String, backwards: Boolean, onResult: (FindResult?) -> Unit) {
-            val target = browser ?: return onResult(null)
+            val target = liveBrowser() ?: return onResult(null)
             findCallback = onResult
             val next = term == findTerm
             findTerm = term
-            target.find(term, !backwards, false, next)
+            runCatching { target.find(term, !backwards, false, next) }.onFailure { onResult(null) }
         }
 
         override fun clear() {
             findTerm = null
             findCallback = null
-            browser?.stopFinding(true)
+            runCatching { liveBrowser()?.stopFinding(true) }
         }
     }
     private var findTerm: String? = null
@@ -155,22 +168,29 @@ class CefriumEngineSession internal constructor(
 
     /**
      * Crea el navegador si falta y hay Activity, o lo vuelve a crear (con su
-     * historial) si su Activity se destruyó. Devuelve el navegador vivo.
+     * historial) si su Activity se destruyó o el navegador se cerró. Devuelve el navegador vivo.
      */
     internal fun ensureBrowser(): CefriumBrowser? {
-        if (closed || !opened) return browser
-        val activity = CefriumEngine.activity() ?: return browser
+        if (closed || !opened) return liveBrowser()
+        val activity = CefriumEngine.activity() ?: return liveBrowser()
         val current = browser
         if (current != null) {
-            val old = boundActivity.get()
-            if (old === activity || (old != null && !old.isDestroyed)) return current
-            // La Activity de este navegador ya no existe: otro igual en la nueva.
-            EngineDiagnostics.recordSurfaceRebind()
-            EngineDiagnostics.log("recreando superficie de pestaña por Activity destruida")
-            val navigation = runCatching { current.serializeNavigationState() }.getOrNull()
-            pendingState = CefriumState.of(currentUrl, navigation)
-            pendingUrl = null
-            releaseBrowser()
+            if (current.isClosed) {
+                EngineDiagnostics.log("navegador cerrado inesperadamente; recreando superficie")
+                pendingState = CefriumState.of(currentUrl, null)
+                pendingUrl = null
+                browser = null
+            } else {
+                val old = boundActivity.get()
+                if (old === activity || (old != null && !old.isDestroyed)) return current
+                // La Activity de este navegador ya no existe: otro igual en la nueva.
+                EngineDiagnostics.recordSurfaceRebind()
+                EngineDiagnostics.log("recreando superficie de pestaña por Activity destruida")
+                val navigation = runCatching { current.serializeNavigationState() }.getOrNull()
+                pendingState = CefriumState.of(currentUrl, navigation)
+                pendingUrl = null
+                releaseBrowser()
+            }
         }
         val created = runCatching { CefriumBrowser.createWithSurface(activity, profile) }.getOrElse {
             EngineDiagnostics.log("createWithSurface falló (perfil ${profile.name}, privado=${profile.isIncognito})", it)
@@ -218,11 +238,16 @@ class CefriumEngineSession internal constructor(
     internal fun releaseBrowser() {
         val target = browser ?: return
         browser = null
+        docGen.incrementAndGet()
+        com.nexo.browser.TranslatorManager.forget(this)
+        com.nexo.browser.extensions.nxr.NxrRuntime.forgetSession(this)
         host?.detachBrowser(this, target)
         runCatching {
-            target.stopLoading()
-            (target.surfaceContainer.parent as? ViewGroup)?.removeView(target.surfaceContainer)
-            target.close()
+            if (!target.isClosed) {
+                target.stopLoading()
+                (target.surfaceContainer.parent as? ViewGroup)?.removeView(target.surfaceContainer)
+                target.close()
+            }
         }
         // Chromium puede dejar vivo el proceso del navegador cerrado: liberarlo (nunca toca uno en uso).
         runCatching { CefriumBrowser.reapUnusedRenderers() }
@@ -230,7 +255,7 @@ class CefriumEngineSession internal constructor(
 
     /** Ajustes de la pestaña según las preferencias (también al cambiarlas). */
     internal fun applySettings() {
-        val target = browser ?: return
+        val target = liveBrowser() ?: return
         val context = appContext
         runCatching {
             target.setJavaScriptEnabled(BrowserPrefs.javascript(context))
@@ -247,12 +272,12 @@ class CefriumEngineSession internal constructor(
         val filtering = PhantomShield.filtersCookies()
         if (filtering != cookieFiltering) {
             cookieFiltering = filtering
-            target.setResourceInterceptor(PhantomShield.interceptor(shield))
+            runCatching { target.setResourceInterceptor(PhantomShield.interceptor(shield)) }
         }
     }
 
     private fun applyUserAgent(target: CefriumBrowser) {
-        target.setUserAgentOverride(if (desktopMode) UserAgents.desktop() else null)
+        if (!target.isClosed) target.setUserAgentOverride(if (desktopMode) UserAgents.desktop() else null)
     }
 
     // --- EngineSession ---
@@ -260,38 +285,40 @@ class CefriumEngineSession internal constructor(
     override fun loadUrl(url: String) {
         val target = upgrade(PhantomShield.cleanNavigation(url))
         currentUrl = target
-        val live = ensureBrowser()
+        val live = ensureBrowser()?.takeIf { !it.isClosed }
         if (live == null) {
             pendingUrl = target
             pendingState = null
         } else {
-            live.loadUrl(target)
+            runCatching { live.loadUrl(target) }
         }
     }
 
     override fun reload(bypassCache: Boolean) {
-        val target = browser ?: return
+        val target = liveBrowser() ?: return
         if (bypassCache) runCatching { target.clearCache() }
-        target.reload()
+        runCatching { target.reload() }
     }
 
-    override fun goBack() { browser?.goBack() }
-    override fun goForward() { browser?.goForward() }
+    override fun goBack() { runCatching { liveBrowser()?.goBack() } }
+    override fun goForward() { runCatching { liveBrowser()?.goForward() } }
 
     override fun setActive(active: Boolean) {
         this.active = active
         if (closed) return
-        val target = (if (active) ensureBrowser() else browser) ?: return
-        when {
-            active -> target.onResume()
-            suspendMediaWhenInactive -> target.onPause()
-            // Con audio de fondo permitido: la página se oculta pero sigue sonando.
-            else -> target.setPageVisible(false)
+        val target = (if (active) ensureBrowser() else liveBrowser())?.takeIf { !it.isClosed } ?: return
+        runCatching {
+            when {
+                active -> target.onResume()
+                suspendMediaWhenInactive -> target.onPause()
+                // Con audio de fondo permitido: la página se oculta pero sigue sonando.
+                else -> target.setPageVisible(false)
+            }
         }
     }
 
     override fun setFocused(focused: Boolean) {
-        runCatching { browser?.setFocus(focused) }
+        runCatching { liveBrowser()?.setFocus(focused) }
     }
 
     /** Cefrium da a cada pestaña visible su prioridad: nada que pedir. */
@@ -303,14 +330,14 @@ class CefriumEngineSession internal constructor(
 
     override fun setDesktopMode(enabled: Boolean) {
         desktopMode = enabled
-        browser?.let { applyUserAgent(it) }
+        liveBrowser()?.let { runCatching { applyUserAgent(it) } }
     }
 
     /** El bloqueo de rastreadores es PhantomShield, en el interceptor de red. */
     override fun setTrackingProtection(enabled: Boolean) = Unit
 
     override fun exitFullScreen() {
-        browser?.exitFullscreen()
+        runCatching { liveBrowser()?.exitFullscreen() }
     }
 
     override fun flushState() {
@@ -323,8 +350,8 @@ class CefriumEngineSession internal constructor(
      * perfil que solo conoce la página actual.
      */
     override fun purgeHistory() {
-        val target = browser ?: return
-        val url = currentUrl ?: target.url
+        val target = liveBrowser() ?: return
+        val url = currentUrl ?: runCatching { target.url }.getOrNull()
         releaseBrowser()
         pendingState = null
         pendingUrl = url?.takeIf { it.isNotBlank() }
@@ -334,7 +361,7 @@ class CefriumEngineSession internal constructor(
     override fun restoreState(state: EngineSessionState) {
         val cefrium = state as? CefriumState ?: return
         currentUrl = cefrium.currentUri
-        val live = browser
+        val live = liveBrowser()
         if (live == null) {
             pendingState = cefrium
             pendingUrl = null
@@ -346,33 +373,39 @@ class CefriumEngineSession internal constructor(
 
     /** El historial solo se restaura en un navegador sin navegar; si no, se carga la dirección. */
     private fun applyState(target: CefriumBrowser, state: CefriumState) {
+        if (target.isClosed) return
         val navigation = state.navigation
         val fresh = runCatching { !target.canGoBack() && !target.canGoForward() && target.url.isNullOrEmpty() }.getOrDefault(false)
         if (navigation != null && fresh && runCatching { target.restoreNavigationState(navigation) }.isSuccess) return
-        state.currentUri?.let { target.loadUrl(it) }
+        state.currentUri?.let { runCatching { target.loadUrl(it) } }
     }
 
     override fun saveAsPdf(onResult: (InputStream?, Throwable?) -> Unit) {
-        val target = browser ?: return onResult(null, IllegalStateException("La pestaña no está abierta"))
+        val target = liveBrowser() ?: return onResult(null, IllegalStateException("La pestaña no está abierta"))
         val file = File.createTempFile("nexo-page", ".pdf", appContext.cacheDir)
-        target.printToPdf(file.path) { path, success ->
-            if (!success) {
-                file.delete()
-                onResult(null, IllegalStateException("Chromium no pudo generar el PDF"))
-                return@printToPdf
-            }
-            val stream = object : FileInputStream(path ?: file.path) {
-                override fun close() {
-                    super.close()
+        runCatching {
+            target.printToPdf(file.path) { path, success ->
+                if (!success) {
                     file.delete()
+                    onResult(null, IllegalStateException("Chromium no pudo generar el PDF"))
+                    return@printToPdf
                 }
+                val stream = object : FileInputStream(path ?: file.path) {
+                    override fun close() {
+                        super.close()
+                        file.delete()
+                    }
+                }
+                onResult(stream, null)
             }
-            onResult(stream, null)
+        }.onFailure { err ->
+            file.delete()
+            onResult(null, err)
         }
     }
 
     override fun printWithSystemDialog(activity: Activity, title: String): Boolean {
-        val target = browser ?: return false
+        val target = liveBrowser() ?: return false
         val manager = activity.getSystemService(PrintManager::class.java) ?: return false
         return runCatching {
             manager.print(title, target.createPrintDocumentAdapter(title), PrintAttributes.Builder().build())
@@ -383,8 +416,11 @@ class CefriumEngineSession internal constructor(
     override fun close() {
         if (closed) return
         closed = true
+        docGen.incrementAndGet()
         observer = null
         ExtensionManager.forgetSession(this)
+        com.nexo.browser.TranslatorManager.forget(this)
+        com.nexo.browser.extensions.nxr.NxrRuntime.forgetSession(this)
         shield.dispose()
         main.removeCallbacks(stateTask)
         releaseBrowser()
@@ -420,21 +456,45 @@ class CefriumEngineSession internal constructor(
 
     /** Ejecuta [script] en el marco principal, fuera de la CSP de la página; [done] en el hilo principal. */
     internal fun evaluateInMainFrame(script: String, done: () -> Unit) {
-        val target = browser ?: return done()
-        runCatching { target.evaluateJavaScript(script) { done() } }.onFailure { done() }
+        onMain {
+            val target = liveBrowser()
+            if (target == null) {
+                done()
+                return@onMain
+            }
+            runCatching { target.evaluateJavaScript(script) { done() } }.onFailure { done() }
+        }
+    }
+
+    /**
+     * Ejecuta [script] en el marco principal y devuelve su valor serializado como JSON directamente
+     * a Kotlin mediante `CefriumBrowser.evaluateJavaScript(script, ValueCallback<String>)`, sin
+     * exponer mensajes ni tokens en `window.cefriumQuery`.
+     */
+    internal fun evaluateJsonInMainFrame(script: String, onResult: (String?) -> Unit) {
+        onMain {
+            val target = liveBrowser()
+            if (target == null) {
+                onResult(null)
+                return@onMain
+            }
+            runCatching {
+                target.evaluateJavaScript(script) { value -> onResult(value) }
+            }.onFailure { onResult(null) }
+        }
     }
 
     internal fun clearCache() {
-        runCatching { browser?.clearCache() }
+        runCatching { liveBrowser()?.clearCache() }
     }
 
     internal fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean =
-        runCatching { browser?.onActivityResult(requestCode, resultCode, data) == true }.getOrDefault(false)
+        runCatching { liveBrowser()?.onActivityResult(requestCode, resultCode, data) == true }.getOrDefault(false)
 
     internal fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean =
         runCatching {
             @Suppress("UNCHECKED_CAST")
-            browser?.onRequestPermissionsResult(requestCode, permissions as Array<String>, grantResults) == true
+            liveBrowser()?.onRequestPermissionsResult(requestCode, permissions as Array<String>, grantResults) == true
         }.getOrDefault(false)
 
     /** Solo HTTPS: las navegaciones principales a http:// pasan a https://. */
@@ -449,9 +509,10 @@ class CefriumEngineSession internal constructor(
     private fun emitState() {
         if (closed) return
         val observer = observer ?: return
-        val target = browser ?: return
+        val target = liveBrowser() ?: return
         val navigation = runCatching { target.serializeNavigationState() }.getOrNull()
-        observer.onStateChange(this, CefriumState.of(currentUrl ?: target.url, navigation))
+        val url = currentUrl ?: runCatching { target.url }.getOrNull()
+        observer.onStateChange(this, CefriumState.of(url, navigation))
     }
 
     private fun emitContext(link: String?, image: String?, title: String?) {
@@ -461,7 +522,7 @@ class CefriumEngineSession internal constructor(
 
     /** Ventana nueva pedida por esta pestaña: Nexo decide; si no la acepta, se cierra. */
     private fun onPopup(popup: CefriumBrowser, url: String, userGesture: Boolean) {
-        fun drop() { main.post { runCatching { popup.close() } } }
+        fun drop() { main.post { runCatching { if (!popup.isClosed) popup.close() } } }
         val observer = observer ?: return drop()
         // Ventanas sin toque del usuario: se bloquean (popunders).
         if (!userGesture) {
@@ -502,17 +563,17 @@ class CefriumEngineSession internal constructor(
             val observer = observer ?: return true
             val upgraded = upgrade(url)
             if (upgraded != url) {
-                main.post { if (!closed) browser.loadUrl(upgraded) }
+                main.post { if (!closed && !browser.isClosed) runCatching { browser.loadUrl(upgraded) } }
                 return true
             }
             val engineRequest = EngineLoadRequest(url, request.hasGesture(), isDirectNavigation = false, opensNewWindow = false)
             val cleaned = PhantomShield.cleanNavigation(url)
             return when (observer.onLoadRequest(this@CefriumEngineSession, engineRequest) { allow ->
-                if (allow && !closed) browser.loadUrl(cleaned)
+                if (allow && !closed && !browser.isClosed) runCatching { browser.loadUrl(cleaned) }
             }) {
                 // Sin parámetros de rastreo (utm_*, gclid, fbclid…): se carga la dirección limpia.
                 LoadDecision.DEFAULT, LoadDecision.ALLOW -> if (cleaned != url) {
-                    main.post { if (!closed) browser.loadUrl(cleaned) }
+                    main.post { if (!closed && !browser.isClosed) runCatching { browser.loadUrl(cleaned) } }
                     true
                 } else false
                 LoadDecision.DENY, LoadDecision.PENDING -> true
@@ -525,20 +586,25 @@ class CefriumEngineSession internal constructor(
             shield.onLocation(value)
             val observer = observer ?: return
             observer.onLocationChange(this@CefriumEngineSession, value, false)
-            observer.onCanGoBack(this@CefriumEngineSession, browser.canGoBack())
-            observer.onCanGoForward(this@CefriumEngineSession, browser.canGoForward())
+            if (!browser.isClosed) {
+                observer.onCanGoBack(this@CefriumEngineSession, runCatching { browser.canGoBack() }.getOrDefault(false))
+                observer.onCanGoForward(this@CefriumEngineSession, runCatching { browser.canGoForward() }.getOrDefault(false))
+            }
             scheduleState()
         }
 
         override fun onLoadStart(browser: CefriumBrowser, url: String?) {
             mainFrameError = false
             sslNoticeFor = null
+            docGen.incrementAndGet()
+            loadStartedAtMs = android.os.SystemClock.uptimeMillis()
             EngineDiagnostics.recordDocumentLoad()
             EngineDiagnostics.log("carga iniciada: ${url?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"}")
             // Documento nuevo: sus medios y sus marcos los volverá a informar el puente.
             onMediaState(active = false, playing = false, title = null)
             com.nexo.browser.PageBridge.onNewDocument(this@CefriumEngineSession)
             com.nexo.browser.TranslatorManager.forget(this@CefriumEngineSession)
+            com.nexo.browser.extensions.nxr.NxrRuntime.onNewDocument(this@CefriumEngineSession)
             observer?.onPageStart(this@CefriumEngineSession, url ?: currentUrl.orEmpty())
         }
 
@@ -547,11 +613,17 @@ class CefriumEngineSession internal constructor(
             observer.onCanGoBack(this@CefriumEngineSession, canGoBack)
             observer.onCanGoForward(this@CefriumEngineSession, canGoForward)
             if (!loading) {
+                if (loadStartedAtMs > 0L) {
+                    val elapsed = (android.os.SystemClock.uptimeMillis() - loadStartedAtMs).coerceAtLeast(0L)
+                    lastLoadDurationMs = elapsed
+                    EngineDiagnostics.recordLoadDuration(elapsed)
+                    loadStartedAtMs = 0L
+                }
                 observer.onPageStop(this@CefriumEngineSession, !mainFrameError)
-                if (!mainFrameError) {
+                if (!mainFrameError && !browser.isClosed) {
                     com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentIdle(
                         this@CefriumEngineSession,
-                        currentUrl ?: browser.url
+                        currentUrl ?: runCatching { browser.url }.getOrNull()
                     )
                 }
                 scheduleState()
@@ -564,10 +636,12 @@ class CefriumEngineSession internal constructor(
 
         override fun onDocumentAvailable(browser: CefriumBrowser) {
             observer?.onFirstContentfulPaint(this@CefriumEngineSession)
-            com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentAvailable(
-                this@CefriumEngineSession,
-                currentUrl ?: browser.url
-            )
+            if (!browser.isClosed) {
+                com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentAvailable(
+                    this@CefriumEngineSession,
+                    currentUrl ?: runCatching { browser.url }.getOrNull()
+                )
+            }
         }
 
         override fun onLoadError(browser: CefriumBrowser, error: CefriumLoadError) {
@@ -657,7 +731,7 @@ class CefriumEngineSession internal constructor(
         }
 
         override fun onCloseWindow(browser: CefriumBrowser, popup: CefriumBrowser) {
-            val session = CefriumEngine.sessionOf(popup) ?: return run { runCatching { popup.close() } }
+            val session = CefriumEngine.sessionOf(popup) ?: return run { runCatching { if (!popup.isClosed) popup.close() } }
             session.observer?.onCloseRequest(session)
         }
 

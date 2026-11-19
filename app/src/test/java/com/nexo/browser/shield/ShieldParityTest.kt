@@ -209,4 +209,20 @@ class ShieldParityTest {
         val js = "window.X = [\n  // comentario\n  \"a.example\", 'b.example', /* c */ \"##[id^='x']\",\n  \"say \\\"hi\\\"\"\n];"
         assertEquals(listOf("a.example", "b.example", "##[id^='x']", "say \"hi\""), BundledData.array(js, "X"))
     }
+
+    @Test fun decisionLruCacheEvictsOldestAndClearsCleanly() {
+        val cache = PhantomShield.DecisionLruCache(maxEntries = 3)
+        cache.put("a", ShieldDecision.Allow)
+        cache.put("b", ShieldDecision.Block)
+        cache.put("c", ShieldDecision.Allow)
+        // Touch "a" so "b" becomes least-recently-used
+        assertEquals(ShieldDecision.Allow, cache.get("a"))
+        cache.put("d", ShieldDecision.Block)
+        assertEquals(3, cache.size())
+        assertEquals(null, cache.get("b"))
+        assertEquals(ShieldDecision.Allow, cache.get("a"))
+        assertEquals(ShieldDecision.Block, cache.get("d"))
+        cache.clear()
+        assertEquals(0, cache.size())
+    }
 }

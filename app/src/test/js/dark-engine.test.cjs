@@ -140,3 +140,28 @@ test("disable cleans up styles, attributes, synthetic meta tag, and Dark Reader 
   assert.equal(getMeta(), null);
   assert.ok(disabledCalls >= 1);
 });
+
+test("bootstrapEarly does not fool detectNativeDark into treating a light transparent-body page as native dark", () => {
+  const { doc, win, attrs, styles } = createFakeDom({
+    prefersDark: true,
+    bodyBg: "rgba(0, 0, 0, 0)",
+    rootBg: "rgb(255, 255, 255)"
+  });
+  // Simulate real browser computedStyle: when data-nexo-dark-early is active on <html>,
+  // <html> computes as #0c1222 unless Nexo suspends its own early style during measurement.
+  win.getComputedStyle = (el) => {
+    if (el === doc.body) return { backgroundColor: "rgba(0, 0, 0, 0)" };
+    const earlyStyle = styles.get(darkEngine.EARLY_STYLE_ID);
+    const earlyActive = attrs.get("data-nexo-dark-early") === "true" && (!earlyStyle || !earlyStyle.disabled);
+    return { backgroundColor: earlyActive ? "rgb(12, 18, 34)" : "rgb(255, 255, 255)" };
+  };
+
+  const ctrl = darkEngine.createController({ document: doc, window: win });
+  assert.equal(ctrl.bootstrapEarly(), true);
+  assert.equal(attrs.get("data-nexo-dark-early"), "true");
+
+  const engine = ctrl.applyConfig({ enabled: true, background: "#0c1222", strategy: "css" });
+  assert.equal(engine, "css", "must NOT misclassify light page as native dark after bootstrapEarly");
+  assert.equal(styles.has(darkEngine.ENGINE_STYLE_ID), true);
+  assert.equal(attrs.get("data-nexo-dark-css"), "true");
+});

@@ -5,29 +5,36 @@ import android.os.Handler
 import android.os.Looper
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.util.Locale
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Traducción completa de páginas en el DOM con restauración instantánea sin recargar.
  *
- * Reutiliza el proveedor configurado en Nexo (Google sin clave, DeepL o modelo de IA)
- * mediante [CaptionProtocol], enviando bloques acotados de texto visible (nunca scripts,
- * código ni campos de formulario/contraseña) y devolviendo cada traducción a su nodo.
+ * - Extracción de segmentos mediante retorno directo de `evaluateJavaScript` (sin exponer
+ *   tokens por `cefriumQuery`).
+ * - Aislamiento por generación de documento (`docGen`) y cancelación inmediata de llamadas
+ *   OkHttp activas si la pestaña navega, recarga, restaura o se cierra.
+ * - Aplicación progresiva por lotes para reducir latencia percibida en páginas largas.
  */
 object TranslatorManager {
     private const val SCRIPT_ASSET = "nexo/page-translator.js"
     private const val MAX_BATCH_ITEMS = 24
     private const val MAX_BATCH_CHARS = 4000
+    private const val MAX_SEGMENTS = 400
+    private const val EXTRACT_TIMEOUT_MS = 2500L
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private val io by lazy { Executors.newSingleThreadExecutor() }
@@ -40,16 +47,36 @@ object TranslatorManager {
 
     @Volatile private var scriptSource: String? = null
     private val translatedTargets = WeakHashMap<EngineSession, String>()
-    private val pendingCallbacks = ConcurrentHashMap<String, PendingJob>()
+    private val activeJobs = ConcurrentHashMap<EngineSession, ActiveTranslation>()
 
-    private data class PendingJob(
-        val session: CefriumEngineSession,
-        val context: Context,
-        val targetLang: String,
-        val callback: (Boolean, String) -> Unit
-    )
+    internal class ActiveTranslation(
+        val docGen: Long,
+        val targetLang: String
+    ) {
+        private val cancelled = AtomicBoolean(false)
+        @Volatile private var call: Call? = null
+
+        val isCancelled: Boolean get() = cancelled.get()
+
+        fun attach(activeCall: Call) {
+            call = activeCall
+            if (cancelled.get()) activeCall.cancel()
+        }
+
+        fun cancel() {
+            cancelled.set(true)
+            call?.cancel()
+        }
+    }
 
     data class TextSegment(val id: Int, val text: String)
+
+    internal data class ExtractionPayload(
+        val segments: List<TextSegment>,
+        val totalEligible: Int,
+        val truncated: Boolean,
+        val generation: Int
+    )
 
     fun initialize(context: Context) {
         if (scriptSource == null) {
@@ -63,8 +90,44 @@ object TranslatorManager {
         session != null && synchronized(translatedTargets) { translatedTargets.containsKey(session) }
 
     fun forget(session: EngineSession) {
+        activeJobs.remove(session)?.cancel()
         synchronized(translatedTargets) { translatedTargets.remove(session) }
-        pendingCallbacks.entries.removeIf { it.value.session === session }
+    }
+
+    internal fun diagnosticsSummary(): String {
+        val translatedCount = synchronized(translatedTargets) { translatedTargets.size }
+        val activeCount = activeJobs.size
+        return "sesiones traducidas=$translatedCount, traducciones activas=$activeCount"
+    }
+
+    internal fun parseExtraction(raw: String?): ExtractionPayload? {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty() || trimmed == "null" || trimmed == "undefined") return null
+        val json = runCatching {
+            when (val parsed = JSONTokener(trimmed).nextValue()) {
+                is JSONObject -> parsed
+                is String -> {
+                    val inner = parsed.trim()
+                    if (inner.startsWith("{")) JSONObject(inner) else null
+                }
+                else -> null
+            }
+        }.getOrNull() ?: return null
+
+        val arr = json.optJSONArray("segments")
+        val segments = mutableListOf<TextSegment>()
+        if (arr != null) {
+            for (i in 0 until minOf(arr.length(), MAX_SEGMENTS)) {
+                val item = arr.optJSONObject(i) ?: continue
+                val id = item.optInt("i", -1)
+                val text = item.optString("t").trim()
+                if (id >= 0 && text.isNotEmpty()) segments += TextSegment(id, text)
+            }
+        }
+        val totalEligible = json.optInt("totalEligible", segments.size).coerceAtLeast(segments.size)
+        val truncated = json.optBoolean("truncated", totalEligible > segments.size)
+        val generation = json.optInt("generation", 0)
+        return ExtractionPayload(segments, totalEligible, truncated, generation)
     }
 
     /** Divide segmentos en lotes respetando cantidad y caracteres máximos. Puro: probado en la JVM. */
@@ -117,12 +180,12 @@ object TranslatorManager {
             callback(false, "No se pudo cargar el módulo de traducción.")
             return
         }
-        val target = resolveTargetLanguage(context)
-        val requestId = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
-        pendingCallbacks[requestId] = PendingJob(session, context.applicationContext, target, callback)
+        val appContext = context.applicationContext
+        val target = resolveTargetLanguage(appContext)
+        val docGen = session.documentGeneration()
+        val job = ActiveTranslation(docGen = docGen, targetLang = target)
+        activeJobs.put(session, job)?.cancel()
 
-        val token = JSONObject.quote(session.nxrToken)
-        val reqIdJson = JSONObject.quote(requestId)
         val extractScript = """
             (function(){
               try {
@@ -130,25 +193,44 @@ object TranslatorManager {
                 if (!window.__nexoPageTranslator && typeof window.__nexoCreatePageTranslator === 'function') {
                   window.__nexoPageTranslator = window.__nexoCreatePageTranslator(document, window);
                 }
-                var segs = window.__nexoPageTranslator ? window.__nexoPageTranslator.extractSegments() : [];
-                if (typeof window.cefriumQuery === 'function') {
-                  window.cefriumQuery({
-                    request: JSON.stringify({
-                      m: JSON.stringify({
-                        id: 1,
-                        kind: 'nexo_translate_segments',
-                        payload: { token: $token, reqId: $reqIdJson, segments: segs }
-                      }),
-                      s: -1
-                    }),
-                    onSuccess: function(){},
-                    onFailure: function(){}
-                  });
-                }
-              } catch (_) {}
+                if (!window.__nexoPageTranslator) return null;
+                var meta = typeof window.__nexoPageTranslator.extractSegmentsWithMeta === 'function'
+                  ? window.__nexoPageTranslator.extractSegmentsWithMeta()
+                  : { segments: window.__nexoPageTranslator.extractSegments(), totalEligible: 0, truncated: false, generation: 0 };
+                return JSON.stringify(meta);
+              } catch (_) {
+                return null;
+              }
             })();
         """.trimIndent()
-        session.evaluateInMainFrame(extractScript) {}
+
+        val settled = AtomicBoolean(false)
+        val timeout = Runnable {
+            if (settled.compareAndSet(false, true)) {
+                activeJobs.remove(session, job)
+                job.cancel()
+                callback(false, "Tiempo agotado al leer el contenido de la página.")
+            }
+        }
+        main.postDelayed(timeout, EXTRACT_TIMEOUT_MS)
+
+        session.evaluateJsonInMainFrame(extractScript) { raw ->
+            main.post {
+                if (!settled.compareAndSet(false, true)) return@post
+                main.removeCallbacks(timeout)
+                if (job.isCancelled || session.documentGeneration() != job.docGen) {
+                    activeJobs.remove(session, job)
+                    return@post
+                }
+                val extracted = parseExtraction(raw)
+                if (extracted == null || extracted.segments.isEmpty()) {
+                    activeJobs.remove(session, job)
+                    callback(false, "No se encontró texto traducible en esta página.")
+                    return@post
+                }
+                runProgressiveTranslation(appContext, session, job, extracted, callback)
+            }
+        }
     }
 
     /** Restaura el contenido original de los nodos traducidos sin recargar la página. */
@@ -158,6 +240,7 @@ object TranslatorManager {
             callback(false, "No hay ninguna pestaña activa.")
             return
         }
+        activeJobs.remove(session)?.cancel()
         synchronized(translatedTargets) { translatedTargets.remove(session) }
         session.evaluateInMainFrame(
             "(function(){try{if(window.__nexoPageTranslator)window.__nexoPageTranslator.restore();}catch(_){}})();"
@@ -166,72 +249,80 @@ object TranslatorManager {
         }
     }
 
-    /** Recibe los segmentos extraídos desde la página por el canal verificado. */
-    internal fun onPageSegments(session: CefriumEngineSession, isMainFrame: Boolean, payload: JSONObject?): Boolean {
-        if (!isMainFrame || payload == null) return false
-        if (payload.optString("token") != session.nxrToken) return false
-        val reqId = payload.optString("reqId")
-        val job = pendingCallbacks.remove(reqId) ?: return false
-        if (job.session !== session) return false
-
-        val arr = payload.optJSONArray("segments")
-        val segments = mutableListOf<TextSegment>()
-        if (arr != null) {
-            for (i in 0 until minOf(arr.length(), 200)) {
-                val item = arr.optJSONObject(i) ?: continue
-                val id = item.optInt("i", -1)
-                val text = item.optString("t").trim()
-                if (id >= 0 && text.isNotEmpty()) segments += TextSegment(id, text)
-            }
-        }
-        if (segments.isEmpty()) {
-            main.post { job.callback(false, "No se encontró texto traducible en esta página.") }
-            return true
-        }
-
+    private fun runProgressiveTranslation(
+        appContext: Context,
+        session: CefriumEngineSession,
+        job: ActiveTranslation,
+        extracted: ExtractionPayload,
+        callback: (Boolean, String) -> Unit
+    ) {
+        val batches = chunkSegments(extracted.segments)
+        val jsGen = extracted.generation
         io.execute {
-            val batches = chunkSegments(segments)
-            val translatedEntries = JSONArray()
+            var appliedSegments = 0
             var failures = 0
             for (batch in batches) {
+                if (job.isCancelled || session.documentGeneration() != job.docGen) {
+                    activeJobs.remove(session, job)
+                    return@execute
+                }
                 val lines = batch.map { it.text }
-                val translated = translateBatch(job.context, lines, job.targetLang)
+                val translated = translateBatch(appContext, lines, job.targetLang, job)
+                if (job.isCancelled || session.documentGeneration() != job.docGen) {
+                    activeJobs.remove(session, job)
+                    return@execute
+                }
                 if (translated != null && translated.size == batch.size) {
+                    val batchJson = JSONArray()
                     batch.forEachIndexed { idx, seg ->
-                        translatedEntries.put(JSONObject().put("i", seg.id).put("t", translated[idx]))
+                        batchJson.put(JSONObject().put("i", seg.id).put("t", translated[idx]))
+                    }
+                    appliedSegments += batch.size
+                    val payload = batchJson.toString()
+                    main.post {
+                        if (job.isCancelled || session.documentGeneration() != job.docGen) return@post
+                        val applyScript = "(function(){try{if(window.__nexoPageTranslator)window.__nexoPageTranslator.applyTranslations($payload,$jsGen);}catch(_){}})();"
+                        session.evaluateInMainFrame(applyScript) {}
+                        synchronized(translatedTargets) { translatedTargets[session] = job.targetLang }
                     }
                 } else {
                     failures++
                 }
             }
-            if (translatedEntries.length() == 0) {
-                main.post { job.callback(false, "No se pudo traducir la página. Revisa tu conexión o proveedor.") }
-                return@execute
-            }
-            val payloadJson = translatedEntries.toString()
+            activeJobs.remove(session, job)
+            if (job.isCancelled || session.documentGeneration() != job.docGen) return@execute
+
             main.post {
-                val applyScript = "(function(){try{if(window.__nexoPageTranslator)window.__nexoPageTranslator.applyTranslations($payloadJson);}catch(_){}})();"
-                job.session.evaluateInMainFrame(applyScript) {
-                    synchronized(translatedTargets) { translatedTargets[job.session] = job.targetLang }
-                    val label = CaptionProtocol.languageLabel(job.targetLang)
-                    val msg = if (failures == 0) {
-                        "Página traducida a $label (toca Traducir otra vez para restaurar)."
-                    } else {
-                        "Página traducida parcialmente a $label."
-                    }
-                    job.callback(true, msg)
+                if (job.isCancelled || session.documentGeneration() != job.docGen) return@post
+                if (appliedSegments == 0) {
+                    callback(false, "No se pudo traducir la página. Revisa tu conexión o proveedor.")
+                    return@post
                 }
+                synchronized(translatedTargets) { translatedTargets[session] = job.targetLang }
+                val label = CaptionProtocol.languageLabel(job.targetLang)
+                val omitted = (extracted.totalEligible - extracted.segments.size).coerceAtLeast(0)
+                val msg = when {
+                    failures > 0 -> "Página traducida parcialmente a $label ($appliedSegments bloques)."
+                    extracted.truncated && omitted > 0 ->
+                        "Página traducida a $label ($appliedSegments bloques; $omitted omitidos por límite)."
+                    else -> "Página traducida a $label (toca Traducir otra vez para restaurar)."
+                }
+                callback(true, msg)
             }
         }
-        return true
     }
 
-    private fun translateBatch(context: Context, lines: List<String>, target: String): List<String>? {
+    private fun translateBatch(
+        context: Context,
+        lines: List<String>,
+        target: String,
+        job: ActiveTranslation
+    ): List<String>? {
         val provider = BrowserPrefs.translationProvider(context)
         if (provider == BrowserPrefs.TRANSLATE_DEEPL) {
             val key = BrowserPrefs.deeplKey(context)
             if (key.isNotBlank() && CaptionProtocol.deeplSupports(target)) {
-                val res = translateWithDeepL(key, lines, target)
+                val res = translateWithDeepL(key, lines, target, job)
                 if (res != null) return res
             }
         }
@@ -241,24 +332,26 @@ object TranslatorManager {
             val model = BrowserPrefs.aiTranslateModel(context)
             val key = BrowserPrefs.aiTranslateKey(context)
             if (key.isNotBlank() || aiProvider == "custom") {
-                val res = translateWithAi(aiProvider, endpoint, model, key, lines, target)
+                val res = translateWithAi(aiProvider, endpoint, model, key, lines, target, job)
                 if (res != null) return res
             }
         }
-        return translateWithGoogle(lines, target)
+        return translateWithGoogle(lines, target, job)
     }
 
-    private fun translateWithGoogle(lines: List<String>, target: String): List<String>? = runCatching {
+    private fun translateWithGoogle(lines: List<String>, target: String, job: ActiveTranslation): List<String>? = runCatching {
         val body = CaptionProtocol.googleBatchBody(lines, target)
             .toRequestBody("application/x-www-form-urlencoded; charset=utf-8".toMediaType())
         val req = Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL).post(body).build()
-        http.newCall(req).execute().use { resp ->
+        val call = http.newCall(req)
+        job.attach(call)
+        call.execute().use { resp ->
             if (!resp.isSuccessful) return null
             CaptionProtocol.parseGoogleLines(resp.body?.string().orEmpty(), lines.size)
         }
     }.getOrNull()
 
-    private fun translateWithDeepL(key: String, lines: List<String>, target: String): List<String>? = runCatching {
+    private fun translateWithDeepL(key: String, lines: List<String>, target: String, job: ActiveTranslation): List<String>? = runCatching {
         val body = CaptionProtocol.deeplBatchBody(lines, target)
             .toRequestBody("application/x-www-form-urlencoded; charset=utf-8".toMediaType())
         val req = Request.Builder()
@@ -266,7 +359,9 @@ object TranslatorManager {
             .header("Authorization", "DeepL-Auth-Key $key")
             .post(body)
             .build()
-        http.newCall(req).execute().use { resp ->
+        val call = http.newCall(req)
+        job.attach(call)
+        call.execute().use { resp ->
             if (!resp.isSuccessful) return null
             CaptionProtocol.parseDeeplLines(resp.body?.string().orEmpty(), lines.size)
         }
@@ -278,7 +373,8 @@ object TranslatorManager {
         model: String,
         key: String,
         lines: List<String>,
-        target: String
+        target: String,
+        job: ActiveTranslation
     ): List<String>? = runCatching {
         val reqSpec = CaptionProtocol.aiRequest(
             provider = provider,
@@ -294,7 +390,9 @@ object TranslatorManager {
             .url(reqSpec.url)
             .post(reqSpec.body.toRequestBody("application/json; charset=utf-8".toMediaType()))
         reqSpec.headers.forEach { (k, v) -> builder.header(k, v) }
-        http.newCall(builder.build()).execute().use { resp ->
+        val call = http.newCall(builder.build())
+        job.attach(call)
+        call.execute().use { resp ->
             if (!resp.isSuccessful) return null
             CaptionProtocol.parseAiLines(resp.body?.string().orEmpty(), lines.size)
         }

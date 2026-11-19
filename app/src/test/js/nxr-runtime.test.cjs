@@ -89,3 +89,40 @@ test('nxr-runtime-shim dispatches action messages and reports unsupported APIs h
   const errCall = mock.calls.find(c => c.kind === 'nxr_error' && c.payload.source === 'unsupported_api');
   assert.ok(errCall, 'unsupported API usage should report to per-extension diagnostics');
 });
+
+test('nxr-runtime-shim rejects oversized envelopes and cefrium-port freezes cefriumQuery against page hooking', async () => {
+  const mock = makeMockQuery();
+  const scope = createNxrScope({
+    extId: 'demo@nxr.test',
+    token: 'tok-cap-secret',
+    manifest: { name: 'Demo', version: '1.0' },
+    query: mock.query
+  });
+
+  const huge = 'x'.repeat(40 * 1024);
+  await assert.rejects(() => scope.chrome.storage.local.set({ blob: huge }), /demasiado grande/i);
+
+  // Verify cefrium-port freezes cefriumQuery so a malicious page cannot intercept NXR tokens
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const portSource = fs.readFileSync(path.join(__dirname, '../../main/assets/nexo/cefrium-port.js'), 'utf8');
+  let realQueryCalled = 0;
+  const ctx = vm.createContext({
+    Object, JSON, Promise, Map, Array, Error,
+    setInterval: () => 1,
+    document: { visibilityState: 'visible' },
+    cefriumQuery: () => { realQueryCalled++; }
+  });
+  ctx.globalThis = ctx;
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);', ctx);
+
+  // Page attempts to monkey-patch cefriumQuery to steal tokens
+  vm.runInContext(`
+    try { globalThis.cefriumQuery = function() { throw new Error('hooked!'); }; } catch (_) {}
+  `, ctx);
+  const desc = vm.runInContext(`Object.getOwnPropertyDescriptor(globalThis, 'cefriumQuery')`, ctx);
+  assert.equal(desc.writable, false);
+  assert.equal(desc.configurable, false);
+  ctx.cefriumQuery({ request: '{}', onSuccess() {}, onFailure() {} });
+  assert.ok(realQueryCalled >= 2, 'original cefriumQuery must remain intact');
+});

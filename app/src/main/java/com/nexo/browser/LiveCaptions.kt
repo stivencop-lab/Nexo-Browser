@@ -713,7 +713,20 @@ object LiveCaptions {
         notifyChanged(session)
     }
 
+    @Volatile private var lastTranscriptLatencyMs: Long = -1L
+
+    fun diagnosticsSummary(): String {
+        val count = active.size
+        val latency = lastTranscriptLatencyMs.let { if (it >= 0L) "${it} ms" else "sin muestras" }
+        val modes = active.values.map { if (it.trackMode) "pista" else if (it.deviceAudio) "audio-disp" else "audio-pag" }.distinct()
+        val modeLabel = if (modes.isEmpty()) "inactivo" else modes.joinToString("/")
+        return "flujos=$count · modo=$modeLabel · última latencia transcripción=$latency"
+    }
+
     private fun applyTranscripts(context: Context, stream: Stream, updates: List<CaptionProtocol.Transcript>) {
+        if (updates.isNotEmpty() && stream.lastAudioAt > 0L) {
+            lastTranscriptLatencyMs = (System.currentTimeMillis() - stream.lastAudioAt).coerceIn(0L, 60_000L)
+        }
         for (transcript in updates) {
             val segment = stream.text.onTranscript(transcript)
             if (segment != null) enqueueLive(context, stream, segment)
