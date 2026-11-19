@@ -140,6 +140,69 @@ class NexoAiTest {
     }
 
     @Test
+    fun buildRequestAdaptsParametersForReasoningModels() {
+        val o3 = NexoAiConfig.Settings(provider = "openai", model = "o3-mini")
+        val reqO3 = NexoAiClient.buildRequest(o3, "sk-test", "Resume", "Texto")
+        val bodyO3 = JSONObject(reqO3.bodyJson)
+        assertFalse("o3-mini must omit temperature", bodyO3.has("temperature"))
+        assertTrue("o3-mini must use max_completion_tokens", bodyO3.has("max_completion_tokens"))
+        assertFalse("o3-mini must not send max_tokens", bodyO3.has("max_tokens"))
+
+        val deepseek = NexoAiConfig.Settings(provider = "deepseek", model = "deepseek-reasoner")
+        val reqDs = NexoAiClient.buildRequest(deepseek, "sk-ds", "Resume", "Texto")
+        val bodyDs = JSONObject(reqDs.bodyJson)
+        assertFalse("deepseek-reasoner must omit temperature", bodyDs.has("temperature"))
+        assertTrue(bodyDs.has("max_tokens"))
+
+        val standard = NexoAiConfig.Settings(provider = "openai", model = "gpt-4.1-mini")
+        val reqStd = NexoAiClient.buildRequest(standard, "sk-test", "Resume", "Texto")
+        val bodyStd = JSONObject(reqStd.bodyJson)
+        assertTrue(bodyStd.has("temperature"))
+        assertTrue(bodyStd.has("max_tokens"))
+    }
+
+    @Test
+    fun parseResponseExtractsValidActionsAndRejectsDangerousProposals() {
+        val raw = """
+            {
+              "choices": [{
+                "message": {
+                  "content": "Aquí tienes el resumen.\n```nexo-actions\n[\n  {\"type\":\"highlight\",\"label\":\"Precio\",\"target\":\"19 USD/mes\"},\n  {\"type\":\"open_link\",\"label\":\"Docs\",\"target\":\"https://example.com/docs\"},\n  {\"type\":\"open_link\",\"label\":\"XSS\",\"target\":\"javascript:alert(1)\"},\n  {\"type\":\"open_link\",\"label\":\"Local\",\"target\":\"file:///etc/passwd\"},\n  {\"type\":\"open_link\",\"label\":\"Creds\",\"target\":\"https://user:pass@evil.example/\"},\n  {\"type\":\"execute_js\",\"label\":\"Evil\",\"target\":\"alert(1)\"},\n  {\"type\":\"fill_draft\",\"label\":\"Pass\",\"target\":\"user_password\",\"value\":\"1234\"},\n  {\"type\":\"fill_draft\",\"label\":\"Comentario\",\"target\":\"comment\",\"value\":\"Borrador seguro\"}\n]\n```"
+                }
+              }]
+            }
+        """.trimIndent()
+        val parsed = NexoAiClient.parseResponse("openai", raw).getOrThrow()
+        assertEquals("Aquí tienes el resumen.", parsed.text)
+        assertEquals(3, parsed.actions.size)
+        assertEquals("highlight", parsed.actions[0].type)
+        assertFalse(parsed.actions[0].requiresConfirmation)
+        assertEquals("open_link", parsed.actions[1].type)
+        assertEquals("https://example.com/docs", parsed.actions[1].target)
+        assertTrue(parsed.actions[1].requiresConfirmation)
+        assertEquals("fill_draft", parsed.actions[2].type)
+        assertEquals("comment", parsed.actions[2].target)
+        assertTrue(parsed.actions[2].requiresConfirmation)
+    }
+
+    @Test
+    fun unwrapJsonObjectHandlesDirectAndEscapedEvaluateJavaScriptOutputs() {
+        val direct = com.nexo.browser.ai.NexoAiPageAgent.unwrapJsonObject("""{"title":"Hola","text":"Mundo"}""")
+        assertNotNull(direct)
+        assertEquals("Hola", direct?.optString("title"))
+
+        val escaped = com.nexo.browser.ai.NexoAiPageAgent.unwrapJsonObject(
+            JSONObject.quote("""{"title":"Escapado","url":"https://example.com"}""")
+        )
+        assertNotNull(escaped)
+        assertEquals("Escapado", escaped?.optString("title"))
+
+        assertNull(com.nexo.browser.ai.NexoAiPageAgent.unwrapJsonObject("null"))
+        assertNull(com.nexo.browser.ai.NexoAiPageAgent.unwrapJsonObject("undefined"))
+        assertNull(com.nexo.browser.ai.NexoAiPageAgent.unwrapJsonObject(""))
+    }
+
+    @Test
     fun translatorChunkSegmentsRespectsItemAndCharBudgets() {
         val segments = (0 until 10).map { i ->
             TranslatorManager.TextSegment(i, "Segmento $i " + "x".repeat(40))

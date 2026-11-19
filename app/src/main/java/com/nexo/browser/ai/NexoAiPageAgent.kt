@@ -12,15 +12,20 @@ import com.nexo.browser.UrlSafety
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.ConcurrentHashMap
+import org.json.JSONTokener
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Agente de página de Nexo AI: extracción segura de contexto de la pestaña activa
- * (excluyendo contraseñas, tarjetas, cookies y campos ocultos) y acciones asistidas
- * con confirmación explícita obligatoria antes de cualquier efecto secundario.
+ * (excluyendo contraseñas, tarjetas, cookies, elementos ocultos y campos sensibles)
+ * mediante retorno directo de `evaluateJavaScript` (sin exponer tokens en `cefriumQuery`),
+ * y acciones asistidas con confirmación explícita obligatoria antes de cualquier efecto secundario.
  */
 object NexoAiPageAgent {
     private const val AGENT_ASSET = "nexo/ai-page-agent.js"
+    private const val SNAPSHOT_TIMEOUT_MS = 2500L
+    private const val MAX_LIVE_COMPARE_TABS = 4
 
     data class PageSnapshot(
         val title: String,
@@ -71,7 +76,6 @@ object NexoAiPageAgent {
     }
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
-    private val pendingSnapshots = ConcurrentHashMap<String, Pair<CefriumEngineSession, (PageSnapshot?) -> Unit>>()
     @Volatile private var agentScript: String? = null
 
     private fun loadAgentScript(context: Context): String? {
@@ -79,6 +83,39 @@ object NexoAiPageAgent {
             context.applicationContext.assets.open(AGENT_ASSET).use { it.readBytes().toString(Charsets.UTF_8) }
         }.getOrNull()?.also { agentScript = it }
     }
+
+    /**
+     * Desenvuelve la respuesta JSON de `evaluateJavaScript`, soportando tanto un objeto
+     * JSON directo como una cadena JSON escapada.
+     */
+    internal fun unwrapJsonObject(raw: String?): JSONObject? {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty() || trimmed == "null" || trimmed == "undefined") return null
+        return runCatching {
+            when (val parsed = JSONTokener(trimmed).nextValue()) {
+                is JSONObject -> parsed
+                is String -> {
+                    val inner = parsed.trim()
+                    if (inner.startsWith("{")) JSONObject(inner) else null
+                }
+                else -> null
+            }
+        }.getOrNull()
+    }
+
+    private fun buildExtractScript(source: String, boundedChars: Int): String = """
+        (function(){
+          try {
+            $source
+            var snap = window.__nexoAiPageAgent
+              ? window.__nexoAiPageAgent.extractSafeSnapshot(document, window, $boundedChars)
+              : null;
+            return snap ? JSON.stringify(snap) : null;
+          } catch (_) {
+            return null;
+          }
+        })();
+    """.trimIndent()
 
     /** Captura una instantánea segura de la pestaña activa (o null si es inicio/privada bloqueada). */
     fun captureActiveSnapshot(
@@ -102,62 +139,34 @@ object NexoAiPageAgent {
             onDone(null, "No se pudo cargar el extractor de contexto.")
             return
         }
-        val reqId = java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+
+        val startDocGen = session.documentGeneration()
+        val settled = AtomicBoolean(false)
         val timeout = Runnable {
-            val removed = pendingSnapshots.remove(reqId)
-            if (removed != null) {
+            if (settled.compareAndSet(false, true)) {
                 onDone(
                     PageSnapshot(tab.title, tab.url, "", emptyList(), emptyList(), emptyList(), emptyList(), ""),
                     null
                 )
             }
         }
-        pendingSnapshots[reqId] = session to { snap ->
-            main.removeCallbacks(timeout)
-            onDone(snap, null)
-        }
-        main.postDelayed(timeout, 2500L)
+        main.postDelayed(timeout, SNAPSHOT_TIMEOUT_MS)
 
-        val token = JSONObject.quote(session.nxrToken)
-        val reqIdJson = JSONObject.quote(reqId)
         val bounded = NexoAiConfig.clampContextChars(maxChars)
-        val script = """
-            (function(){
-              try {
-                $source
-                var snap = window.__nexoAiPageAgent
-                  ? window.__nexoAiPageAgent.extractSafeSnapshot(document, window, $bounded)
-                  : null;
-                if (typeof window.cefriumQuery === 'function') {
-                  window.cefriumQuery({
-                    request: JSON.stringify({
-                      m: JSON.stringify({
-                        id: 1,
-                        kind: 'nexo_ai_snapshot',
-                        payload: { token: $token, reqId: $reqIdJson, snapshot: snap }
-                      }),
-                      s: -1
-                    }),
-                    onSuccess: function(){},
-                    onFailure: function(){}
-                  });
+        val script = buildExtractScript(source, bounded)
+        session.evaluateJsonInMainFrame(script) { raw ->
+            main.post {
+                if (!settled.compareAndSet(false, true)) return@post
+                main.removeCallbacks(timeout)
+                if (session.documentGeneration() != startDocGen) {
+                    onDone(null, "La página cambió durante la extracción de contexto. Inténtalo de nuevo.")
+                    return@post
                 }
-              } catch (_) {}
-            })();
-        """.trimIndent()
-        session.evaluateInMainFrame(script) {}
-    }
-
-    /** Recibe la instantánea enviada por `ai-page-agent.js` tras validar token y marco principal. */
-    internal fun onPageSnapshot(session: CefriumEngineSession, isMainFrame: Boolean, payload: JSONObject?): Boolean {
-        if (!isMainFrame || payload == null) return false
-        if (payload.optString("token") != session.nxrToken) return false
-        val reqId = payload.optString("reqId")
-        val entry = pendingSnapshots.remove(reqId) ?: return false
-        if (entry.first !== session) return false
-        val snap = parseSnapshot(payload.optJSONObject("snapshot"))
-        main.post { entry.second(snap) }
-        return true
+                val snap = parseSnapshot(unwrapJsonObject(raw))
+                    ?: PageSnapshot(tab.title, tab.url, "", emptyList(), emptyList(), emptyList(), emptyList(), "")
+                onDone(snap, null)
+            }
+        }
     }
 
     internal fun parseSnapshot(json: JSONObject?): PageSnapshot? {
@@ -210,7 +219,7 @@ object NexoAiPageAgent {
         )
     }
 
-    /** Resume las pestañas abiertas no privadas para el modo «Comparar pestañas». */
+    /** Resume títulos y hosts de pestañas abiertas no privadas (respaldo rápido síncrono). */
     fun buildOpenTabsContext(allowPrivate: Boolean): String {
         val tabs = TabManager.allTabs()
             .filter { !BrowserPrefs.isNexoHome(it.url) && (allowPrivate || !it.isPrivate) }
@@ -221,6 +230,86 @@ object NexoAiPageAgent {
             tabs.forEachIndexed { idx, tab ->
                 val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull().orEmpty()
                 appendLine("${idx + 1}. ${tab.title.ifBlank { host }} — $host")
+            }
+        }
+    }
+
+    /**
+     * Captura contexto real saneado de hasta [MAX_LIVE_COMPARE_TABS] pestañas vivas dentro
+     * del presupuesto total de caracteres, y añade título+host del resto de pestañas abiertas.
+     */
+    fun captureOpenTabsContext(
+        context: Context,
+        maxChars: Int,
+        allowPrivate: Boolean,
+        onDone: (String) -> Unit
+    ) {
+        val tabs = TabManager.allTabs()
+            .filter { !BrowserPrefs.isNexoHome(it.url) && (allowPrivate || !it.isPrivate) }
+            .take(12)
+        if (tabs.isEmpty()) {
+            onDone("No hay pestañas web abiertas para comparar.")
+            return
+        }
+        val source = loadAgentScript(context)
+        val activeId = TabManager.activeTab()?.id
+        val ordered = tabs.sortedByDescending { it.id == activeId }
+        val liveTargets = ordered
+            .mapNotNull { t -> (t.session as? CefriumEngineSession)?.let { s -> t to s } }
+            .take(MAX_LIVE_COMPARE_TABS)
+        if (source == null || liveTargets.isEmpty()) {
+            onDone(buildOpenTabsContext(allowPrivate))
+            return
+        }
+
+        val totalBudget = NexoAiConfig.clampContextChars(maxChars)
+        val perTabBudget = (totalBudget / liveTargets.size).coerceIn(1000, 2200)
+        val script = buildExtractScript(source, perTabBudget)
+        val snapshots = arrayOfNulls<PageSnapshot>(liveTargets.size)
+        val remaining = AtomicInteger(liveTargets.size)
+        val settled = AtomicBoolean(false)
+
+        fun finish() {
+            if (!settled.compareAndSet(false, true)) return
+            val liveMap = HashMap<String, PageSnapshot>()
+            liveTargets.forEachIndexed { idx, (tab, _) ->
+                snapshots[idx]?.let { liveMap[tab.id] = it }
+            }
+            val result = buildString {
+                appendLine("Comparación de pestañas abiertas (${ordered.size}; extracto saneado de ${liveMap.size}):")
+                ordered.forEachIndexed { idx, tab ->
+                    val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull().orEmpty()
+                    val title = tab.title.ifBlank { host }
+                    appendLine("\n--- Pestaña ${idx + 1}: $title ($host) ---")
+                    val snap = liveMap[tab.id]
+                    if (snap != null) {
+                        if (snap.headings.isNotEmpty()) {
+                            appendLine("Encabezados: ${snap.headings.take(5).joinToString(" | ")}")
+                        }
+                        if (snap.text.isNotBlank()) {
+                            appendLine(snap.text.take(perTabBudget - 300))
+                        }
+                    } else {
+                        appendLine("(solo metadatos disponibles: pestaña inactiva o en espera)")
+                    }
+                }
+            }.take(totalBudget)
+            main.post { onDone(result) }
+        }
+
+        val timeout = Runnable { finish() }
+        main.postDelayed(timeout, SNAPSHOT_TIMEOUT_MS)
+
+        liveTargets.forEachIndexed { idx, (_, session) ->
+            val startGen = session.documentGeneration()
+            session.evaluateJsonInMainFrame(script) { raw ->
+                if (session.documentGeneration() == startGen) {
+                    snapshots[idx] = parseSnapshot(unwrapJsonObject(raw))
+                }
+                if (remaining.decrementAndGet() == 0) {
+                    main.removeCallbacks(timeout)
+                    finish()
+                }
             }
         }
     }

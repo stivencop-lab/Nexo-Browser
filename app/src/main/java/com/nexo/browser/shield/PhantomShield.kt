@@ -585,12 +585,6 @@ object PhantomShield {
             )
             return answer(call.id, ok)
         }
-        if (call.kind == "nexo_ai_snapshot") {
-            val ok = session != null && com.nexo.browser.ai.NexoAiPageAgent.onPageSnapshot(
-                session, isMainFrame, call.payload as? JSONObject
-            )
-            return answer(call.id, ok)
-        }
         return when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })

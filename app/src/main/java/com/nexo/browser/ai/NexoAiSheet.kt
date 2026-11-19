@@ -45,6 +45,7 @@ object NexoAiSheet {
         var settings = NexoAiConfig.read(activity)
         var scope = "page" // "page" | "selection" | "tabs"
         var activeCancel: NexoAiClient.CancelHandle? = null
+        var requestGen = 0L
         var lastResponseText = ""
         var lastSnapshot: NexoAiPageAgent.PageSnapshot? = null
 
@@ -130,8 +131,10 @@ object NexoAiSheet {
         resultCard.addView(actionsBox)
 
         val cancelBtn = NexoUi.button(activity, "Cancelar solicitud", danger = true) {
+            requestGen++
             activeCancel?.cancel()
             activeCancel = null
+            cancelBtn.visibility = View.GONE
             statusView.text = "Solicitud cancelada."
         }.apply { visibility = View.GONE }
 
@@ -154,6 +157,7 @@ object NexoAiSheet {
                 return
             }
 
+            val myGen = ++requestGen
             activeCancel?.cancel()
             val handle = NexoAiClient.CancelHandle()
             activeCancel = handle
@@ -166,10 +170,12 @@ object NexoAiSheet {
             val activeHost = runCatching { android.net.Uri.parse(TabManager.activeTab()?.url.orEmpty()).host }.getOrNull().orEmpty()
 
             fun dispatchWithContext(contextText: String) {
+                if (myGen != requestGen || handle.isCancelled) return
                 io.execute {
                     val outcome = NexoAiClient.execute(settings, key, taskPrompt, contextText, handle)
                     main.post {
                         if (activity.isFinishing || activity.isDestroyed) return@post
+                        if (myGen != requestGen || handle.isCancelled) return@post
                         if (activeCancel === handle) {
                             activeCancel = null
                             cancelBtn.visibility = View.GONE
@@ -181,29 +187,38 @@ object NexoAiSheet {
                             usageText.text = res.usage?.let { "Tokens reportados por API: ${it.format()}" }
                                 ?: "Uso de tokens no reportado por el proveedor."
                             actionsBox.removeAllViews()
-                            actionsBox.addView(NexoUi.chipRow(activity, listOfNotNull(
-                                NexoUi.chip(activity, "Copiar respuesta", false) {
-                                    val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("Nexo AI", lastResponseText))
-                                    Toastish.show(activity, "Respuesta copiada.")
-                                },
+                            val chips = mutableListOf<View>()
+                            chips += NexoUi.chip(activity, "Copiar respuesta", false) {
+                                val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("Nexo AI", lastResponseText))
+                                Toastish.show(activity, "Respuesta copiada.")
+                            }
+                            if (res.actions.isNotEmpty()) {
+                                res.actions.forEach { proposed ->
+                                    val prefix = if (proposed.requiresConfirmation) "Confirmar: " else ""
+                                    chips += NexoUi.chip(activity, "$prefix${proposed.label}", false) {
+                                        NexoAiPageAgent.confirmAndExecuteAction(activity, proposed)
+                                    }
+                                }
+                            } else {
                                 lastSnapshot?.links?.firstOrNull()?.let { (label, href) ->
-                                    NexoUi.chip(activity, "Abrir enlace principal", false) {
+                                    chips += NexoUi.chip(activity, "Abrir enlace principal", false) {
                                         NexoAiPageAgent.confirmAndExecuteAction(
                                             activity,
                                             NexoAiClient.ProposedAction("open_link", label, href)
                                         )
                                     }
-                                },
+                                }
                                 lastSnapshot?.headings?.firstOrNull()?.let { h ->
-                                    NexoUi.chip(activity, "Resaltar encabezado", false) {
+                                    chips += NexoUi.chip(activity, "Resaltar encabezado", false) {
                                         NexoAiPageAgent.confirmAndExecuteAction(
                                             activity,
                                             NexoAiClient.ProposedAction("highlight", h, h)
                                         )
                                     }
                                 }
-                            )))
+                            }
+                            actionsBox.addView(NexoUi.chipRow(activity, chips))
                             resultCard.visibility = View.VISIBLE
                             NexoAiConfig.appendLog(activity, taskLabel, activeHost, "ok")
                         }.onFailure { err ->
@@ -216,13 +231,15 @@ object NexoAiSheet {
             }
 
             if (currentScope == "tabs") {
-                val tabsSummary = NexoAiPageAgent.buildOpenTabsContext(settings.allowPrivateTabs)
-                dispatchWithContext(tabsSummary)
+                NexoAiPageAgent.captureOpenTabsContext(activity, settings.maxContextChars, settings.allowPrivateTabs) { tabsContext ->
+                    if (myGen != requestGen || handle.isCancelled) return@captureOpenTabsContext
+                    dispatchWithContext(tabsContext)
+                }
                 return
             }
 
             NexoAiPageAgent.captureActiveSnapshot(activity, settings.maxContextChars, settings.allowPrivateTabs) { snap, errMsg ->
-                if (handle.isCancelled) return@captureActiveSnapshot
+                if (myGen != requestGen || handle.isCancelled) return@captureActiveSnapshot
                 if (errMsg != null || snap == null) {
                     activeCancel = null
                     cancelBtn.visibility = View.GONE
@@ -315,7 +332,11 @@ object NexoAiSheet {
             )
         )
         sheet.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        sheet.setOnDismissListener { activeCancel?.cancel() }
+        sheet.setOnDismissListener {
+            requestGen++
+            activeCancel?.cancel()
+            activeCancel = null
+        }
     }
 
     fun showSettingsSheet(activity: Activity, onSaved: () -> Unit = {}) {
