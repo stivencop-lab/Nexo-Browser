@@ -9,6 +9,7 @@ data class BrowserTab(
     var title: String = "Nueva pestaña",
     val isPrivate: Boolean = false,
     var desktopMode: Boolean = false,
+    var pinned: Boolean = false,
     var groupName: String? = null,
     val burnerId: String? = null,
     val burnerSeed: Int = java.security.SecureRandom().nextInt(),

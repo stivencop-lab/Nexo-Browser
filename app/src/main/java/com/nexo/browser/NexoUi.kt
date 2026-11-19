@@ -53,7 +53,7 @@ object NexoUi {
         Tone.INFO -> p.info.container to p.info.onContainer
     }
 
-    private fun bold(activity: Activity): Typeface =
+    fun bold(activity: Activity): Typeface =
         Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
 
     /** Contenedor vertical con los márgenes laterales de las hojas. */

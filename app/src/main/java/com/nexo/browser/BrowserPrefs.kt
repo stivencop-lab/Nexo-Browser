@@ -236,6 +236,9 @@ object BrowserPrefs {
     fun setNavActions(c: Context, v: String) = p(c).edit().putString("nav_actions", v).apply()
     fun autoHideBars(c: Context) = p(c).getBoolean("auto_hide_bars", true)
     fun setAutoHideBars(c: Context, v: Boolean) = p(c).edit().putBoolean("auto_hide_bars", v).apply()
+    /** Vista preferida de Nexo Tabs Pro: grid, compact o list. */
+    fun tabViewMode(c: Context) = p(c).getString("tab_view_mode", TabProModel.ViewMode.GRID.id) ?: TabProModel.ViewMode.GRID.id
+    fun setTabViewMode(c: Context, v: String) = p(c).edit().putString("tab_view_mode", v).apply()
     /** Repartir archivos grandes en varias conexiones (si el servidor lo admite). */
     fun parallelDownloads(c: Context) = p(c).getBoolean("parallel_downloads", true)
     fun setParallelDownloads(c: Context, v: Boolean) = p(c).edit().putBoolean("parallel_downloads", v).apply()
