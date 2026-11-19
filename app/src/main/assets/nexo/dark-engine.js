@@ -67,13 +67,34 @@
 
       const getStyle = (win && typeof win.getComputedStyle === "function") ? win.getComputedStyle : globalThis.getComputedStyle;
       if (typeof getStyle === "function") {
-        for (const el of [doc.body, root]) {
-          if (!el) continue;
-          const computed = getStyle(el);
-          if (!computed) continue;
-          const color = parseColor(computed.backgroundColor);
-          if (!color || color.a < 0.5) continue;
-          return luminance(color) < 0.35;
+        // Suspender temporalmente nuestra propia capa temprana/CSS mientras medimos el color real
+        // del documento para que `bootstrapEarly()` nunca provoque un falso positivo de "oscuro nativo".
+        const earlyEl = doc.getElementById ? doc.getElementById(EARLY_STYLE_ID) : null;
+        const engineEl = doc.getElementById ? doc.getElementById(ENGINE_STYLE_ID) : null;
+        const hadEarlyAttr = Boolean(root && root.getAttribute && root.getAttribute("data-nexo-dark-early") !== null);
+        const hadCssAttr = Boolean(root && root.getAttribute && root.getAttribute("data-nexo-dark-css") !== null);
+        const prevEarlyDisabled = earlyEl ? earlyEl.disabled : undefined;
+        const prevEngineDisabled = engineEl ? engineEl.disabled : undefined;
+        try {
+          if (earlyEl) earlyEl.disabled = true;
+          if (engineEl) engineEl.disabled = true;
+          if (hadEarlyAttr && root.removeAttribute) root.removeAttribute("data-nexo-dark-early");
+          if (hadCssAttr && root.removeAttribute) root.removeAttribute("data-nexo-dark-css");
+          for (const el of [doc.body, root]) {
+            if (!el) continue;
+            const computed = getStyle(el);
+            if (!computed) continue;
+            const color = parseColor(computed.backgroundColor);
+            if (!color || color.a < 0.5) continue;
+            return luminance(color) < 0.35;
+          }
+        } finally {
+          if (hadEarlyAttr && root.setAttribute) root.setAttribute("data-nexo-dark-early", "true");
+          if (hadCssAttr && root.setAttribute) root.setAttribute("data-nexo-dark-css", "true");
+          if (earlyEl && prevEarlyDisabled !== undefined) earlyEl.disabled = prevEarlyDisabled;
+          else if (earlyEl) earlyEl.disabled = false;
+          if (engineEl && prevEngineDisabled !== undefined) engineEl.disabled = prevEngineDisabled;
+          else if (engineEl) engineEl.disabled = false;
         }
       }
     } catch (_) {}
@@ -244,7 +265,7 @@
       };
 
       if (dr && typeof dr.enable === "function") {
-        if (!runEnable(dr)) applyCssLayer();
+        if (!runEnable(dr) && state.activeEngine !== "native") applyCssLayer();
         return;
       }
       if (typeof loadDarkReader === "function") {
@@ -306,15 +327,16 @@
       return state.activeEngine;
     }
 
+    const onPageShow = () => { if (state.want && !state.excluded) evaluate(); };
+
     function hookLifecycle() {
       if (state.domHooked || !doc || typeof doc.addEventListener !== "function") return;
       state.domHooked = true;
-      const recheck = () => { if (state.want && !state.excluded) evaluate(); };
       if (doc.readyState === "loading") {
-        doc.addEventListener("DOMContentLoaded", recheck, { once: true });
+        doc.addEventListener("DOMContentLoaded", onPageShow, { once: true });
       }
       if (win && typeof win.addEventListener === "function") {
-        win.addEventListener("pageshow", recheck);
+        win.addEventListener("pageshow", onPageShow, { passive: true });
       }
     }
 

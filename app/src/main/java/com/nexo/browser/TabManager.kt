@@ -1198,45 +1198,47 @@ object TabManager {
                     val array = JSONArray(raw)
 
                     for (i in 0 until array.length()) {
-                        val o = array.getJSONObject(i)
-                        tabs += BrowserTab(
-                            id = o.optString("id").ifBlank {
-                                UUID.randomUUID().toString()
-                            },
-                            url = o.optString(
-                                "url",
-                                BrowserPrefs.homePage(context)
-                            ).let { restoredUrl ->
-                                val candidate =
-                                    if (restoredUrl.startsWith("resource://android/assets/home/")) {
-                                        BrowserPrefs.homePage(context)
-                                    } else {
-                                        restoredUrl
-                                    }
-
-                                if (isSafeAppNavigationUrl(candidate)) {
-                                    candidate
-                                } else {
+                        val o = array.optJSONObject(i) ?: continue
+                        runCatching {
+                            tabs += BrowserTab(
+                                id = o.optString("id").ifBlank {
+                                    UUID.randomUUID().toString()
+                                },
+                                url = o.optString(
+                                    "url",
                                     BrowserPrefs.homePage(context)
-                                }
-                            },
-                            title = o.optString("title", "Pestaña"),
-                            isPrivate = false,
-                            groupName = TabGroupRules.name(o.optString("groupName")),
-                            networkProfile = if(o.has("network") && !o.isNull("network")) TabNetworkProfile.fromJson(o.optJSONObject("network")) ?: TabNetworkProfile(type="invalid") else null,
-                            desktopMode = o.optBoolean("desktopMode", false),
-                            lastUsed = o.optLong(
-                                "lastUsed",
-                                System.currentTimeMillis()
-                            ),
-                            isLoading =
-                                o.optBoolean(
-                                    "loading",
-                                    false
+                                ).let { restoredUrl ->
+                                    val candidate =
+                                        if (restoredUrl.startsWith("resource://android/assets/home/")) {
+                                            BrowserPrefs.homePage(context)
+                                        } else {
+                                            restoredUrl
+                                        }
+
+                                    if (isSafeAppNavigationUrl(candidate)) {
+                                        candidate
+                                    } else {
+                                        BrowserPrefs.homePage(context)
+                                    }
+                                },
+                                title = o.optString("title", "Pestaña"),
+                                isPrivate = false,
+                                groupName = TabGroupRules.name(o.optString("groupName")),
+                                networkProfile = if (o.has("network") && !o.isNull("network")) TabNetworkProfile.fromJson(o.optJSONObject("network")) ?: TabNetworkProfile(type = "invalid") else null,
+                                desktopMode = o.optBoolean("desktopMode", false),
+                                lastUsed = o.optLong(
+                                    "lastUsed",
+                                    System.currentTimeMillis()
                                 ),
-                            sessionState = o.optString("sessionState")
-                                .takeIf { it.isNotBlank() && it != "null" }
-                        )
+                                isLoading =
+                                    o.optBoolean(
+                                        "loading",
+                                        false
+                                    ),
+                                sessionState = o.optString("sessionState")
+                                    .takeIf { it.isNotBlank() && it != "null" }
+                            )
+                        }
                     }
 
                     activeId = BrowserPrefs.activeTabId(context)

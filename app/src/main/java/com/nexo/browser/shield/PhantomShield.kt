@@ -208,8 +208,11 @@ object PhantomShield {
     private fun readAi(aiConfig: Boolean, domains: Boolean) {
         val stored = store.get(JSONArray().put("aiConfig").put("aiAdDomains"))
         if (aiConfig) this.aiConfig = runCatching { ShieldAi.Config.from(stored.opt("aiConfig")) }.getOrDefault(ShieldAi.Config.OFF)
-        if (domains) learned = runCatching { ShieldAi.Learned.from(stored.opt("aiAdDomains"), System.currentTimeMillis()) }
-            .getOrDefault(ShieldAi.Learned.EMPTY)
+        if (domains) {
+            learned = runCatching { ShieldAi.Learned.from(stored.opt("aiAdDomains"), System.currentTimeMillis()) }
+                .getOrDefault(ShieldAi.Learned.EMPTY)
+            clearDecisionCache()
+        }
     }
 
     private fun reloadLists() {
@@ -217,6 +220,7 @@ object PhantomShield {
         val texts = FilterLists.LISTS.mapNotNull { list -> runCatching { store.listText(list.id) }.getOrNull()?.let { list.id to it } }.toMap()
         if (texts.isEmpty()) return
         runCatching { rules = FilterLists.build(data, texts) }
+        clearDecisionCache()
     }
 
     private fun updateIfDue() {
@@ -284,12 +288,14 @@ object PhantomShield {
         return "${if (enabled) "activo" else "apagado"} · anuncios=${settings.adblockEnabled} · popups=${settings.popupBlockEnabled} · " +
             "ia=${if (aiConfig.enabled) "activa (${ShieldAiHost.statusSummary()})" else "apagada"} · " +
             "reglas red=${rules.networkCount} cosméticas=${rules.cosmeticCount} · bloqueos=${blockedTotal.get()} · " +
+            "caché red=${decisionCacheHits.get()} aciertos/${decisionCacheMisses.get()} fallos · " +
             "listas actualizadas $ago · cookies=$cookieMode"
     }
 
     fun setEnabled(value: Boolean) {
         if (!started || enabled == value) return
         enabled = value
+        clearDecisionCache()
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, value).apply()
         // Las páginas abiertas vuelven a pedir su estado, como con un cambio de ajustes.
         broadcast(JSONObject().put("adblockEnabled", JSONObject().put("newValue", settings.adblockEnabled && value)))
@@ -361,10 +367,21 @@ object PhantomShield {
             val type = ShieldPolicy.typeFromEngine(request.type?.name.orEmpty(), url)
             val top = request.topLevelUrl?.takeIf { it.isNotEmpty() } ?: tab?.topUrl ?: url
             val document = request.documentUrl?.takeIf { it.isNotEmpty() } ?: top
-            val decision = runCatching {
-                ShieldPolicy.decide(rules.network, settings, popupDomains, url, type, UrlParts.host(top), document)
-                    .let { if (it == ShieldDecision.Allow && !request.isMainFrame && blocksLearned(url, type, top)) ShieldDecision.Block else it }
-            }.getOrDefault(ShieldDecision.Allow)
+            val topHost = UrlParts.host(top)
+            val cacheKey = if (!request.isMainFrame && url.length <= 320) "$type|${topHost.orEmpty()}|$url" else null
+            val cached = cacheKey?.let { decisionCache.get(it) }
+            val decision = if (cached != null) {
+                decisionCacheHits.incrementAndGet()
+                cached
+            } else {
+                if (cacheKey != null) decisionCacheMisses.incrementAndGet()
+                val computed = runCatching {
+                    ShieldPolicy.decide(rules.network, settings, popupDomains, url, type, topHost, document)
+                        .let { if (it == ShieldDecision.Allow && !request.isMainFrame && blocksLearned(url, type, top)) ShieldDecision.Block else it }
+                }.getOrDefault(ShieldDecision.Allow)
+                if (cacheKey != null) decisionCache.put(cacheKey, computed)
+                computed
+            }
             return when (decision) {
                 ShieldDecision.Allow -> forget(url)
                 ShieldDecision.Block -> { forget(url); recordBlocked(tab); true }
@@ -397,6 +414,28 @@ object PhantomShield {
     private class CookieInterceptor(tab: ShieldTab) : Interceptor(tab) {
         override fun onCanSendCookie(url: String?, name: String?, value: String?): Boolean = cookieAllowed(tab, url)
         override fun onCanSaveCookie(url: String?, name: String?, value: String?): Boolean = cookieAllowed(tab, url)
+    }
+
+    internal class DecisionLruCache(private val maxEntries: Int = DECISION_CACHE_MAX) {
+        private val map = object : LinkedHashMap<String, ShieldDecision>(128, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ShieldDecision>?): Boolean =
+                size > maxEntries
+        }
+
+        @Synchronized fun get(key: String): ShieldDecision? = map[key]
+        @Synchronized fun put(key: String, value: ShieldDecision) { map[key] = value }
+        @Synchronized fun clear() { map.clear() }
+        @Synchronized fun size(): Int = map.size
+    }
+
+    private const val DECISION_CACHE_MAX = 1024
+    private val decisionCache = DecisionLruCache(DECISION_CACHE_MAX)
+    private val decisionCacheHits = AtomicLong(0L)
+    private val decisionCacheMisses = AtomicLong(0L)
+    private val inFlightAiPages = ConcurrentHashMap<String, Boolean>()
+
+    private fun clearDecisionCache() {
+        decisionCache.clear()
     }
 
     private const val MAX_ANSWERS = 256
@@ -634,10 +673,16 @@ object PhantomShield {
             return
         }
         val page = tab.page
+        val flightKey = "${tab.id}:$page"
+        if (inFlightAiPages.putIfAbsent(flightKey, true) != null) {
+            done(JSONObject().put("ok", false).put("code", "busy").put("error", "Análisis de IA ya en curso para esta página."))
+            return
+        }
         val candidates = enrichCandidates(message.optJSONArray("candidates"), tab.topUrl ?: origin)
         val sender = JSONObject().put("tabId", tab.id).put("page", page).put("host", host).put("incognito", tab.isPrivate)
             .put("known", JSONArray(knownAdHosts(candidates)))
         ShieldAiHost.request(JSONObject().put("type", "AI_CLASSIFY").put("candidates", candidates), sender) { result ->
+            inFlightAiPages.remove(flightKey)
             val json = result as? JSONObject
             if (tab.page != page) {
                 done(JSONObject().put("ok", false).put("code", "changed").put("error", "La página cambió."))
@@ -874,7 +919,10 @@ object PhantomShield {
 
     private fun onStorageChanged(changes: JSONObject) {
         if (changes.has("adblockEnabled") || changes.has("privacyEnabled") || changes.has("popupBlockEnabled") ||
-            changes.has("antiBlockEnabled") || changes.has("disabled_domains")) readSettings()
+            changes.has("antiBlockEnabled") || changes.has("disabled_domains")) {
+            readSettings()
+            clearDecisionCache()
+        }
         if (changes.has("aiConfig") || changes.has("aiAdDomains")) readAi(changes.has("aiConfig"), changes.has("aiAdDomains"))
         broadcast(changes)
     }
