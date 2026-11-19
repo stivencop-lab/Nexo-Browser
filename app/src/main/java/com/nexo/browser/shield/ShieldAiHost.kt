@@ -47,8 +47,8 @@ internal object ShieldAiHost {
     private val pending = LinkedHashMap<Int, (Any?) -> Unit>()
     private val timeouts = HashMap<Int, Runnable>()
     private val queue = ArrayList<String>()
-    private val closeIdle = Runnable { close("sin uso") }
-    private val startTimeout = Runnable {
+    private val closeIdle: Runnable = Runnable { close("sin uso") }
+    private val startTimeout: Runnable = Runnable {
         if (browser != null && !ready) close("no cargó en ${START_TIMEOUT_MS / 1000} s", "No se pudo iniciar la IA de PhantomShield. Inténtalo de nuevo.")
     }
 
@@ -78,7 +78,7 @@ internal object ShieldAiHost {
      * Envía [message] (ya autorizado por Nexo) al anfitrión, con [sender]
      * como remitente. [done] recibe la respuesta, o un error con `ok: false`.
      */
-    fun request(message: JSONObject, sender: JSONObject, done: (Any?) -> Unit) = onMain {
+    fun request(message: JSONObject, sender: JSONObject, done: (Any?) -> Unit): Unit = onMain {
         main.removeCallbacks(closeIdle)
         main.postDelayed(closeIdle, IDLE_CLOSE_MS)
         if (!ensure()) {
@@ -101,9 +101,9 @@ internal object ShieldAiHost {
     }
 
     /** Cambios del almacén para `storage.onChanged` del anfitrión. */
-    fun storageChanged(text: String) = onMain { if (ready) channel?.push(text) }
+    fun storageChanged(text: String): Unit = onMain { if (ready) channel?.push(text) }
 
-    fun close(reason: String, message: String = "La IA se reinició. Inténtalo de nuevo.") = onMain {
+    fun close(reason: String, message: String = "La IA se reinició. Inténtalo de nuevo."): Unit = onMain {
         main.removeCallbacks(closeIdle)
         main.removeCallbacks(startTimeout)
         val current = browser ?: return@onMain
