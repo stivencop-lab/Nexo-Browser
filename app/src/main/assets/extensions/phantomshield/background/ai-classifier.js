@@ -46,7 +46,7 @@
   // Mensajes seguros para la interfaz: nunca incluyen el cuerpo que devuelve el proveedor.
   const MESSAGES = Object.freeze({
     auth: 'El proveedor rechazó la clave de API. Revísala en Configurar IA.',
-    model: 'El proveedor no encontró ese modelo o dirección. Revisa el identificador del modelo.',
+    model: 'El proveedor no encontró ese modelo, lo retiró o tu cuenta no tiene acceso. Revisa el identificador del modelo.',
     request: 'El proveedor rechazó la solicitud. Revisa que el modelo y el protocolo elegido coincidan.',
     rate: 'El proveedor limitó las solicitudes o no hay saldo. Se reintentará más tarde.',
     server: 'El proveedor de IA tiene un problema temporal. Se reintentará más tarde.',
@@ -75,7 +75,8 @@
 
   function httpError(status, detail) {
     if (status === 401 || status === 403) return new AIError('auth', status, detail);
-    if (status === 404) return new AIError('model', status, detail);
+    // 410: el proveedor retiró el modelo (NVIDIA lo hace con modelos en fin de vida).
+    if (status === 404 || status === 410) return new AIError('model', status, detail);
     if (status === 429 || status === 402) return new AIError('rate', status, detail);
     if (status === 408) return new AIError('timeout', status, detail);
     if (status >= 500) return new AIError('server', status, detail);
@@ -103,6 +104,9 @@
     return value
       .replace(/(sk-|nvapi-|sk-ant-|gsk_|xai-|AIza)[A-Za-z0-9_\-]{6,}/g, '[clave]')
       .replace(/Bearer\s+\S+/gi, 'Bearer [clave]')
+      // Identificadores de cuenta o de función: no ayudan a arreglarlo y son datos de la cuenta.
+      .replace(/(account|cuenta|org(?:anization)?)\s+'[^']{6,}'/gi, '$1')
+      .replace(/(Function)\s+'[0-9a-f-]{20,}'/gi, '$1')
       .replace(/[\u0000-\u001f\u007f]+/g, ' ')
       .trim()
       .slice(0, 200);

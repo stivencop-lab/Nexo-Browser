@@ -83,7 +83,7 @@
   const STATE_TEXT = {
     ok: 'Última llamada correcta',
     auth: 'La API rechazó la clave',
-    model: 'Modelo o dirección no encontrados',
+    model: 'Modelo no disponible (no existe, retirado o sin acceso)',
     request: 'La API rechazó la solicitud',
     rate: 'Límite del proveedor o sin saldo',
     server: 'Fallo temporal del proveedor',
@@ -91,7 +91,8 @@
     network: 'Sin conexión con el proveedor',
     format: 'Respuesta ilegible',
     refusal: 'El modelo declinó responder',
-    unavailable: 'Ningún proveedor responde ahora'
+    unavailable: 'Ningún proveedor responde ahora',
+    pending: 'El proveedor no respondió a tiempo (HTTP 202)'
   };
   async function showState() {
     const stored = await browser.storage.local.get({ aiStatus: null });
@@ -305,7 +306,7 @@
   const PROVIDER_STATE = {
     ok: 'responde', auth: 'clave rechazada', model: 'modelo no encontrado', request: 'solicitud rechazada',
     rate: 'límite o sin saldo', server: 'fallo del proveedor', timeout: 'tiempo agotado', network: 'sin conexión',
-    format: 'respuesta ilegible', refusal: 'declinó responder'
+    format: 'respuesta ilegible', refusal: 'declinó responder', pending: 'sin respuesta a tiempo (HTTP 202)'
   };
   /** Último estado conocido de cada proveedor de la cadena. */
   async function showProviders() {
