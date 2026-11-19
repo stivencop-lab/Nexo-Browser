@@ -105,7 +105,7 @@ dependencies {
     implementation("com.materialkolor:material-color-utilities:3.0.1")
     implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
     // WebSocket para los subtítulos en vivo (Deepgram).
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.1")
 
     testImplementation("junit:junit:4.13.2")
     // org.json real en las pruebas JVM (el de Android es un stub).
