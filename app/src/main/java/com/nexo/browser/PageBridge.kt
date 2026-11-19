@@ -291,9 +291,8 @@ object PageBridge {
     }
 
     private fun browserState(context: Context, session: EngineSession): JSONObject {
-        val night = NightMode.effective(context)
         val host = TabManager.tabForSession(session)?.url?.let { SuggestionIndex.hostOf(it) }
-        val exception = BrowserPrefs.isNightException(context, host)
+        val policy = com.nexo.browser.dark.DarkEngine.policyFor(context, host)
         return JSONObject()
             .put("type", "browser_state")
             .put("accent", BrowserPrefs.accent(context))
@@ -301,9 +300,11 @@ object PageBridge {
             .put("showBadge", false)
             .put("backgroundMedia", BrowserPrefs.backgroundMedia(context))
             .put("smartPip", BrowserPrefs.smartPip(context))
-            .put("night", night != null && !exception)
-            .put("nightException", exception)
-            .put("nightBackground", night ?: "")
+            .put("night", policy.enabled)
+            .put("nightException", policy.excluded)
+            .put("nightBackground", if (policy.enabled) policy.backgroundHex else "")
+            .put("darkStrategy", policy.strategy)
+            .put("darkOled", policy.oled)
     }
 
     /**

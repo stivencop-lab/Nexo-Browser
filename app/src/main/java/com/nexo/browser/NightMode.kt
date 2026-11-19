@@ -1,28 +1,25 @@
 package com.nexo.browser
 
 import android.content.Context
-import android.content.res.Configuration
+import com.nexo.browser.dark.DarkEngine
 
 /**
- * Modo nocturno de las páginas (Dark Reader, cargado bajo demanda por el
- * puente). Activo con Midnight, OLED o el tema del sistema en oscuro; cada
- * sitio puede excluirse desde las herramientas de la dirección.
+ * Fachada compatible hacia [DarkEngine] (Nexo Dark Engine).
+ * Activo según el modo configurado (`auto`, `light`, `dark`, `oled`) y
+ * excepciones por dominio.
  */
 object NightMode {
-    /** Color de fondo para las páginas oscurecidas, o null si el modo nocturno no aplica. */
-    fun effective(context: Context): String? = when (BrowserPrefs.theme(context)) {
-        BrowserPrefs.THEME_OLED -> "#000000"
-        BrowserPrefs.THEME_MIDNIGHT -> "#0c1222"
-        BrowserPrefs.THEME_SYSTEM -> {
-            val night = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-            if (night == Configuration.UI_MODE_NIGHT_YES) "#0c1222" else null
-        }
-        else -> null
-    }
+    /** Color de fondo para las páginas oscurecidas, o null si el modo oscuro no aplica. */
+    fun effective(context: Context, hostOrUrl: String? = null): String? =
+        DarkEngine.effectiveBackground(context, hostOrUrl)
 
     /** Cambia la excepción del sitio y la aplica al momento a todos sus marcos. */
     fun toggleSite(context: Context, host: String, excluded: Boolean) {
         BrowserPrefs.setNightException(context, host, excluded)
-        ExtensionManager.sendBrowserState(context)
+        if (!excluded && DarkEngine.siteMode(context, host) == DarkEngine.MODE_LIGHT) {
+            DarkEngine.setSiteMode(context, host, null)
+        } else {
+            ExtensionManager.sendBrowserState(context)
+        }
     }
 }

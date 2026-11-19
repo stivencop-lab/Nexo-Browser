@@ -912,6 +912,7 @@ object PhantomShield {
         private fun asset(path: String) = context.assets.open(path).use { it.readBytes().toString(Charsets.UTF_8) }
         private val shim = asset("nexo/phantom-shim.js")
         private val port = asset("nexo/cefrium-port.js")
+        private val darkEngine = asset("nexo/dark-engine.js")
         private val media = asset("nexo/media-reporter.js")
         private val bridgeShim = asset("nexo/bridge-shim.js")
         private val bridge = asset("nexo/bridge/page-bridge.js")
@@ -926,6 +927,8 @@ object PhantomShield {
         val content: String = buildString {
             append("(function(){'use strict';\n")
             append("if (!/^https?:$/.test(location.protocol)) return;\n")
+            // Nexo Dark Engine temprano: corre en document_start antes de que parsee el CSS de la página.
+            append("try {\n").append(darkEngine).append("\n} catch (_) {}\n")
             append(port).append('\n')
             append("if (!nexoCefriumPort(window === window.top)) return;\n")
             // Los medios y el puente de Nexo capturan el puerto antes de que el shim de PhantomShield lo retire.

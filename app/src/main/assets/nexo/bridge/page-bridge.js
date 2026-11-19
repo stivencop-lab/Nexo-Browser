@@ -89,25 +89,34 @@
     if (!state || typeof state !== "object") return;
     backgroundMedia = state.backgroundMedia !== false;
     // Solo los mensajes que traen el modo nocturno lo cambian (otras respuestas parciales no lo apagan).
-    if (typeof state.night === "boolean") setNight(state.night, typeof state.nightBackground === "string" ? state.nightBackground : "");
+    if (typeof state.night === "boolean") {
+      setNight(
+        state.night,
+        typeof state.nightBackground === "string" ? state.nightBackground : "",
+        typeof state.darkStrategy === "string" ? state.darkStrategy : "hybrid",
+        state.darkOled === true,
+        state.nightException === true
+      );
+    }
   }
 
   // ---------------------------------------------------------------
-  // Modo nocturno (Dark Reader, cargado bajo demanda)
+  // Nexo Dark Engine (híbrido temprano + Dark Reader bajo demanda)
   // ---------------------------------------------------------------
 
-  /*
-   * Con Midnight, OLED o el tema oscuro del sistema, las páginas claras se
-   * oscurecen con el motor dinámico de Dark Reader (también contenido que
-   * aparece después e iframes: cada marco decide por sí mismo). Las páginas
-   * que ya son oscuras se respetan. Imágenes y videos conservan sus colores.
-   * El motor solo se carga en el marco que lo necesita; al desactivarlo se
-   * retiran sus estilos y observadores.
-   */
-  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false, earlyStyle: null };
+  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false, earlyStyle: null, controller: null };
 
-  // Fallback de primer render: no oculta la página; solo pinta el canvas base mientras
-  // Dark Reader calcula los estilos completos. Chromium ya anuncia el esquema oscuro nativo.
+  if (globalThis.nexoDarkEngine && typeof globalThis.nexoDarkEngine.createController === "function") {
+    night.controller = globalThis.nexoDarkEngine.createController({
+      document,
+      window,
+      loadDarkReader: () => loadDarkReader(),
+      getDarkReader: () => (typeof DarkReader !== "undefined" ? DarkReader : null)
+    });
+    night.controller.bootstrapEarly();
+  }
+
+  // Fallback de primer render si dark-engine.js no está cargado (entornos de prueba aislados).
   function applyEarlyNight(enabled) {
     try {
       const root = document.documentElement;
@@ -172,8 +181,6 @@
     loadDarkReader().then(ok => {
       if (!ok || !night.want || night.active || pageAlreadyDark()) return;
       try {
-        // fetch del script (principal de la extensión): puede leer hojas de estilo de otros
-        // orígenes; window.fetch sería el de la página, limitado por CORS.
         DarkReader.setFetchMethod(url => fetch(url, { credentials: "omit" }));
         DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
           darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" });
@@ -182,9 +189,20 @@
     });
   }
 
-  function setNight(want, background) {
+  function setNight(want, background, strategy, oled, excluded) {
     if (/^#[0-9a-f]{6}$/i.test(background)) night.background = background;
     night.want = want;
+    if (night.controller) {
+      night.controller.applyConfig({
+        enabled: want,
+        background: night.background,
+        strategy: strategy || "hybrid",
+        oled: Boolean(oled),
+        excluded: Boolean(excluded)
+      });
+      night.active = want && !excluded;
+      return;
+    }
     applyEarlyNight(want);
     if (!want) {
       if (night.active && darkReaderReady()) { try { DarkReader.disable(); } catch (_) {} }
@@ -192,12 +210,10 @@
       return;
     }
     if (night.active) {
-      // Cambió el tema (Midnight ↔ OLED): mismos estilos, otro fondo.
       try { DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
         darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" }); } catch (_) {}
       return;
     }
-    // El script se ejecuta en document_start; no esperes a DOMContentLoaded.
     enableNight();
   }
 
