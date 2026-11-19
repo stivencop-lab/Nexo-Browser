@@ -59,6 +59,19 @@ class UiThemeRegressionTest {
             assertTrue(spinner.height >= 48 * activity.resources.displayMetrics.density)
             val save = activity.findViewById<Button>(R.id.saveSettingsButton)
             assertTrue("Multiline action must not clip", save.height >= save.layout.height + save.compoundPaddingTop + save.compoundPaddingBottom)
+            for (buttonId in listOf(R.id.perfLogButton, R.id.transferProfileButton, R.id.checkUpdatesButton, R.id.resetSettingsButton)) {
+                val btn = activity.findViewById<Button>(buttonId)
+                assertNotNull(btn.background)
+                assertFalse(btn.isAllCaps)
+                assertTrue(btn.height >= 44 * activity.resources.displayMetrics.density)
+            }
+            val threeTiles = NexoSheets.primaryActions(activity, listOf(
+                SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") {},
+                SheetAction(R.drawable.ic_menu_private, "Privada") {},
+                SheetAction(R.drawable.ic_menu_burner, "Burner", subtitle = "Aislada + correo") {}
+            )) {}
+            measure(threeTiles, 360, 140)
+            assertTrue(threeTiles.measuredHeight >= 76 * activity.resources.displayMetrics.density)
             assertTrue(ThemeManager.palette(activity).isDark == (mode != BrowserPrefs.THEME_LIGHT &&
                 (mode != BrowserPrefs.THEME_SYSTEM || app.resources.configuration.uiMode and 0x30 == 0x20)))
             capture(root, "settings-$mode-font200")

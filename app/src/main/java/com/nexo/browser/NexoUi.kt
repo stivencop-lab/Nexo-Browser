@@ -241,11 +241,11 @@ object NexoUi {
         }
     }
 
-    /** Botón ancho (principal o tonal) de 50dp. */
+    /** Botón ancho (principal o tonal) con altura adaptable (mínimo 48dp). */
     fun button(activity: Activity, label: String, primary: Boolean = false, danger: Boolean = false, onClick: () -> Unit): Button =
         Button(activity).apply {
             text = label
-            textSize = 15f
+            textSize = 14.5f
             minHeight = 0
             minimumHeight = 0
             ThemeManager.styleButton(activity, this, primary = primary, danger = danger)
@@ -253,7 +253,7 @@ object NexoUi {
         }
 
     fun buttonParams(activity: Activity, topDp: Float = 10f): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 50f)).apply {
+        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(activity, topDp)
         }
 

@@ -148,18 +148,29 @@ object PhantomShieldPanel {
             }
         }
         WindowPrivacy.inherit(dialog.window, activity.window)
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(sheet) { _, insets ->
+            val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            val bottom = maxOf(safe.bottom, insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom)
+            sheet.setPadding(safe.left, 0, safe.right, bottom)
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
         current = dialog
         currentBrowser = web
+        val metrics = activity.resources.displayMetrics
+        val sheetWidth = minOf(metrics.widthPixels, dp(UiLayout.SHEET_MAX_DP.toFloat()))
+        val sheetHeight = minOf((metrics.heightPixels * 0.85f).toInt(), dp(720f))
         dialog.show()
         dialog.window?.apply {
-            val metrics = activity.resources.displayMetrics
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, minOf((metrics.heightPixels * 0.85f).toInt(), dp(720f)))
+            setLayout(sheetWidth, sheetHeight)
             setGravity(Gravity.BOTTOM)
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(this, false)
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             setDimAmount(0.45f)
+            navigationBarColor = Color.TRANSPARENT
             setWindowAnimations(android.R.style.Animation_InputMethod)
         }
+        androidx.core.view.ViewCompat.requestApplyInsets(sheet)
         runCatching { web.onResume(); web.setPageVisible(true) }
         web.loadUrl(PhantomShield.BASE_URL + "popup/popup.html")
         return true

@@ -64,14 +64,55 @@ class MigrationActivity : Activity() {
     private lateinit var actions: LinearLayout
     private var busy = false
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
         check(MigrationMode.cold && !com.nexo.browser.engine.Engines.current.isStarted())
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24,32,24,24) }
-        status = TextView(this).apply { text = "Transferencia de Nexo · ${packageName}\nEl motor web está detenido. La importación reemplaza ajustes, historial, accesos y pestañas normales. Conserva los datos anteriores del destino hasta que decidas eliminarlos. No se importan cookies, datos de los sitios ni descargas." }
-        password = EditText(this).apply { hint = "Contraseña de la copia (mínimo 12 caracteres)"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        val p = ThemeManager.palette(this)
+        val d = resources.displayMetrics.density
+        fun dp(v: Float) = (v * d).toInt()
+
+        val box = ContentColumn(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.CENTER_HORIZONTAL
+            )
+            setPadding(dp(16f), dp(20f), dp(16f), dp(24f))
+        }
+        val titleView = TextView(this).apply {
+            text = "Transferencia cifrada del perfil"
+            textSize = 19f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(p.text)
+            setPadding(dp(4f), 0, dp(4f), dp(10f))
+        }
+        status = TextView(this).apply {
+            text = "Transferencia de Nexo · ${packageName}\nEl motor web está detenido. La importación reemplaza ajustes, historial, accesos y pestañas normales. Conserva los datos anteriores del destino hasta que decidas eliminarlos. No se importan cookies, datos de los sitios ni descargas."
+            textSize = 13.5f
+            setLineSpacing(0f, 1.18f)
+            setTextColor(p.text)
+        }
+        val statusCard = NexoUi.card(this).apply {
+            addView(status)
+        }
+        password = EditText(this).apply {
+            hint = "Contraseña de la copia (mínimo 12 caracteres)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+            textSize = 14.5f
+            minHeight = dp(48f)
+            setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
+            ThemeManager.styleEdit(this@MigrationActivity, this)
+        }
         actions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fun button(label: String, action: () -> Unit) { actions.addView(Button(this).apply { text = label; setOnClickListener { if(!busy) action() } }) }
-        button("Exportar copia cifrada") { pick(true) }
+        fun button(label: String, primary: Boolean = false, danger: Boolean = false, action: () -> Unit) {
+            actions.addView(
+                NexoUi.button(this, label, primary = primary, danger = danger) { if (!busy) action() },
+                NexoUi.buttonParams(this, 8f)
+            )
+        }
+        button("Exportar copia cifrada", primary = true) { pick(true) }
         button("Importar y reemplazar datos") {
             AlertDialog.Builder(this).setMessage("Valida toda la copia antes de reemplazar. Los datos anteriores del destino quedarán guardados para restaurar. ¿Continuar?")
                 .setPositiveButton("Seleccionar copia") { _,_ -> pick(false) }.setNegativeButton("Cancelar",null).show()
@@ -81,7 +122,7 @@ class MigrationActivity : Activity() {
                 .setPositiveButton("Restaurar") { _,_ -> work { MigrationMode.markDataChanged(); MigrationMode.commit(this).restore(); "Restauración terminada. Sal del modo de transferencia y vuelve a abrir Nexo." } }
                 .setNegativeButton("Cancelar",null).show()
         }
-        button("Eliminar respaldo anterior del destino") {
+        button("Eliminar respaldo anterior del destino", danger = true) {
             AlertDialog.Builder(this).setMessage("Elimina de forma irreversible el respaldo del destino de la última importación. La copia exportada y el paquete antiguo se conservan.")
                 .setPositiveButton("Eliminar respaldo") { _,_ -> work { MigrationMode.commit(this).discardBackup(); "Respaldo eliminado." } }.setNegativeButton("Cancelar",null).show()
         }
@@ -89,7 +130,17 @@ class MigrationActivity : Activity() {
             if (MigrationMode.commit(this).state() in listOf("applying", "restoring")) status.text = "Restaura primero la importación interrumpida."
             else MigrationMode.leave(this)
         } }
-        box.addView(status);box.addView(password);box.addView(actions);setContentView(ScrollView(this).apply { addView(box) })
+        box.addView(titleView)
+        box.addView(statusCard)
+        box.addView(password, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(12f)
+            bottomMargin = dp(4f)
+        })
+        box.addView(actions)
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(p.background)
+            addView(box)
+        })
         work { MigrationMode.commit(this).recover();
             File(filesDir,"transfer-work").deleteRecursively()
             "Modo de transferencia listo. Si hubo una importación interrumpida, se restauraron los originales."

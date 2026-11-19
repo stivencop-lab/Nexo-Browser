@@ -485,7 +485,13 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_pdf, "Guardar PDF") { savePageAsPdf() },
             if (reopen != null) SheetAction(R.drawable.ic_menu_reopen, "Reabrir cerrada") { TabManager.reopenClosed() }
             else SheetAction(R.drawable.ic_tab_tools, "Herramientas") { TabTools.show(this) },
-            SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) }
+            SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) },
+            SheetAction(
+                R.drawable.ic_menu_update,
+                if (AppUpdater.hasAvailableUpdate(this)) "Actualizar Nexo (v${AppUpdater.knownLatestVersion(this)})" else "Buscar actualizaciones",
+                active = AppUpdater.hasAvailableUpdate(this),
+                subtitle = if (AppUpdater.hasAvailableUpdate(this)) "Nueva versión lista para instalar" else null
+            ) { AppUpdater.checkManual(this) }
         ).filter { onPage || it.icon !in PAGE_ONLY_ACTIONS }
         val menuHeader = LinearLayout(this).apply {
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -527,9 +533,10 @@ class MainActivity :
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16f), dp(8f), dp(16f), dp(10f))
             addView(TextView(this@MainActivity).apply {
-                text = "EXTENSIONES  ›"; textSize = 10f; letterSpacing = 0.08f
-                typeface = resources.getFont(R.font.inter_variable); setTextColor(p.accent)
-                minimumHeight = dp(40f); gravity = android.view.Gravity.CENTER_VERTICAL
+                text = "EXTENSIONES  ›"; textSize = 11.5f; letterSpacing = 0.07f
+                typeface = android.graphics.Typeface.create(resources.getFont(R.font.inter_variable), android.graphics.Typeface.BOLD)
+                setTextColor(p.accent)
+                minimumHeight = dp(48f); gravity = android.view.Gravity.CENTER_VERTICAL
                 isClickable = true; contentDescription = "Administrar extensiones"
                 setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
             })
@@ -997,7 +1004,8 @@ class MainActivity :
             BrowserPrefs.maxLiveTabs(this).toString(),
             BrowserPrefs.dnsProvider(this), BrowserPrefs.cookieMode(this),
             BrowserPrefs.httpsOnly(this).toString(), BrowserPrefs.globalPrivacyControl(this).toString(),
-            BrowserPrefs.smartPip(this).toString(), BrowserPrefs.backgroundMedia(this).toString()
+            BrowserPrefs.smartPip(this).toString(), BrowserPrefs.backgroundMedia(this).toString(),
+            BrowserPrefs.captionsEnabled(this).toString()
         ).joinToString("|")
 
     /*
@@ -1283,7 +1291,9 @@ class MainActivity :
         super.onResume()
         BrowserHosts.attach(this)
         LiveCaptions.reapply(this)
+        refreshCaptionsUi()
         ExtensionManager.attachPromptActivity(this)
+        AppUpdater.resumePendingInstallIfAllowed(this)
         TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
         ExtensionManager.consumePendingAction { ok, message ->
             if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
@@ -1297,6 +1307,7 @@ class MainActivity :
                 recreate()
             }
             LegacyImport.noticeInOldApp(this)
+            AppUpdater.checkIfDue(this)
         }, 900L)
         if (themeKey.isNotBlank() && themeKey != ThemeManager.themeKey(this)) {
             // Diálogos, menús y controles del sistema dependen del tema de la

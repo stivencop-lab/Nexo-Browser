@@ -10,11 +10,11 @@
         android:id="@+id/settingsHeader"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:minHeight="64dp"
+        android:minHeight="54dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="20dp">
+        android:paddingStart="6dp"
+        android:paddingEnd="16dp">
 
         <ImageButton
             android:id="@+id/backButton"
@@ -30,8 +30,10 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="4dp"
             android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
             android:text="Configuración"
-            android:textSize="22sp"
+            android:textSize="18.5sp"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -43,708 +45,949 @@
         android:scrollbars="none">
 
         <com.nexo.browser.ContentColumn
+            android:id="@+id/settingsColumn"
             android:layout_gravity="center_horizontal"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="24dp">
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="18dp">
+
+            <FrameLayout
+                android:id="@+id/settingsSearchBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="4dp">
+
+                <EditText
+                    android:id="@+id/settingsSearchInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:drawableStart="@drawable/ic_search"
+                    android:drawablePadding="10dp"
+                    android:hint="Buscar en configuración…"
+                    android:imeOptions="actionSearch|flagNoExtractUi"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:paddingStart="14dp"
+                    android:paddingTop="8dp"
+                    android:paddingEnd="44dp"
+                    android:paddingBottom="8dp"
+                    android:singleLine="true"
+                    android:textSize="14sp" />
+
+                <ImageButton
+                    android:id="@+id/settingsSearchClear"
+                    android:layout_width="@dimen/touch_target"
+                    android:layout_height="@dimen/touch_target"
+                    android:layout_gravity="end|center_vertical"
+                    android:contentDescription="Borrar búsqueda"
+                    android:scaleType="center"
+                    android:src="@drawable/ic_menu_close"
+                    android:visibility="gone" />
+            </FrameLayout>
 
             <Button
                 android:id="@+id/defaultBrowserButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-            android:minHeight="52dp"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="6dp"
+                android:minHeight="@dimen/touch_target"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="2dp"
                 android:text="@string/default_browser"
                 android:textAllCaps="false"
-                android:textSize="15sp" />
+                android:textSize="13.5sp" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Apariencia"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
                 android:tag="card">
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Tema"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/themeSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Color de acento"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/accentSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Tamaño del texto de las páginas"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/textSizeSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/forceZoomSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Permitir zoom en todas las páginas"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Búsqueda e inicio"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
                 android:tag="card">
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Motor de búsqueda"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/searchSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/nexoHomeSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Página de inicio de Nexo"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/freeSearchSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Búsqueda sin SafeSearch forzado"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Navegación"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
                 android:tag="card">
+
                 <Switch
                     android:id="@+id/pullToRefreshSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Deslizar hacia abajo para recargar"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/dockGesturesSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Gestos en la barra inferior (cambiar de pestaña)"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/parallelDownloadsSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Descargas en varias conexiones"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/desktopDefaultSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Versión de escritorio por defecto"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Reproducción automática"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/autoplaySpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/javascriptSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
-                    android:text="JavaScript"
-                    android:textSize="15sp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
+                    android:text="Permitir JavaScript"
+                    android:textSize="14sp" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Multimedia"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="8dp"
                 android:tag="card">
+
                 <Switch
                     android:id="@+id/smartPipSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Mini video al salir de la app"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/backgroundMediaSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Reproducción en segundo plano"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:layout_marginBottom="12dp"
+                    android:layout_marginTop="1dp"
+                    android:layout_marginBottom="4dp"
                     android:tag="muted"
-                    android:text="Puede aumentar el consumo de batería."
-                    android:textSize="12.5sp" />
+                    android:text="Mantiene el audio activo al apagar la pantalla o cambiar de app."
+                    android:textSize="12sp" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Subtítulos en vivo"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="12dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp"
                 android:tag="card">
+
                 <Switch
                     android:id="@+id/captionsEnabledSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Botón CC en los videos"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <TextView
                     android:id="@+id/captionsSummary"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="10dp"
+                    android:layout_marginBottom="8dp"
                     android:tag="muted"
-                    android:textSize="12.5sp" />
+                    android:textSize="12sp" />
+
                 <Button
                     android:id="@+id/configureCaptionsButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
+                    android:minHeight="@dimen/touch_target"
                     android:text="Configurar subtítulos y traducción"
                     android:textAllCaps="false"
-                    android:textSize="14.5sp" />
+                    android:textSize="13.5sp" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Traducción"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
                 android:tag="card">
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Traducir páginas a"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/translatorTargetSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Privacidad y seguridad"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
                 android:tag="card">
+
                 <Switch
                     android:id="@+id/trackingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Protección contra rastreo"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/strictTrackingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Protección estricta"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/safeBrowsingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Avisar de sitios peligrosos"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/fingerprintingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Bloquear huellas digitales"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/queryStrippingSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Quitar rastreo de los enlaces"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/gpcSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Global Privacy Control (GPC)"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <Switch
                     android:id="@+id/httpsOnlySwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Solo conexiones HTTPS"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Cookies"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/cookiesSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="DNS seguro"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/dnsSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:id="@+id/dnsCustomBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="2dp"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginBottom="4dp"
+                        android:tag="muted"
+                        android:text="Servidor DoH personalizado (HTTPS)"
+                        android:textSize="12sp" />
+
+                    <EditText
+                        android:id="@+id/dnsCustomInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target"
+                        android:layout_marginBottom="6dp"
+                        android:hint="https://servidor/dns-query"
+                        android:importantForAutofill="no"
+                        android:inputType="textUri"
+                        android:maxLines="1"
+                        android:paddingStart="14dp"
+                        android:paddingTop="8dp"
+                        android:paddingEnd="14dp"
+                        android:paddingBottom="8dp"
+                        android:singleLine="true"
+                        android:textSize="13.5sp" />
+
+                    <Switch
+                        android:id="@+id/dnsStrictSwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="@dimen/touch_target"
+                        android:paddingTop="4dp"
+                        android:paddingBottom="4dp"
+                        android:switchPadding="12dp"
+                        android:text="DNS estricto (sin volver al DNS del sistema)"
+                        android:textSize="13.5sp" />
+                </LinearLayout>
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Pestañas"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
                 android:tag="card">
+
                 <Switch
                     android:id="@+id/restoreTabsSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Restaurar pestañas al abrir Nexo"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
                 <View
                     android:layout_width="match_parent"
                     android:layout_height="1dp"
                     android:tag="divider" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="8dp"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
                     android:text="Pestañas activas en memoria"
-                    android:textSize="15sp" />
+                    android:textSize="12.5sp" />
 
                 <Spinner
                     android:id="@+id/liveTabsSpinner"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-                    android:layout_marginBottom="12dp" />
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="8dp" />
             </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
                 android:text="Datos de navegación"
-                android:textSize="13sp"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp"
                 android:tag="card">
+
                 <Switch
                     android:id="@+id/clearOnExitSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Borrar cookies, caché e historial al salir"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/clearDataButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginTop="6dp"
+                    android:text="Borrar datos de navegación ahora"
+                    android:textAllCaps="false"
+                    android:textSize="13.5sp" />
             </LinearLayout>
 
-            <Button
-                android:id="@+id/clearDataButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-            android:minHeight="52dp"
-                android:layout_marginTop="10dp"
-                android:text="Borrar datos de navegación ahora"
-                android:textAllCaps="false"
-                android:textSize="14.5sp" />
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
-                android:layout_marginTop="22dp"
-                android:layout_marginBottom="8dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
                 android:tag="section"
-                android:text="Avanzado"
-                android:textSize="13sp"
+                android:text="Actualizaciones"
+                android:textSize="11.5sp"
                 android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="16dp"
+                android:paddingStart="14dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="12dp"
-                android:paddingBottom="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp"
                 android:tag="card">
+
+                <Switch
+                    android:id="@+id/autoUpdateSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
+                    android:text="Buscar actualizaciones automáticamente"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/updateStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:tag="muted"
+                    android:textSize="12sp" />
+
+                <Button
+                    android:id="@+id/checkUpdatesButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:text="Buscar actualizaciones ahora"
+                    android:textAllCaps="false"
+                    android:textSize="13.5sp" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="5dp"
+                android:tag="section"
+                android:text="Avanzado"
+                android:textSize="11.5sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="14dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp"
+                android:tag="card">
+
                 <Switch
                     android:id="@+id/remoteDebugSwitch"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:minHeight="54dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:switchPadding="16dp"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
                     android:text="Depuración remota (USB)"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/perfLogButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginTop="6dp"
+                    android:text="Mediciones de rendimiento"
+                    android:textAllCaps="false"
+                    android:textSize="13.5sp" />
+
+                <Button
+                    android:id="@+id/legacyImportButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginTop="6dp"
+                    android:text="Traer datos de Nexo anterior"
+                    android:textAllCaps="false"
+                    android:textSize="13.5sp" />
+
+                <Button
+                    android:id="@+id/transferProfileButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginTop="6dp"
+                    android:text="Copia cifrada del perfil (incluye extensiones)"
+                    android:textAllCaps="false"
+                    android:textSize="13.5sp" />
+
+                <Button
+                    android:id="@+id/resetSettingsButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginTop="6dp"
+                    android:text="Restablecer ajustes predeterminados"
+                    android:textAllCaps="false"
+                    android:textSize="13.5sp" />
             </LinearLayout>
 
-            <Button
-                android:id="@+id/perfLogButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Mediciones de rendimiento" />
-            <Button
-                android:id="@+id/legacyImportButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Traer datos de Nexo anterior" />
-            <Button
-                android:id="@+id/transferProfileButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="Copia cifrada del perfil (incluye extensiones)" />
             <TextView
                 android:id="@+id/aboutText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
+                android:minHeight="@dimen/touch_target"
+                android:layout_marginTop="12dp"
                 android:gravity="center"
+                android:padding="10dp"
                 android:tag="muted"
-                android:textSize="12.5sp" />
+                android:textSize="12sp" />
         </com.nexo.browser.ContentColumn>
     </ScrollView>
 
@@ -753,19 +996,19 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingStart="16dp"
-        android:paddingTop="12dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="16dp">
+        android:paddingStart="14dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="10dp">
 
         <Button
             android:id="@+id/saveSettingsButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:minHeight="52dp"
+            android:minHeight="@dimen/touch_target"
             android:text="Guardar cambios"
             android:textAllCaps="false"
-            android:textSize="15.5sp"
+            android:textSize="14.5sp"
             android:textStyle="bold" />
     </LinearLayout>
 </LinearLayout>

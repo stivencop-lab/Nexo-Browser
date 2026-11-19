@@ -8,13 +8,22 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.AdapterView
 import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import java.text.Normalizer
 
 class SettingsActivity : Activity() {
     private lateinit var theme: Spinner
@@ -22,6 +31,9 @@ class SettingsActivity : Activity() {
     private lateinit var search: Spinner
     private lateinit var liveTabs: Spinner
     private lateinit var dns: Spinner
+    private lateinit var dnsCustomBox: View
+    private lateinit var dnsCustomInput: EditText
+    private lateinit var dnsStrict: Switch
     private lateinit var cookies: Spinner
     private lateinit var restore: Switch
     private lateinit var tracking: Switch
@@ -47,6 +59,9 @@ class SettingsActivity : Activity() {
     private lateinit var clearOnExit: Switch
     private lateinit var remoteDebug: Switch
     private lateinit var captionsEnabled: Switch
+    private lateinit var autoUpdate: Switch
+    private lateinit var settingsSearchInput: EditText
+    private lateinit var settingsSearchClear: ImageButton
 
     private val textSizes = listOf(80, 90, 100, 110, 120, 135, 150, 175, 200)
     private val autoplayOptions = listOf(
@@ -61,17 +76,19 @@ class SettingsActivity : Activity() {
         "OLED negro" to BrowserPrefs.THEME_OLED,
         "Claro" to BrowserPrefs.THEME_LIGHT
     )
-    private val accents by lazy { listOf(
-        "Cobalto" to BrowserPrefs.ACCENT_COBALT,
-        "Violeta" to BrowserPrefs.ACCENT_VIOLET,
-        "Cian" to BrowserPrefs.ACCENT_CYAN,
-        "Lima" to BrowserPrefs.ACCENT_LIME,
-        "Naranja" to BrowserPrefs.ACCENT_ORANGE,
-        "Rosa" to BrowserPrefs.ACCENT_PINK,
-        "Rojo" to BrowserPrefs.ACCENT_RED
-    ) + if (Build.VERSION.SDK_INT >= 31 || BrowserPrefs.accent(this) == BrowserPrefs.ACCENT_DYNAMIC) {
-        listOf(getString(R.string.dynamic_color) to BrowserPrefs.ACCENT_DYNAMIC)
-    } else emptyList() }
+    private val accents by lazy {
+        listOf(
+            "Cobalto" to BrowserPrefs.ACCENT_COBALT,
+            "Violeta" to BrowserPrefs.ACCENT_VIOLET,
+            "Cian" to BrowserPrefs.ACCENT_CYAN,
+            "Lima" to BrowserPrefs.ACCENT_LIME,
+            "Naranja" to BrowserPrefs.ACCENT_ORANGE,
+            "Rosa" to BrowserPrefs.ACCENT_PINK,
+            "Rojo" to BrowserPrefs.ACCENT_RED
+        ) + if (Build.VERSION.SDK_INT >= 31 || BrowserPrefs.accent(this) == BrowserPrefs.ACCENT_DYNAMIC) {
+            listOf(getString(R.string.dynamic_color) to BrowserPrefs.ACCENT_DYNAMIC)
+        } else emptyList()
+    }
     private val engines = listOf(
         "Google" to BrowserPrefs.ENGINE_GOOGLE,
         "DuckDuckGo" to BrowserPrefs.ENGINE_DDG,
@@ -84,7 +101,7 @@ class SettingsActivity : Activity() {
         "Cloudflare DNS over HTTPS" to BrowserPrefs.DNS_CLOUDFLARE,
         "Google DNS over HTTPS" to BrowserPrefs.DNS_GOOGLE,
         "Quad9 DNS over HTTPS" to BrowserPrefs.DNS_QUAD9,
-        "DoH personalizado (barra de direcciones)" to BrowserPrefs.DNS_CUSTOM
+        "DoH personalizado" to BrowserPrefs.DNS_CUSTOM
     )
     private val cookieOptions = listOf(
         "Equilibrado · aislar terceros" to BrowserPrefs.COOKIES_BALANCED,
@@ -95,17 +112,17 @@ class SettingsActivity : Activity() {
     private val liveOptions = listOf(2, 3, 4, 5, 6, 8)
     private val translatorLanguages by lazy {
         val common = listOf(
-        "Español" to "es",
-        "Inglés" to "en",
-        "Portugués" to "pt",
-        "Francés" to "fr",
-        "Alemán" to "de",
-        "Italiano" to "it",
-        "Japonés" to "ja",
-        "Coreano" to "ko"
-    )
-        val selected=BrowserPrefs.translatorTarget(this)
-        if(common.none { it.second==selected } && selected.matches(Regex("[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*"))) {
+            "Español" to "es",
+            "Inglés" to "en",
+            "Portugués" to "pt",
+            "Francés" to "fr",
+            "Alemán" to "de",
+            "Italiano" to "it",
+            "Japonés" to "ja",
+            "Coreano" to "ko"
+        )
+        val selected = BrowserPrefs.translatorTarget(this)
+        if (common.none { it.second == selected } && selected.matches(Regex("[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*"))) {
             common + (java.util.Locale.forLanguageTag(selected).getDisplayName(java.util.Locale.getDefault()) to selected)
         } else common
     }
@@ -120,6 +137,9 @@ class SettingsActivity : Activity() {
         search = findViewById(R.id.searchSpinner)
         liveTabs = findViewById(R.id.liveTabsSpinner)
         dns = findViewById(R.id.dnsSpinner)
+        dnsCustomBox = findViewById(R.id.dnsCustomBox)
+        dnsCustomInput = findViewById(R.id.dnsCustomInput)
+        dnsStrict = findViewById(R.id.dnsStrictSwitch)
         cookies = findViewById(R.id.cookiesSpinner)
         restore = findViewById(R.id.restoreTabsSwitch)
         tracking = findViewById(R.id.trackingSwitch)
@@ -145,16 +165,19 @@ class SettingsActivity : Activity() {
         clearOnExit = findViewById(R.id.clearOnExitSwitch)
         remoteDebug = findViewById(R.id.remoteDebugSwitch)
         captionsEnabled = findViewById(R.id.captionsEnabledSwitch)
+        autoUpdate = findViewById(R.id.autoUpdateSwitch)
+        settingsSearchInput = findViewById(R.id.settingsSearchInput)
+        settingsSearchClear = findViewById(R.id.settingsSearchClear)
 
         findViewById<Button>(R.id.transferProfileButton).setOnClickListener { MigrationMode.enter(this) }
         // Paso automático desde la app anterior (com.ejemplo.navegador); solo tiene sentido en la nueva.
         findViewById<Button>(R.id.legacyImportButton).apply {
-            visibility = if (packageName == LegacyImport.TARGET_PACKAGE) android.view.View.VISIBLE else android.view.View.GONE
+            visibility = if (packageName == LegacyImport.TARGET_PACKAGE) View.VISIBLE else View.GONE
             setOnClickListener { LegacyImport.showManual(this@SettingsActivity) { recreate() } }
         }
         findViewById<Button>(R.id.perfLogButton).setOnClickListener {
             val report = PerfLog.report(this)
-            android.app.AlertDialog.Builder(this)
+            AlertDialog.Builder(this)
                 .setTitle("Mediciones de rendimiento")
                 .setMessage(report + "\n\nMide igual antes y después: mismas páginas, red y batería; al menos 10 ejecuciones (cierra Nexo del todo entre arranques).")
                 .setPositiveButton("Copiar") { _, _ ->
@@ -166,11 +189,30 @@ class SettingsActivity : Activity() {
                 .setNegativeButton("Cerrar", null)
                 .show()
         }
+        findViewById<Button>(R.id.checkUpdatesButton).setOnClickListener {
+            AppUpdater.checkManual(this) { updateAboutAndUpdateSummary() }
+        }
+        findViewById<Button>(R.id.resetSettingsButton).setOnClickListener { confirmResetDefaults() }
+
+        dns.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateDnsCustomVisibility()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {
+                updateDnsCustomVisibility()
+            }
+        }
+
+        configureSearchFilter()
         populate()
         applyTheme()
         updateDependencies()
         tracking.setOnCheckedChangeListener { _, _ -> updateDependencies() }
         captionsEnabled.setOnCheckedChangeListener { _, _ -> updateDependencies() }
+        autoUpdate.setOnCheckedChangeListener { _, enabled ->
+            AppUpdater.setAutoCheck(this, enabled)
+            updateAboutAndUpdateSummary()
+        }
         findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }
         findViewById<Button>(R.id.clearDataButton).setOnClickListener { confirmClear() }
         findViewById<Button>(R.id.defaultBrowserButton).setOnClickListener { requestDefaultBrowser() }
@@ -181,8 +223,101 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        updateDefaultBrowserVisibility()
+        updateCaptionsSummary()
+        updateAboutAndUpdateSummary()
+        AppUpdater.resumePendingInstallIfAllowed(this)
+    }
+
+    private fun updateDefaultBrowserVisibility() {
+        val filtering = settingsSearchInput.text?.toString()?.trim().orEmpty().isNotEmpty()
         findViewById<Button>(R.id.defaultBrowserButton).visibility =
-            if (isDefaultBrowser()) View.GONE else View.VISIBLE
+            if (filtering || isDefaultBrowser()) View.GONE else View.VISIBLE
+    }
+
+    private fun configureSearchFilter() {
+        settingsSearchClear.setOnClickListener {
+            settingsSearchInput.setText("")
+            settingsSearchInput.clearFocus()
+            hideKeyboard()
+        }
+        settingsSearchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                val raw = s?.toString()?.trim().orEmpty()
+                settingsSearchClear.visibility = if (raw.isEmpty()) View.GONE else View.VISIBLE
+                filterSettings(raw)
+            }
+        })
+        settingsSearchInput.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH || event?.keyCode == KeyEvent.KEYCODE_ENTER) {
+                hideKeyboard()
+                true
+            } else false
+        }
+    }
+
+    private fun filterSettings(rawQuery: String) {
+        val terms = normalize(rawQuery).split(' ').filter { it.isNotBlank() }
+        val column = findViewById<ViewGroup>(R.id.settingsColumn) ?: return
+        updateDefaultBrowserVisibility()
+        var currentSection: View? = null
+        var currentSectionTitle = ""
+        for (i in 0 until column.childCount) {
+            val child = column.getChildAt(i)
+            if (child.id == R.id.settingsSearchBox || child.id == R.id.defaultBrowserButton || child.id == R.id.aboutText) continue
+            if (child is TextView && child.tag == "section") {
+                currentSection = child
+                currentSectionTitle = normalize(child.text?.toString().orEmpty())
+                if (terms.isEmpty()) child.visibility = View.VISIBLE
+                continue
+            }
+            if (child.tag == "card") {
+                if (terms.isEmpty()) {
+                    child.visibility = View.VISIBLE
+                    currentSection?.visibility = View.VISIBLE
+                } else {
+                    val haystack = currentSectionTitle + " " + collectText(child)
+                    val matches = terms.all { haystack.contains(it) }
+                    child.visibility = if (matches) View.VISIBLE else View.GONE
+                    currentSection?.visibility = if (matches) View.VISIBLE else View.GONE
+                }
+            }
+        }
+    }
+
+    private fun collectText(view: View): String {
+        val sb = StringBuilder()
+        fun walk(node: View) {
+            when (node) {
+                is Spinner -> {
+                    val adapter = node.adapter
+                    if (adapter != null) {
+                        for (idx in 0 until adapter.count) {
+                            sb.append(' ').append(adapter.getItem(idx)?.toString().orEmpty())
+                        }
+                    }
+                }
+                is TextView -> {
+                    sb.append(' ').append(node.text?.toString().orEmpty())
+                    if (!node.hint.isNullOrBlank()) sb.append(' ').append(node.hint)
+                }
+            }
+            if (node is ViewGroup && node !is Spinner) {
+                for (i in 0 until node.childCount) walk(node.getChildAt(i))
+            }
+        }
+        walk(view)
+        return normalize(sb.toString())
+    }
+
+    private fun normalize(value: String): String =
+        Normalizer.normalize(value.lowercase(), Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
+
+    private fun hideKeyboard() {
+        (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.hideSoftInputFromWindow(settingsSearchInput.windowToken, 0)
     }
 
     private fun isDefaultBrowser(): Boolean {
@@ -244,14 +379,12 @@ class SettingsActivity : Activity() {
         queryStripping.isChecked = BrowserPrefs.queryStripping(this)
         clearOnExit.isChecked = BrowserPrefs.clearOnExit(this)
         remoteDebug.isChecked = BrowserPrefs.remoteDebugging(this)
-        strictTracking.isEnabled = BrowserPrefs.trackingProtection(this)
-        tracking.setOnCheckedChangeListener { _, on -> strictTracking.isEnabled = on }
-        findViewById<TextView>(R.id.aboutText).apply {
-            text = aboutText() + "\nToca para ver el diagnóstico del motor"
-            setOnClickListener { showEngineDiagnostics() }
-        }
+        dnsCustomInput.setText(BrowserPrefs.dnsCustom(this))
+        dnsStrict.isChecked = BrowserPrefs.dnsStrict(this)
+        autoUpdate.isChecked = AppUpdater.autoCheck(this)
         captionsEnabled.isChecked = BrowserPrefs.captionsEnabled(this)
         updateCaptionsSummary()
+        updateAboutAndUpdateSummary()
 
         theme.setSelection(themes.indexOfFirst { it.second == BrowserPrefs.theme(this) }.coerceAtLeast(0))
         accent.setSelection(accents.indexOfFirst { it.second == BrowserPrefs.accent(this) }.coerceAtLeast(0))
@@ -259,6 +392,7 @@ class SettingsActivity : Activity() {
         liveTabs.setSelection(liveOptions.indexOf(BrowserPrefs.maxLiveTabs(this)).coerceAtLeast(0))
         dns.setSelection(dnsOptions.indexOfFirst { it.second == BrowserPrefs.dnsProvider(this) }.coerceAtLeast(0))
         cookies.setSelection(cookieOptions.indexOfFirst { it.second == BrowserPrefs.cookieMode(this) }.coerceAtLeast(0))
+        updateDnsCustomVisibility()
 
         restore.isChecked = BrowserPrefs.restoreTabs(this)
         tracking.isChecked = BrowserPrefs.trackingProtection(this)
@@ -275,6 +409,19 @@ class SettingsActivity : Activity() {
         )
     }
 
+    private fun updateDnsCustomVisibility() {
+        val selectedProvider = dnsOptions.getOrNull(dns.selectedItemPosition)?.second
+        dnsCustomBox.visibility = if (selectedProvider == BrowserPrefs.DNS_CUSTOM) View.VISIBLE else View.GONE
+    }
+
+    private fun updateAboutAndUpdateSummary() {
+        findViewById<TextView>(R.id.updateStatusText)?.text = AppUpdater.statusSummary(this)
+        findViewById<TextView>(R.id.aboutText)?.apply {
+            text = aboutText() + "\nToca para ver el diagnóstico del motor"
+            setOnClickListener { showEngineDiagnostics() }
+        }
+    }
+
     private fun updateDependencies() {
         strictTracking.isEnabled = tracking.isChecked
         strictTracking.alpha = if (tracking.isChecked) 1f else 0.38f
@@ -285,13 +432,22 @@ class SettingsActivity : Activity() {
     }
 
     private fun save() {
-        if(dnsOptions[dns.selectedItemPosition].second == BrowserPrefs.DNS_CUSTOM && !DnsProfile.valid(BrowserPrefs.dnsCustom(this))) {
-            android.widget.Toast.makeText(this,"Configura la URL DoH en Herramientas de pestaña → DNS.",android.widget.Toast.LENGTH_LONG).show();return
+        val selectedDns = dnsOptions[dns.selectedItemPosition].second
+        val customDoh = dnsCustomInput.text?.toString()?.trim().orEmpty()
+        if (selectedDns == BrowserPrefs.DNS_CUSTOM) {
+            if (!DnsProfile.valid(customDoh)) {
+                dnsCustomInput.error = "Introduce una URL DoH HTTPS válida (sin credenciales ni parámetros)."
+                dnsCustomInput.requestFocus()
+                Toast.makeText(this, "Revisa la dirección DoH personalizada (debe usar HTTPS).", Toast.LENGTH_LONG).show()
+                return
+            }
+            BrowserPrefs.setDnsCustom(this, customDoh)
         }
+        BrowserPrefs.setDnsStrict(this, dnsStrict.isChecked)
         BrowserPrefs.setTheme(this, themes[theme.selectedItemPosition].second)
         BrowserPrefs.setAccent(this, accents[accent.selectedItemPosition].second)
         BrowserPrefs.setSearchEngine(this, engines[search.selectedItemPosition].second)
-        BrowserPrefs.setDnsProvider(this, dnsOptions[dns.selectedItemPosition].second)
+        BrowserPrefs.setDnsProvider(this, selectedDns)
         BrowserPrefs.setCookieMode(this, cookieOptions[cookies.selectedItemPosition].second)
         BrowserPrefs.setMaxLiveTabs(this, liveOptions[liveTabs.selectedItemPosition])
         BrowserPrefs.setRestoreTabs(this, restore.isChecked)
@@ -317,6 +473,7 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setClearOnExit(this, clearOnExit.isChecked)
         BrowserPrefs.setRemoteDebugging(this, remoteDebug.isChecked)
         BrowserPrefs.setCaptionsEnabled(this, captionsEnabled.isChecked)
+        AppUpdater.setAutoCheck(this, autoUpdate.isChecked)
         BrowserPrefs.setTranslatorTarget(
             this,
             translatorLanguages[
@@ -330,6 +487,24 @@ class SettingsActivity : Activity() {
         MediaPlaybackService.sync(this)
         Toast.makeText(this, "Configuración guardada", Toast.LENGTH_SHORT).show()
         finish()
+    }
+
+    private fun confirmResetDefaults() {
+        AlertDialog.Builder(this)
+            .setTitle("Restablecer configuración")
+            .setMessage("Se restaurarán los ajustes predeterminados de apariencia, privacidad y navegación. Tus pestañas abiertas, historial, descargas y claves guardadas se conservan.")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Restablecer") { _, _ ->
+                BrowserPrefs.resetDefaults(this)
+                AppUpdater.setAutoCheck(this, true)
+                com.nexo.browser.engine.Engines.current.applySettings(this)
+                TabManager.reapplySettings()
+                ExtensionManager.sendBrowserState(this)
+                MediaPlaybackService.sync(this)
+                Toast.makeText(this, "Ajustes predeterminados restaurados", Toast.LENGTH_SHORT).show()
+                recreate()
+            }
+            .show()
     }
 
     private fun confirmClear() {
@@ -370,13 +545,13 @@ class SettingsActivity : Activity() {
             setPadding(pad, pad, pad, pad)
             ThemeManager.styleText(this@SettingsActivity, this)
         }
-        android.app.AlertDialog.Builder(this)
+        AlertDialog.Builder(this)
             .setTitle("Diagnóstico del motor")
             .setView(android.widget.ScrollView(this).apply { addView(body) })
             .setPositiveButton("Copiar") { _, _ ->
                 val clipboard = getSystemService(android.content.ClipboardManager::class.java)
                 clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Diagnóstico de Nexo", report))
-                android.widget.Toast.makeText(this, "Diagnóstico copiado", android.widget.Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Diagnóstico copiado", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cerrar", null)
             .show()
@@ -391,12 +566,12 @@ class SettingsActivity : Activity() {
         when {
             view.tag == "card" -> ThemeManager.styleCard(this, view)
             view.tag == "divider" -> ThemeManager.styleDivider(this, view)
-            view is Button -> Unit
+            view is Button || view is EditText -> Unit
             view is TextView && view.tag == "section" -> ThemeManager.styleSectionLabel(this, view)
             view is TextView && view.tag == "muted" -> ThemeManager.styleText(this, view, muted = true)
             view is TextView -> ThemeManager.styleText(this, view)
         }
-        if (view is ViewGroup) {
+        if (view is ViewGroup && view !is Spinner) {
             for (i in 0 until view.childCount) styleReadableTree(view.getChildAt(i))
         }
     }
@@ -414,16 +589,26 @@ class SettingsActivity : Activity() {
         }
         listOf(
             restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
-            forceZoom, pullToRefresh, dockGestures, parallelDownloads, desktopDefault, javascript, strictTracking, safeBrowsing,
-            fingerprinting, queryStripping, clearOnExit, remoteDebug, captionsEnabled
+            forceZoom, pullToRefresh, dockGestures, parallelDownloads, desktopDefault, javascript,
+            strictTracking, safeBrowsing, fingerprinting, queryStripping, clearOnExit, remoteDebug,
+            captionsEnabled, dnsStrict, autoUpdate
         ).forEach {
             ThemeManager.styleSwitch(this, it)
         }
+        ThemeManager.styleEdit(this, settingsSearchInput)
+        ThemeManager.styleIconButton(this, settingsSearchClear)
+        ThemeManager.styleEdit(this, dnsCustomInput)
         ThemeManager.styleText(this, findViewById(R.id.settingsTitle))
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton), danger = true)
         ThemeManager.styleButton(this, findViewById(R.id.defaultBrowserButton))
         ThemeManager.styleButton(this, findViewById(R.id.configureCaptionsButton))
+        ThemeManager.styleButton(this, findViewById(R.id.checkUpdatesButton))
+        ThemeManager.styleButton(this, findViewById(R.id.perfLogButton))
+        ThemeManager.styleButton(this, findViewById(R.id.legacyImportButton))
+        ThemeManager.styleButton(this, findViewById(R.id.transferProfileButton))
+        ThemeManager.styleButton(this, findViewById(R.id.resetSettingsButton))
+        findViewById<View>(R.id.aboutText).background = ThemeManager.ripple(this, null, 14f)
         ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
         findViewById<View>(R.id.settingsFooter).background =
             ThemeManager.barBackground(this, lineOnTop = true)

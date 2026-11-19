@@ -116,6 +116,7 @@ class StartPageView(
         val badge = ExtensionManager.phantomBadge(global = true)
         val available = ExtensionManager.phantomEntry()?.enabled == true && badge != "OFF" && badge != "PAUSE"
         val shieldColor = if (available) p.success.color else p.muted
+        val shieldContainer = if (available) p.success.container else p.elevated
         top.addView(LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48f); setPadding(dp(10f), 0, dp(10f), 0)
             background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, 22f, p.outline), 22f)
@@ -126,7 +127,7 @@ class StartPageView(
             addView(text(when (badge) { "OFF" -> "Pausado"; "PAUSE" -> "Pausado"; null -> "Panel"; else -> "$badge total" }, 10.5f, shieldColor, true).apply {
                 typeface = resources.getFont(R.font.jetbrains_mono)
                 setPadding(dp(6f), dp(4f), dp(6f), dp(4f))
-                background = ThemeManager.rounded(activity, p.success.container, 12f)
+                background = ThemeManager.rounded(activity, shieldContainer, 12f)
             }, params().apply { width = ViewGroup.LayoutParams.WRAP_CONTENT; marginStart = dp(8f) })
         })
         top.addView(View(activity), params(0, dp(1f)).apply { weight = 1f })
@@ -245,6 +246,10 @@ class StartPageView(
 
     private fun privacyCard(): View {
         val p = ThemeManager.palette(activity)
+        val badge = ExtensionManager.phantomBadge(global = true)
+        val available = ExtensionManager.phantomEntry()?.enabled == true && badge != "OFF" && badge != "PAUSE"
+        val statusColor = if (available) p.success.color else p.muted
+        val statusBg = if (available) androidx.core.graphics.ColorUtils.setAlphaComponent(p.success.color, 28) else p.elevated
         return LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(76f); setPadding(dp(16f), dp(16f), dp(16f), dp(16f))
             background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, 18f, p.outline), 18f)
@@ -252,23 +257,27 @@ class StartPageView(
             setOnClickListener { onShield() }
             addView(ImageView(activity).apply {
                 setImageResource(R.drawable.ic_quick_shield); setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
-                background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(p.success.color, 32), 12f)
+                imageTintList = if (available) null else ColorStateList.valueOf(p.muted)
+                background = ThemeManager.rounded(activity, statusBg, 12f)
             }, params(dp(38f), dp(38f)).apply { marginEnd = dp(12f) })
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                val badge = ExtensionManager.phantomBadge(global = true)
                 val status = when (badge) { "OFF" -> "PAUSADA"; "PAUSE" -> "PAUSADA"; null -> "PANEL"; else -> "ACTIVA" }
                 addView(LinearLayout(activity).apply {
                     gravity = Gravity.CENTER_VERTICAL
                     addView(text("Protección PhantomShield", 12f, p.text, true), params(0).apply { weight = 1f })
-                    addView(text(status, 8.5f, p.success.color, true).apply {
-                        setPadding(dp(4f), dp(4f), dp(4f), dp(4f)); typeface = resources.getFont(R.font.jetbrains_mono)
-                        background = ThemeManager.rounded(activity, androidx.core.graphics.ColorUtils.setAlphaComponent(p.success.color, 28), 5f)
+                    addView(text(status, 8.5f, statusColor, true).apply {
+                        setPadding(dp(5f), dp(3f), dp(5f), dp(3f)); typeface = resources.getFont(R.font.jetbrains_mono)
+                        background = ThemeManager.rounded(activity, statusBg, 6f)
                     })
                 })
                 addView(text(if (badge != null && badge.matches(Regex("[0-9]{1,3}\\+?"))) "$badge bloqueos en total" else "Consulta la protección de cada sitio", 10.5f, p.muted).apply { setPadding(0, dp(4f), 0, 0) })
             }, params(0).apply { weight = 1f })
-            addView(text("›", 22f, p.muted))
+            addView(ImageView(activity).apply {
+                setImageResource(R.drawable.ic_nav_chevron)
+                imageTintList = ColorStateList.valueOf(p.muted)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, params(dp(20f), dp(20f)).apply { marginStart = dp(8f) })
         }
     }
 

@@ -113,13 +113,14 @@ class HistoryActivity : Activity() {
         search = EditText(this).apply {
             hint = "Buscar en el historial"
             setSingleLine(true)
-            textSize = 15f
+            textSize = 14.5f
+            minHeight = dp(48f)
             imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
             ThemeManager.styleEdit(this@HistoryActivity, this)
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
             compoundDrawablePadding = dp(10f)
-            setPadding(dp(16f), 0, dp(44f), 0)
+            setPadding(dp(16f), dp(8f), dp(48f), dp(8f))
             contentDescription = "Buscar en el historial"
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -147,10 +148,10 @@ class HistoryActivity : Activity() {
             setOnClickListener { search.setText(""); search.requestFocus() }
         }
         val frame = android.widget.FrameLayout(this).apply {
-            addView(search, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48f)))
-            addView(clearSearch, android.widget.FrameLayout.LayoutParams(dp(44f), dp(44f), android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL))
+            addView(search, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(clearSearch, android.widget.FrameLayout.LayoutParams(dp(48f), dp(48f), android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL))
         }
-        row.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48f)))
+        row.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(row, 1)
     }
 

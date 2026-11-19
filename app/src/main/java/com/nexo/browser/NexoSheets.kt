@@ -159,19 +159,21 @@ object NexoSheets {
         }
     }
 
-    /** Dos tarjetas primarias horizontales como en el prototipo. */
+    /** Tarjetas primarias superiores: horizontales para 2 acciones, mosaicos verticales para 3 o más. */
     fun primaryActions(activity: Activity, actions: List<SheetAction>, dismiss: () -> Unit): View {
         val p = ThemeManager.palette(activity)
+        val compactVertical = actions.size >= 3
         return LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(activity, 16f), 0, dp(activity, 16f), dp(activity, 12f))
             actions.forEachIndexed { index, action ->
-                val accent = if (action.danger) p.danger else p.accent
                 val cell = LinearLayout(activity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    minimumHeight = dp(activity, 72f)
-                    setPadding(dp(activity, 12f), dp(activity, 12f), dp(activity, 12f), dp(activity, 12f))
+                    orientation = if (compactVertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+                    gravity = if (compactVertical) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(activity, if (compactVertical) 76f else 72f)
+                    val hPad = dp(activity, if (compactVertical) 8f else 12f)
+                    val vPad = dp(activity, 10f)
+                    setPadding(hPad, vPad, hPad, vPad)
                     background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surfaceContainerHighest, 16f, p.outlineVariant), 16f)
                     isClickable = true; isFocusable = true; contentDescription = action.label
                     setOnClickListener { dismiss(); action.onClick() }
@@ -180,22 +182,38 @@ object NexoSheets {
                         imageTintList = ColorStateList.valueOf(if (action.danger) p.error.onContainer else p.onAccentSoft)
                         setPadding(dp(activity, 8f), dp(activity, 8f), dp(activity, 8f), dp(activity, 8f))
                         background = ThemeManager.rounded(activity, if (action.danger) p.error.container else p.accentSoft, 12f)
-                    }, LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 36f)).apply { marginEnd = dp(activity, 9f) })
+                    }, LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 36f)).apply {
+                        if (compactVertical) bottomMargin = dp(activity, 6f) else marginEnd = dp(activity, 9f)
+                    })
                     addView(LinearLayout(activity).apply {
                         orientation = LinearLayout.VERTICAL
+                        gravity = if (compactVertical) Gravity.CENTER_HORIZONTAL else Gravity.START
                         addView(TextView(activity).apply {
-                            text = action.label; textSize = 12f
+                            text = action.label
+                            textSize = if (compactVertical) 11.5f else 12f
+                            gravity = if (compactVertical) Gravity.CENTER else Gravity.START
                             typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
-                            setTextColor(p.text); maxLines = 2
+                            setTextColor(p.text)
+                            maxLines = 2
+                            ellipsize = TextUtils.TruncateAt.END
                         })
                         addView(TextView(activity).apply {
                             text = action.subtitle ?: if (index == 0) "Inicio rápido" else "Sin historial"
-                            textSize = 10f; setTextColor(p.muted); setPadding(0, dp(activity, 3f), 0, 0)
+                            textSize = 10f
+                            gravity = if (compactVertical) Gravity.CENTER else Gravity.START
+                            setTextColor(p.muted)
+                            maxLines = 1
+                            ellipsize = TextUtils.TruncateAt.END
+                            setPadding(0, dp(activity, 2f), 0, 0)
                         })
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    }, if (compactVertical) {
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    } else {
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    })
                 }
                 addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    if (index > 0) marginStart = dp(activity, 10f)
+                    if (index > 0) marginStart = dp(activity, 8f)
                 })
             }
         }

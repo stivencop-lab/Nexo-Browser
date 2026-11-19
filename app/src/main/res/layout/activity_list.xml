@@ -8,11 +8,11 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:minHeight="64dp"
+        android:minHeight="54dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="16dp">
+        android:paddingStart="6dp"
+        android:paddingEnd="14dp">
 
         <ImageButton
             android:id="@+id/backButton"
@@ -27,11 +27,12 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="4dp"
+            android:layout_marginEnd="8dp"
             android:layout_weight="1"
             android:ellipsize="end"
             android:maxLines="1"
             android:text="Lista"
-            android:textSize="22sp"
+            android:textSize="18.5sp"
             android:textStyle="bold" />
 
         <Button
@@ -40,11 +41,11 @@
             android:layout_height="wrap_content"
             android:minWidth="0dp"
             android:minHeight="@dimen/touch_target"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
             android:text="Limpiar"
             android:textAllCaps="false"
-            android:textSize="14sp" />
+            android:textSize="13.5sp" />
     </LinearLayout>
 
     <TextView

@@ -252,4 +252,14 @@ object BrowserPrefs {
 
     fun activeTabId(c: Context) = p(c).getString("active_tab", null)
     fun setActiveTabId(c: Context, v: String?) = p(c).edit().putString("active_tab", v).apply()
+
+    /** Restablece los ajustes visuales, de privacidad y navegación a sus valores por defecto sin borrar pestañas ni claves. */
+    fun resetDefaults(c: Context) {
+        val prefs = p(c)
+        val keep = setOf("tabs_json", "active_tab", "caption_usage_day", "caption_usage_seconds")
+        val keysToRemove = prefs.all.keys.filterNot { it in keep }
+        prefs.edit().apply {
+            keysToRemove.forEach { remove(it) }
+        }.apply()
+    }
 }

@@ -22,6 +22,9 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.GridLayoutManager
@@ -72,23 +75,23 @@ object TabSwitcher {
             setOnClickListener { dialog.dismiss() }
         }
         val title = TextView(activity).apply {
-            textSize = 22f
+            textSize = 18.5f
             setTextColor(p.text)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(activity, 4f), 0, 0, 0)
+            setPadding(dp(activity, 4f), 0, dp(activity, 8f), 0)
         }
         val newTab = Button(activity).apply {
             text = "+  Nueva"
-            textSize = 14f
+            textSize = 13.5f
             minWidth = 0
             minimumWidth = 0
             minHeight = 0
             minimumHeight = 0
-            setPadding(dp(activity, 18f), 0, dp(activity, 18f), 0)
+            setPadding(dp(activity, 16f), 0, dp(activity, 16f), 0)
             ThemeManager.styleButton(activity, this, primary = true)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(activity, 40f)
+                ViewGroup.LayoutParams.WRAP_CONTENT
             )
             setOnClickListener {
                 dialog.dismiss()
@@ -104,13 +107,14 @@ object TabSwitcher {
         // --- Selector Normales / Privadas
         val segments = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             background = ThemeManager.rounded(activity, p.elevated, 22f)
             setPadding(dp(activity, 4f), dp(activity, 4f), dp(activity, 4f), dp(activity, 4f))
         }
         val normalSeg = segmentButton(activity, "Pestañas")
         val privateSeg = segmentButton(activity, "Privadas")
-        segments.addView(normalSeg, LinearLayout.LayoutParams(0, dp(activity, 36f), 1f))
-        segments.addView(privateSeg, LinearLayout.LayoutParams(0, dp(activity, 36f), 1f))
+        segments.addView(normalSeg, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        segments.addView(privateSeg, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(segments, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
@@ -119,7 +123,7 @@ object TabSwitcher {
 
         // Grupos: píldoras con color y contador (toca para filtrar, mantén pulsado para editar).
         val groupBar = FrameLayout(activity)
-        root.addView(groupBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 46f)).apply {
+        root.addView(groupBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             bottomMargin = dp(activity, 2f)
         })
 
@@ -161,22 +165,24 @@ object TabSwitcher {
             text = "Deshacer"; textSize = 14f; gravity = Gravity.CENTER
             setTextColor(p.accent)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setPadding(dp(activity, 16f), 0, dp(activity, 16f), 0)
+            setPadding(dp(activity, 16f), dp(activity, 8f), dp(activity, 16f), dp(activity, 8f))
             minWidth = dp(activity, 48f)
+            minHeight = dp(activity, 48f)
             background = ThemeManager.ripple(activity, null, 16f)
             isClickable = true
         }
         val undoBar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(activity, 18f), 0, dp(activity, 4f), 0)
+            minimumHeight = dp(activity, 48f)
+            setPadding(dp(activity, 18f), dp(activity, 2f), dp(activity, 4f), dp(activity, 2f))
             background = ThemeManager.rounded(activity, p.elevated, 16f, p.outline)
             elevation = dp(activity, 3f).toFloat()
             visibility = View.GONE
             addView(undoText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(undoButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 48f)))
+            addView(undoButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        root.addView(undoBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 52f)).apply {
+        root.addView(undoBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(dp(activity, 16f), dp(activity, 4f), dp(activity, 16f), dp(activity, 4f))
         })
 
@@ -185,7 +191,7 @@ object TabSwitcher {
             textSize = 14f; minHeight = 0; minimumHeight = 0
             ThemeManager.styleButton(activity, this, danger = true)
         }
-        root.addView(closeAll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 48f)).apply {
+        root.addView(closeAll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(dp(activity, 16f), dp(activity, 4f), dp(activity, 16f), dp(activity, 14f))
         })
 
@@ -363,11 +369,22 @@ object TabSwitcher {
         dialog.window?.apply {
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setBackgroundDrawable(ColorDrawable(p.background))
-            statusBarColor = p.background
-            navigationBarColor = p.background
+            WindowCompat.setDecorFitsSystemWindows(this, false)
+            statusBarColor = Color.TRANSPARENT
+            navigationBarColor = Color.TRANSPARENT
+            WindowCompat.getInsetsController(this, decorView).apply {
+                isAppearanceLightStatusBars = !p.isDark
+                isAppearanceLightNavigationBars = !p.isDark
+            }
             setWindowAnimations(android.R.style.Animation_Activity)
         }
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+            insets
+        }
         dialog.show()
+        ViewCompat.requestApplyInsets(root)
     }
 
     private fun moveSheet(activity: Activity, tab: BrowserTab, done: () -> Unit) {
@@ -432,6 +449,8 @@ object TabSwitcher {
             text = label
             gravity = Gravity.CENTER
             textSize = 14f
+            minHeight = dp(activity, 40f)
+            setPadding(dp(activity, 10f), dp(activity, 8f), dp(activity, 10f), dp(activity, 8f))
             isClickable = true
         }
 

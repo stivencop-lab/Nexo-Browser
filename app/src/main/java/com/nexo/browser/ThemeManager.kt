@@ -253,12 +253,14 @@ object ThemeManager {
     fun styleSectionLabel(activity: Activity, text: TextView) {
         val p = palette(activity)
         text.setTextColor(p.accent)
+        text.textSize = 11.5f
         text.isAllCaps = true
-        text.letterSpacing = 0.06f
+        text.letterSpacing = 0.07f
+        text.typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
     }
 
     /** Contenedor tipo tarjeta: superficie redondeada con borde fino. */
-    fun styleCard(activity: Activity, view: View, radiusDp: Float = 20f) {
+    fun styleCard(activity: Activity, view: View, radiusDp: Float = 16f) {
         val p = palette(activity)
         view.background = rounded(activity, p.surface, radiusDp, if (p.isDark) p.outlineVariant else null)
         view.clipToOutline = true
@@ -324,19 +326,19 @@ object ThemeManager {
                 val p = palette(activity)
                 (view as? TextView)?.apply {
                     setTextColor(p.text)
-                    textSize = 15f
+                    textSize = 14f
                     maxLines = if (dropdown) 3 else 2
                     minHeight = dp(activity, 48f)
                     ellipsize = TextUtils.TruncateAt.END
                     val d = resources.displayMetrics.density
                     if (dropdown) {
-                        setPadding((18 * d).toInt(), (14 * d).toInt(), (18 * d).toInt(), (14 * d).toInt())
+                        setPadding((16 * d).toInt(), (11 * d).toInt(), (16 * d).toInt(), (11 * d).toInt())
                         // Sin fondo cuadrado propio: antes tapaba las esquinas
                         // redondeadas de la lista desplegable.
                         background = ripple(activity, null, 12f)
                     } else {
                         // El fondo y la flecha los pone styleSpinner.
-                        setPadding((16 * d).toInt(), (8 * d).toInt(), (40 * d).toInt(), (8 * d).toInt())
+                        setPadding((14 * d).toInt(), (6 * d).toInt(), (36 * d).toInt(), (6 * d).toInt())
                         background = null
                         gravity = Gravity.CENTER_VERTICAL
                     }
@@ -455,14 +457,14 @@ object ThemeManager {
     /** Selector con forma de campo redondeado y flecha a la derecha. */
     fun styleSpinner(activity: Activity, spinner: Spinner) {
         val p = palette(activity)
-        val field = rounded(activity, p.elevated, 14f)
-        val chevron = ChevronDrawable(p.muted, dp(activity, 2f).toFloat())
+        val field = rounded(activity, p.elevated, 12f, p.outlineVariant)
+        val chevron = ChevronDrawable(p.muted, dp(activity, 1.8f).toFloat())
 
         spinner.background = LayerDrawable(arrayOf(field, chevron)).apply {
-            val size = dp(activity, 12f)
+            val size = dp(activity, 11f)
             setLayerSize(1, size, size)
             setLayerGravity(1, Gravity.END or Gravity.CENTER_VERTICAL)
-            setLayerInsetEnd(1, dp(activity, 18f))
+            setLayerInsetEnd(1, dp(activity, 15f))
         }
         spinner.backgroundTintList = null
         // Margen interior: la selección de la primera y la última opción no
