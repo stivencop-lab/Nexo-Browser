@@ -176,7 +176,8 @@
       status('Sitio añadido al borrador. Guarda para aplicar el cambio.');
     } catch (error) { status(error.message || 'Dominio inválido.', true); }
   }
-  const TIMEOUT_PRESETS = [8, 12, 20];
+  // 60 s para modelos que razonan antes de responder.
+  const TIMEOUT_PRESETS = [8, 20, 60];
   function timeoutPresets() {
     for (const seconds of TIMEOUT_PRESETS) {
       field('timeout-' + seconds).setAttribute('aria-pressed', String(Number(field('timeout').value) === seconds * 1000));

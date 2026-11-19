@@ -113,8 +113,11 @@ sin Activity) en su propio perfil (`nexo_shield_ai`), así que nunca comparte el
 proceso de renderizado con el panel: si Android lo cierra, el panel y los
 ajustes de IA siguen abiertos. Si el panel pierde su proceso se recarga la
 misma página (hasta dos veces) en lugar de cerrarse. La cadena principal +
-respaldos tiene un presupuesto total de 45 s, por debajo de la espera de Nexo
-(75 s), de modo que un análisis nunca queda «en curso» indefinidamente.
+respaldos tiene un presupuesto total de 45 s (o el tiempo límite + 30 s, con un
+máximo de 120 s), por debajo de la espera de Nexo (150 s), de modo que un
+análisis nunca queda «en curso» indefinidamente. El tiempo límite admite hasta
+90 s porque los modelos que razonan antes de responder tardan 30-60 s; el
+`fetch` nativo corta a los 100 s (antes a los 40 s, lo que hacía inútil subirlo).
 
 #### APIs compatibles estrictas (NVIDIA y similares)
 
@@ -128,7 +131,7 @@ la respuesta en `content` o, si un modelo razonador la deja ahí, en
 encolada) se explica como tal. «Probar conexión» muestra el motivo que da el
 proveedor (saneado, sin la clave), no gasta el presupuesto por sitio y la clave
 y el modelo se limpian de caracteres invisibles copiados de la web. El tiempo
-límite por defecto pasa a 20 s. No se puede guardar «Solo sitios elegidos» con
+límite por defecto pasa a 20 s (máximo 90 s). No se puede guardar «Solo sitios elegidos» con
 la lista vacía (la IA no se usaría en ninguna página) y el panel ofrece «Usar IA
 en este sitio».
 

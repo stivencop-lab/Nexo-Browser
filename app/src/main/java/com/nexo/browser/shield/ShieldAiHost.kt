@@ -40,8 +40,8 @@ import java.util.concurrent.TimeUnit
  */
 internal object ShieldAiHost {
     private const val HOST_PAGE = "host/ai-host.html"
-    /** Por encima del presupuesto total del clasificador (45 s con respaldos): su respuesta llega antes. */
-    private const val REQUEST_TIMEOUT_MS = 75_000L
+    /** Por encima del presupuesto total del clasificador (de 45 s a 120 s con respaldos): su respuesta llega antes. */
+    private const val REQUEST_TIMEOUT_MS = 150_000L
     /** Vista mínima: el anfitrión no dibuja nada, solo ejecuta el clasificador. */
     private const val OSR_SIZE_PX = 64
     private const val IDLE_CLOSE_MS = 10 * 60_000L
@@ -74,7 +74,8 @@ internal object ShieldAiHost {
     private val http by lazy {
         OkHttpClient.Builder()
             .followRedirects(false).followSslRedirects(false)
-            .connectTimeout(15, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS)
+            // Por encima del tiempo límite máximo del clasificador (90 s): quien corta es él, con su mensaje.
+            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(100, TimeUnit.SECONDS).callTimeout(100, TimeUnit.SECONDS)
             .build()
     }
 

@@ -269,8 +269,8 @@ test('backups can be added, tested, saved and removed without ever showing a sav
 test('the whole chain respects a total time budget, so Nexo never gives up waiting before the classifier answers', async () => {
   let h;
   h = harness({ ...primary, backups }, url => {
-    // El principal tarda casi todo el presupuesto y falla: no queda tiempo para los respaldos.
-    if (url.startsWith('https://primary.example')) { h.advance(44000); return new Response('{}', { status: 500 }); }
+    // Con el límite por defecto (20 s) el presupuesto es de 50 s: el principal lo agota y no quedan respaldos.
+    if (url.startsWith('https://primary.example')) { h.advance(49000); return new Response('{}', { status: 500 }); }
     return new Response('{}', { status: 500 });
   });
   const result = await h.ai.classify('budget.com', candidate(), false);

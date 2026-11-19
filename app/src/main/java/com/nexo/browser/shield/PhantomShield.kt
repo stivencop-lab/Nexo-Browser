@@ -57,7 +57,7 @@ object PhantomShield {
     private const val UPDATE_INTERVAL_MS = 24L * 3600 * 1000
     private const val MAX_LIST_BYTES = 15L * 1024 * 1024
     private const val HIDE_BASE_SELECTOR = "[data-phantomshield-hidden=\"true\"]"
-    private const val AI_SCAN_TIMEOUT_MS = 90_000L
+    private const val AI_SCAN_TIMEOUT_MS = 160_000L
 
     private val SETTING_KEYS = listOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled")
     private val PAGE_READABLE = setOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled")

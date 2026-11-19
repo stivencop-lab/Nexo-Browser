@@ -134,8 +134,9 @@
       return connection;
     });
     config.timeoutMs = input.timeoutMs === undefined ? defaults.timeoutMs : Number(input.timeoutMs);
-    if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 30000) {
-      throw new Error('El tiempo límite debe estar entre 1000 y 30000 ms.');
+    // Hasta 90 s: los modelos que razonan antes de responder (Mistral Large, Muse…) tardan 30-60 s.
+    if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 90000) {
+      throw new Error('El tiempo límite debe estar entre 1000 y 90000 ms.');
     }
     function hosts(values) {
       if (!Array.isArray(values || []) || (values || []).length > 100) {

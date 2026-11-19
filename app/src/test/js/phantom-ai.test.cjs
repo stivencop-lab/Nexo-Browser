@@ -181,7 +181,7 @@ test('existing configurations keep the basic detail level and the longer default
  const h=harness();
  assert.equal(h.api.validate({enabled:true,consent:true,endpoint:'https://api.example/v1',model:'m'}).detail,'basic');
  assert.equal(h.api.validate({detail:'rich'}).detail,'rich');assert.throws(()=>h.api.validate({detail:'everything'}));
- assert.equal(h.api.validate({}).timeoutMs,20000);assert.equal(h.api.validate({timeoutMs:12000}).timeoutMs,12000);assert.equal(h.api.validate({timeoutMs:30000}).timeoutMs,30000);assert.throws(()=>h.api.validate({timeoutMs:30001}));
+ assert.equal(h.api.validate({}).timeoutMs,20000);assert.equal(h.api.validate({timeoutMs:12000}).timeoutMs,12000);assert.equal(h.api.validate({timeoutMs:90000}).timeoutMs,90000);assert.throws(()=>h.api.validate({timeoutMs:90001}));
 });
 test('connection test works before enabling, uses invented samples and reports the real outcome',async()=>{
  const good=harness({enabled:false,consent:false,provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'saved-key',model:'old'},

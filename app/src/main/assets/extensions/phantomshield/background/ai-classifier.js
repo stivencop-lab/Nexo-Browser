@@ -18,10 +18,12 @@
   const TAGS = new Set(['DIV', 'ASIDE', 'SECTION', 'ARTICLE', 'INS', 'IFRAME', 'LI', 'A', 'FIGURE']);
   const HIDE_CONFIDENCE = 0.8;
   const MAX_RESPONSE_BYTES = 65536;
-  // Tiempo total de una clasificación, sumando principal y respaldos. Nexo
-  // espera como mucho 75 s: así la respuesta (o el error) siempre llega antes
-  // y el análisis nunca queda «en curso» para siempre.
+  // Tiempo total de una clasificación, sumando principal y respaldos: al menos
+  // 45 s, o el tiempo límite + 30 s, y nunca más de 120 s. Nexo espera 150 s:
+  // la respuesta (o el error) siempre llega antes y nada queda «en curso».
   const TOTAL_BUDGET_MS = 45000;
+  // Con un tiempo límite largo (modelos que razonan) la cadena puede esperar más, nunca más de 120 s.
+  const MAX_TOTAL_BUDGET_MS = 120000;
   const MIN_ATTEMPT_MS = 2000;
   const SYSTEM_PROMPT = 'You detect advertising on web pages. For each candidate container you receive DOM signals: ' +
     'tag, size in CSS pixels, heuristic signals and, when available, a short excerpt of its visible text ("text"), ' +
@@ -50,7 +52,7 @@
     request: 'El proveedor rechazó la solicitud. Revisa que el modelo y el protocolo elegido coincidan.',
     rate: 'El proveedor limitó las solicitudes o no hay saldo. Se reintentará más tarde.',
     server: 'El proveedor de IA tiene un problema temporal. Se reintentará más tarde.',
-    timeout: 'La IA tardó más que el tiempo límite. Auméntalo en Configurar IA.',
+    timeout: 'La IA tardó más que el tiempo límite. Algunos modelos razonan antes de responder y tardan 30-60 s: sube el tiempo límite (hasta 90 s) o elige un modelo más rápido.',
     network: 'No se pudo conectar con el proveedor de IA. Revisa tu conexión y la dirección.',
     format: 'La IA respondió en un formato que no se pudo leer.',
     refusal: 'El modelo declinó clasificar este contenido.',
@@ -535,7 +537,7 @@
         throw new AIError(limited ? 'rate' : 'unavailable');
       }
       let lastError = null;
-      const deadline = now + TOTAL_BUDGET_MS;
+      const deadline = now + Math.min(MAX_TOTAL_BUDGET_MS, Math.max(TOTAL_BUDGET_MS, config.timeoutMs + 30000));
       for (let index = 0; index < ready.length; index++) {
         const connection = ready[index];
         if (epoch !== this.epoch) throw new AIError('changed');
