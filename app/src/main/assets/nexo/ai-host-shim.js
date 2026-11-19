@@ -108,7 +108,14 @@ function nexoAiHostShim(base, manifest) {
       }
       return new Response(reply.status === 204 || reply.status === 304 ? null : String(reply.body || ''),
         { status: reply.status, headers: responseHeaders });
-    }, function() { throw new TypeError('Failed to fetch'); });
+    }, function(err) {
+      if (err && err.message === 'timeout') {
+        const timeoutErr = new Error('Timeout');
+        timeoutErr.code = 'timeout';
+        throw timeoutErr;
+      }
+      throw new TypeError('Failed to fetch');
+    });
     if (!signal) return request;
     return new Promise(function(resolve, reject) {
       const onAbort = function() { reject(abortError()); };

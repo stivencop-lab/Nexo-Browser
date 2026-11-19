@@ -24,12 +24,14 @@ function nativeSide(answer) {
     push(text) { events.push([++seq, text]); },
     query({ request, onSuccess }) {
       const { m, s } = JSON.parse(request);
+      const before = seq;
       if (m !== null) received.push(JSON.parse(m));
       const reply = m === null ? undefined : answer(JSON.parse(m));
       const envelope = { seq };
       if (reply !== undefined) envelope.reply = JSON.stringify(Object.assign({ id: JSON.parse(m).id }, reply));
-      if (s >= 0) {
-        const pending = events.filter(([n]) => n > s).map(([, text]) => text);
+      const cutoff = s >= 0 ? s : before;
+      if (cutoff < seq) {
+        const pending = events.filter(([n]) => n > cutoff).map(([, text]) => text);
         if (pending.length) envelope.events = pending;
       }
       Promise.resolve().then(() => onSuccess(JSON.stringify(envelope)));
@@ -176,4 +178,73 @@ test('the bridge shim gives each frame its own token, targets messages and answe
   tick();
   await flush();
   assert.equal(await dark, true);
+});
+
+test('events pushed during the first query (s = -1) reach the frame without replaying older events', async () => {
+  const native = nativeSide(message => {
+    if (message.kind === 'bridge' && message.payload.type === 'content_script_ready') {
+      native.push(JSON.stringify({ event: 'bridge', message: { type: 'browser_state' } }));
+      native.push(JSON.stringify({ event: 'bridge', message: { type: 'captions', active: true } }));
+    }
+    return undefined;
+  });
+  native.push(JSON.stringify({ event: 'bridge', message: { type: 'stale_old_event' } }));
+  const { context } = page(native);
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + bridgeShimSource + `
+    globalThis.shim = nexoBridgeShim(globalThis.__nexoShield, true);
+    globalThis.got = [];
+    globalThis.nativePort = shim.runtime.connectNative('browser');
+    nativePort.onMessage.addListener(m => got.push(m.type));
+    nativePort.postMessage({ type: 'content_script_ready' });`, context);
+  await flush();
+  assert.deepEqual([...context.got], ['browser_state', 'captions']);
+});
+
+test('concurrent in-flight queries with the same sequence never deliver duplicate events', async () => {
+  const native = nativeSide(() => ({ result: null }));
+  const { context } = page(native);
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + shimSource + `
+    globalThis.shim = nexoPhantomShim('https://x/', {});
+    globalThis.seen = [];
+    shim.storage.onChanged.addListener(changes => seen.push(Object.keys(changes)[0]));`, context);
+  await flush();
+  native.push(JSON.stringify({ event: 'storage', changes: { aiConfig: { newValue: {} } } }));
+  // Dos llamadas concurrentes que salen con el mismo `s` antes de recibir respuesta.
+  const p1 = context.shim.storage.local.get({ adblockEnabled: true });
+  const p2 = context.shim.storage.local.get({ privacyEnabled: false });
+  await Promise.all([p1, p2]);
+  await flush();
+  assert.deepEqual([...context.seen], ['aiConfig']);
+});
+
+test('alwaysPoll polls when hidden and subframe captions_offer schedules a fast wake', async () => {
+  const native = nativeSide(() => undefined);
+  const { context, tick } = page(native, { top: true });
+  context.document.visibilityState = 'hidden';
+  vm.runInContext(portSource + '\nnexoCefriumPort(true, { alwaysPoll: true, pollMs: 1000 });\n' +
+    'globalThis.got = []; __nexoShield.addEventListener("message", e => got.push(JSON.parse(e.data).event));', context);
+  await flush();
+  native.push(JSON.stringify({ event: 'request', rid: 1 }));
+  tick();
+  await flush();
+  assert.deepEqual([...context.got], ['request']);
+
+  // Submarco: captions_offer programa port.wake para recoger captions_grant rápido.
+  const subNative = nativeSide(message => {
+    if (message.kind === 'bridge' && message.payload.type === 'captions_offer') {
+      subNative.push(JSON.stringify({ event: 'bridge', message: { type: 'captions_grant' }, to: message.frame }));
+    }
+    return undefined;
+  });
+  const sub = page(subNative, { top: false });
+  vm.runInContext(portSource + '\nnexoCefriumPort(false);\n' + bridgeShimSource + `
+    globalThis.shim = nexoBridgeShim(globalThis.__nexoShield, false);
+    globalThis.got = [];
+    globalThis.p = shim.runtime.connectNative('browser');
+    p.onMessage.addListener(m => got.push(m.type));
+    p.postMessage({ type: 'captions_offer', score: 100 });`, sub.context);
+  await flush();
+  sub.tick();
+  await flush();
+  assert.deepEqual([...sub.context.got], ['captions_grant']);
 });

@@ -106,7 +106,8 @@ object PhantomShield {
         @Volatile internal var page = 0
         internal var ai = ShieldAi.TabState()
         /** Respuestas que el panel espera de esta pestaña («Analizar con IA»), por id. */
-        internal val replies = HashMap<Int, (Any?) -> Unit>()
+        internal val replies = ConcurrentHashMap<Int, (Any?) -> Unit>()
+        internal val replyTimeouts = ConcurrentHashMap<Int, Runnable>()
 
         /** Respuestas propias pendientes: el hilo de red decide, otro hilo responde. */
         internal val answers = ConcurrentHashMap<String, ShieldDecision>()
@@ -121,7 +122,14 @@ object PhantomShield {
 
         private fun newPage() {
             page++
-            main.post { ai = ShieldAi.TabState() }
+            main.post {
+                ai = ShieldAi.TabState()
+                replyTimeouts.values.forEach { main.removeCallbacks(it) }
+                replyTimeouts.clear()
+                val stale = replies.values.toList()
+                replies.clear()
+                stale.forEach { it(JSONObject().put("ok", false).put("error", "La página cambió.")) }
+            }
         }
 
         /** Navegación sin petición de red (atrás/adelante en caché, cambios de historial). */
@@ -259,6 +267,7 @@ object PhantomShield {
         val lastUpdate = store.long("phantom_last_update")
         val ago = if (lastUpdate == 0L) "nunca" else "hace ${(System.currentTimeMillis() - lastUpdate) / 3_600_000} h"
         return "${if (enabled) "activo" else "apagado"} · anuncios=${settings.adblockEnabled} · popups=${settings.popupBlockEnabled} · " +
+            "ia=${if (aiConfig.enabled) "activa (${ShieldAiHost.statusSummary()})" else "apagada"} · " +
             "reglas red=${rules.networkCount} cosméticas=${rules.cosmeticCount} · bloqueos=${blockedTotal.get()} · " +
             "listas actualizadas $ago · cookies=$cookieMode"
     }
@@ -463,9 +472,15 @@ object PhantomShield {
         panelChannel = channel
         browser.addDocumentStartJavaScript(scripts.panel, setOf(PANEL_ORIGIN))
         browser.setQueryHandler(CefriumBrowser.QueryOriginPolicy.exactly(PANEL_ORIGIN), object : CefriumBrowser.QueryHandler {
-            override fun onQuery(queryId: Long, request: String, origin: String, callback: CefriumBrowser.QueryCallback): Boolean {
+            override fun onQuery(queryId: Long, request: String, origin: String, callback: CefriumBrowser.QueryCallback): Boolean =
+                onQuery(queryId, request, origin, true, callback)
+
+            override fun onQuery(queryId: Long, request: String, origin: String, isMainFrame: Boolean, callback: CefriumBrowser.QueryCallback): Boolean {
+                if (!isMainFrame) return false
                 val parsed = channel.parse(request) ?: return false
-                callback.success(channel.envelope(parsed.message?.let { onPanelMessage(it, channel, onClose) }, parsed.since))
+                val before = channel.currentSeq()
+                val reply = parsed.message?.let { onPanelMessage(it, channel, onClose) }
+                callback.success(channel.envelope(reply, parsed.since, before))
                 return true
             }
         })
@@ -504,13 +519,17 @@ object PhantomShield {
     /** Consulta de un marco de [tab] (hilo principal): la respuesta inmediata y los eventos pendientes. */
     internal fun onPageQuery(tab: ShieldTab, request: String, origin: String, isMainFrame: Boolean): String {
         val parsed = tab.channel.parse(request) ?: return tab.channel.envelope(null, -1)
+        val before = tab.channel.currentSeq()
         val reply = parsed.message?.let { onPageMessage(tab, it, origin, isMainFrame) }
-        return tab.channel.envelope(reply, parsed.since)
+        return tab.channel.envelope(reply, parsed.since, before)
     }
 
     /** Mensajes de las páginas: solo estado de bloqueo y selectores; ni estadísticas ni ajustes. */
     private fun onPageMessage(tab: ShieldTab, message: String, origin: String, isMainFrame: Boolean): String? {
         val call = parse(message) ?: return null
+        if (isMainFrame && tab.topHost == null && (origin.startsWith("http://") || origin.startsWith("https://"))) {
+            tab.onLocation(origin)
+        }
         val session = tab.session?.get()
         // Puente de Nexo (mini video, subtítulos, modo nocturno): marco por su token, o por su origen.
         val frame = call.frame ?: if (isMainFrame) "top" else "o:" + (UrlParts.host(origin) ?: "")
@@ -545,16 +564,26 @@ object PhantomShield {
             "message" -> {
                 val payload = call.payload as? JSONObject ?: return answer(call.id, null)
                 if (payload.optString("type") == "AI_CLASSIFY") {
-                    // El clasificador responde más tarde, por el canal de la pestaña.
-                    classify(tab, payload, origin, isMainFrame) { tab.channel.push(answer(call.id, it)) }
-                    return null
+                    // Respuesta inmediata (p. ej. IA apagada) o más tarde por el canal de la pestaña.
+                    var immediate: String? = null
+                    var sync = true
+                    classify(tab, payload, origin, isMainFrame) { result ->
+                        val text = answer(call.id, result)
+                        if (sync) immediate = text else tab.channel.push(text)
+                    }
+                    sync = false
+                    return immediate
                 }
                 answer(call.id, pageMessage(tab, payload, origin, isMainFrame))
             }
             "reply" -> {
                 // Respuesta de la página a una petición del panel (solo las que Nexo espera de esta pestaña).
                 val reply = call.payload as? JSONObject
-                if (isMainFrame && reply != null) tab.replies.remove(reply.optInt("rid"))?.invoke(reply.opt("result").takeIf { it != JSONObject.NULL })
+                if (isMainFrame && reply != null) {
+                    val rid = reply.optInt("rid")
+                    tab.replyTimeouts.remove(rid)?.let { main.removeCallbacks(it) }
+                    tab.replies.remove(rid)?.invoke(reply.opt("result").takeIf { it != JSONObject.NULL })
+                }
                 answer(call.id, null)
             }
             else -> answer(call.id, null, "No disponible")
@@ -851,13 +880,18 @@ object PhantomShield {
 
     /** Pregunta a la página principal de [tab] (p. ej. «Analizar con IA») y espera su respuesta. */
     private fun askTab(tab: ShieldTab, message: JSONObject, done: (Any?) -> Unit) {
-        val rid = nextReply++
+        val rid = nextReply.incrementAndGet()
         tab.replies[rid] = done
         tab.channel.push(JSONObject().put("event", "message").put("rid", rid).put("message", message).toString())
-        main.postDelayed({ tab.replies.remove(rid)?.invoke(JSONObject().put("ok", false).put("error", "La página no respondió.")) }, AI_SCAN_TIMEOUT_MS)
+        val timeout = Runnable {
+            tab.replyTimeouts.remove(rid)
+            tab.replies.remove(rid)?.invoke(JSONObject().put("ok", false).put("error", "La página no respondió."))
+        }
+        tab.replyTimeouts[rid] = timeout
+        main.postDelayed(timeout, AI_SCAN_TIMEOUT_MS)
     }
 
-    private var nextReply = 1
+    private val nextReply = AtomicInteger(0)
 
     private class Scripts(private val context: Context) {
         private fun asset(path: String) = context.assets.open(path).use { it.readBytes().toString(Charsets.UTF_8) }
@@ -916,7 +950,7 @@ object PhantomShield {
         val aiHost: String = buildString {
             append("if (location.pathname === '/host/ai-host.html') {\n")
             append(port).append('\n')
-            append("nexoCefriumPort(true);\n")
+            append("nexoCefriumPort(true, { alwaysPoll: true, pollMs: 1000 });\n")
             append(hostShim).append('\n')
             append("globalThis.browser = nexoAiHostShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n}\n")
         }

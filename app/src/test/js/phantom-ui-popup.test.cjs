@@ -76,3 +76,10 @@ test('quick AI controls recover after scanning and changing the patcher setting'
   const h=await harness({aiConfig:{enabled:true,consent:true,scope:'public',endpoint:'https://api.example/v1',model:'small'}});
   assert.doesNotMatch(h.field('ai-page').textContent,/Falta la clave/);
  });
+ test('missing API key is reported for all non-custom cloud providers',async()=>{
+  for(const provider of ['gemini','groq','deepseek','mistral','xai']){
+   const h=await harness({aiConfig:{enabled:true,consent:true,scope:'public',provider,apiKey:''}});
+   assert.match(h.field('ai-page').textContent,/Falta la clave/,provider);
+   assert.match(h.field('ai-page').className,/\bbad\b/,provider);
+  }
+ });

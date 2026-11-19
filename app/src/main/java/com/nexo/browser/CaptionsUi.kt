@@ -127,9 +127,13 @@ object CaptionsUi {
         view.text = text
 
         val margin = dp(activity, 8f)
-        val useVideo = !pip && videoRect != null && videoRect.width() > dp(activity, 160f) && videoRect.height() > dp(activity, 90f)
-        val area = if (useVideo) Rect(videoRect).apply { intersect(0, 0, frameWidth, frameHeight) }
-        else Rect(0, 0, frameWidth, frameHeight - if (pip) 0 else dp(activity, 76f))
+        val videoArea = if (!pip && videoRect != null) {
+            Rect(videoRect).takeIf {
+                it.intersect(0, 0, frameWidth, frameHeight) &&
+                    it.width() > dp(activity, 160f) && it.height() > dp(activity, 90f)
+            }
+        } else null
+        val area = videoArea ?: Rect(0, 0, frameWidth, frameHeight - if (pip) 0 else dp(activity, 76f))
         val maxWidth = (area.width() - margin * 2).coerceAtLeast(dp(activity, 120f))
         view.maxWidth = maxWidth
         view.measure(
@@ -139,9 +143,11 @@ object CaptionsUi {
         val width = view.measuredWidth
         val height = view.measuredHeight
         val maxX = (frameWidth - width - margin).coerceAtLeast(margin)
+        val maxY = (frameHeight - height - margin).coerceAtLeast(margin)
+        val minY = (area.top + margin).coerceAtMost(maxY)
         view.translationX = (area.centerX() - width / 2f).coerceIn(margin.toFloat(), maxX.toFloat())
         view.translationY = (area.bottom - height - dp(activity, if (pip) 6f else 14f)).toFloat()
-            .coerceAtLeast((area.top + margin).toFloat())
+            .coerceIn(minY.toFloat(), maxY.toFloat())
         view.visibility = View.VISIBLE
     }
 

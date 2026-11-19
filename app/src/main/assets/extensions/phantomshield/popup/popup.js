@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Lo que la IA hizo en ESTA página: prueba visible de que trabaja.
     const page = stats.tabAi && typeof stats.tabAi === 'object' ? stats.tabAi : null;
     const pageNumber = key => page && Number.isSafeInteger(page[key]) && page[key] >= 0 ? page[key] : 0;
-    const needsKey = config.enabled && !config.apiKey && ['openai','claude','openrouter'].includes(config.provider);
+    const needsKey = Boolean(config.enabled && !config.apiKey && config.provider && config.provider !== 'custom');
     let pageText = '';
     const sourceNames = { local: 'locales', model: 'del modelo', memory: 'de memoria', cache: 'de caché' };
     const sources = Object.keys(sourceNames).filter(key => pageNumber(key)).map(key => pageNumber(key) + ' ' + sourceNames[key]).join(' · ');

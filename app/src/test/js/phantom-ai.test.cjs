@@ -241,3 +241,10 @@ test('sensitivity is validated and defaults to balanced',()=>{
  assert.equal(h.api.validate({sensitivity:'aggressive'}).sensitivity,'aggressive');
  assert.throws(()=>h.api.validate({sensitivity:'max'}));
 });
+test('reasoning model think tags and prose around fenced JSON are parsed cleanly',async()=>{
+ const body='<think>Consider {"decisions":[{"id":"c-1","isAd":false,"confidence":0.1}]} first.</think>\nResultado:\n```json\n{"decisions":[{"id":"c-1","isAd":true,"confidence":0.95}]}\n```\nFin.';
+ const h=harness({},()=>new Response(JSON.stringify({choices:[{message:{content:body}}]})));
+ const result=await h.ai.classify('one.com',candidate(),false);
+ assert.equal(result.ok,true);
+ assert.equal(result.decisions[0].hide,true);
+});

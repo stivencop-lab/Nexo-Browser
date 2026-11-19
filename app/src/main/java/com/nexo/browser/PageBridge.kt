@@ -59,8 +59,18 @@ object PageBridge {
     fun onMessage(session: CefriumEngineSession, frame: String, isMainFrame: Boolean, json: JSONObject) {
         if (!BridgeLimits.accept(json)) return
         val state = state(session)
-        when (json.optString("type")) {
-            "content_script_ready" -> onConnect(session, state, frame, isMainFrame)
+        val type = json.optString("type")
+        if (type == "content_script_ready") {
+            onConnect(session, state, frame, isMainFrame)
+            return
+        }
+        val fresh = state.frames.add(frame)
+        if (isMainFrame) state.topConnected = true
+        if (fresh && LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) {
+            LiveCaptions.onBridgeConnected(session)
+            if (!type.startsWith("captions_")) send(session, captionsOn(session), frame)
+        }
+        when (type) {
             "video_state" -> if (isMainFrame) videoState(session, json)
             "media_state" -> mediaState(session, state, frame, json)
             else -> captions(session, state, frame, json)
@@ -131,6 +141,7 @@ object PageBridge {
         // Con la captura de Android la página no participa: un marco nuevo no la reinicia ni la corta.
         if (!LiveCaptions.isActive(session) || LiveCaptions.pageSuspended(session)) return
         val type = json.optString("type")
+        if (type.startsWith("captions_")) LiveCaptions.onBridgeConnected(session)
         if (type == "captions_offer" && state.owner == null) {
             val score = json.optInt("score").coerceIn(0, 100_000_000)
             val pending = state.offers
@@ -141,6 +152,10 @@ object PageBridge {
                 state.offers = offers
                 main.postDelayed({ grant(session, state, offers) }, OFFER_WINDOW_MS)
             }
+        }
+        if (type == "captions_status" && json.optString("code") == "paused" && state.owner == null) {
+            LiveCaptions.onStatus(session, "paused")
+            return
         }
         if (state.owner != frame) return
         val context = AppContext.get()

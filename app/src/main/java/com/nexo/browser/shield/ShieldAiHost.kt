@@ -19,6 +19,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -39,11 +40,12 @@ internal object ShieldAiHost {
     private const val START_TIMEOUT_MS = 20_000L
 
     private val main = Handler(Looper.getMainLooper())
-    private var browser: CefriumBrowser? = null
+    @Volatile private var browser: CefriumBrowser? = null
     private var channel: PageChannel? = null
-    private var ready = false
+    @Volatile private var ready = false
     private var nextRid = 0
     private val pending = LinkedHashMap<Int, (Any?) -> Unit>()
+    private val timeouts = HashMap<Int, Runnable>()
     private val queue = ArrayList<String>()
     private val closeIdle = Runnable { close("sin uso") }
     private val startTimeout = Runnable {
@@ -61,16 +63,27 @@ internal object ShieldAiHost {
     /** Mensajes que el anfitrión puede escribir en el almacén. */
     val WRITABLE = setOf("aiConfig", "aiStats", "aiStatus", "aiProviders", "aiMemory", "aiAdDomains", "aiMemoryRevision")
 
+    /** Estado breve para el diagnóstico del motor. */
+    fun statusSummary(): String = when {
+        browser == null -> "en espera"
+        ready -> "listo"
+        else -> "iniciando"
+    }
+
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
+    }
+
     /**
      * Envía [message] (ya autorizado por Nexo) al anfitrión, con [sender]
      * como remitente. [done] recibe la respuesta, o un error con `ok: false`.
      */
-    fun request(message: JSONObject, sender: JSONObject, done: (Any?) -> Unit) {
+    fun request(message: JSONObject, sender: JSONObject, done: (Any?) -> Unit) = onMain {
         main.removeCallbacks(closeIdle)
         main.postDelayed(closeIdle, IDLE_CLOSE_MS)
         if (!ensure()) {
             done(failure("La IA necesita Nexo abierto en primer plano. Inténtalo de nuevo."))
-            return
+            return@onMain
         }
         val rid = ++nextRid
         pending[rid] = done
@@ -79,23 +92,28 @@ internal object ShieldAiHost {
             if (queue.size >= MAX_QUEUE) queue.removeAt(0)
             queue += text
         }
-        main.postDelayed({
+        val timeout = Runnable {
+            timeouts.remove(rid)
             pending.remove(rid)?.invoke(failure("La IA tardó demasiado en responder. El bloqueo local sigue activo."))
-        }, REQUEST_TIMEOUT_MS)
+        }
+        timeouts[rid] = timeout
+        main.postDelayed(timeout, REQUEST_TIMEOUT_MS)
     }
 
     /** Cambios del almacén para `storage.onChanged` del anfitrión. */
-    fun storageChanged(text: String) { if (ready) channel?.push(text) }
+    fun storageChanged(text: String) = onMain { if (ready) channel?.push(text) }
 
-    fun close(reason: String, message: String = "La IA se reinició. Inténtalo de nuevo.") {
+    fun close(reason: String, message: String = "La IA se reinició. Inténtalo de nuevo.") = onMain {
         main.removeCallbacks(closeIdle)
         main.removeCallbacks(startTimeout)
-        val current = browser ?: return
+        val current = browser ?: return@onMain
         EngineDiagnostics.log("IA de PhantomShield: anfitrión cerrado ($reason)")
         browser = null
         channel = null
         ready = false
         queue.clear()
+        timeouts.values.forEach { main.removeCallbacks(it) }
+        timeouts.clear()
         val waiting = pending.values.toList()
         pending.clear()
         waiting.forEach { it(failure(message)) }
@@ -117,7 +135,7 @@ internal object ShieldAiHost {
         ready = false
         web.setNavigationClient(object : CefriumNavigationClient {
             override fun onBeforeNavigate(browser: CefriumBrowser, request: CefriumNavigationRequest): Boolean =
-                request.url.orEmpty() != PhantomShield.BASE_URL + HOST_PAGE
+                !request.isForMainFrame || request.url.orEmpty() != PhantomShield.BASE_URL + HOST_PAGE
 
             override fun onRenderProcessTerminated(browser: CefriumBrowser, status: CefriumRendererTerminationStatus, errorCode: Int) {
                 if (browser === this@ShieldAiHost.browser) close("proceso terminado: $status")
@@ -128,15 +146,23 @@ internal object ShieldAiHost {
             }
         })
         runCatching { web.addDocumentStartJavaScript(PhantomShield.aiHostScript(), setOf(PhantomShield.PANEL_ORIGIN)) }
-        web.setQueryHandler(CefriumBrowser.QueryOriginPolicy.exactly(PhantomShield.PANEL_ORIGIN), object : CefriumBrowser.QueryHandler {
-            override fun onQuery(queryId: Long, request: String, origin: String, callback: CefriumBrowser.QueryCallback): Boolean {
-                if (web !== browser) return false
+        val handler = object : CefriumBrowser.QueryHandler {
+            override fun onQuery(queryId: Long, request: String, origin: String, callback: CefriumBrowser.QueryCallback): Boolean =
+                onQuery(queryId, request, origin, true, callback)
+
+            override fun onQuery(queryId: Long, request: String, origin: String, isMainFrame: Boolean, callback: CefriumBrowser.QueryCallback): Boolean {
+                if (web !== browser || !isMainFrame) return false
                 val parsed = pageChannel.parse(request) ?: return false
-                callback.success(pageChannel.envelope(parsed.message?.let { onMessage(it, pageChannel) }, parsed.since))
+                val before = pageChannel.currentSeq()
+                val reply = parsed.message?.let { onMessage(it, web, pageChannel) }
+                callback.success(pageChannel.envelope(reply, parsed.since, before))
                 return true
             }
-        })
+        }
+        web.setQueryHandler(CefriumBrowser.QueryOriginPolicy.exactly(PhantomShield.PANEL_ORIGIN), handler)
         pageChannel.wake = { main.post { if (!web.isClosed) runCatching { web.evaluateJavaScript("window.__nexoWake&&window.__nexoWake()") } } }
+        // Mantener el anfitrión activo aunque su vista no esté adjunta: evita que Chromium pause los temporizadores.
+        runCatching { web.onResume(); web.setPageVisible(true) }
         EngineDiagnostics.log("IA de PhantomShield: anfitrión iniciado")
         main.postDelayed(startTimeout, START_TIMEOUT_MS)
         web.loadUrl(PhantomShield.BASE_URL + HOST_PAGE)
@@ -149,7 +175,7 @@ internal object ShieldAiHost {
         return json.toString()
     }
 
-    private fun onMessage(text: String, pageChannel: PageChannel): String? {
+    private fun onMessage(text: String, web: CefriumBrowser, pageChannel: PageChannel): String? {
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return null
         val id = json.optInt("id")
         val payload = json.opt("payload")
@@ -165,7 +191,11 @@ internal object ShieldAiHost {
             "reply" -> {
                 val reply = payload as? JSONObject
                 val result = reply?.opt("result")
-                reply?.optInt("rid")?.let { pending.remove(it) }?.invoke(if (result == JSONObject.NULL) null else result)
+                val rid = reply?.optInt("rid")
+                if (rid != null) {
+                    timeouts.remove(rid)?.let { main.removeCallbacks(it) }
+                    pending.remove(rid)?.invoke(if (result == JSONObject.NULL) null else result)
+                }
                 answer(id, null)
             }
             "get" -> answer(id, PhantomShield.hostGet(payload))
@@ -182,7 +212,9 @@ internal object ShieldAiHost {
             }
             "fetch" -> {
                 val request = payload as? JSONObject ?: return answer(id, null, "Petición no válida")
-                fetch(request) { result, error -> pageChannel.push(answer(id, result, error)) }
+                fetch(request) { result, error ->
+                    if (web === browser) pageChannel.push(answer(id, result, error))
+                }
                 null
             }
             else -> answer(id, null, "No disponible")
@@ -195,20 +227,26 @@ internal object ShieldAiHost {
         val method = request.optString("method", "POST")
         if (!url.startsWith("https://") || method != "POST") { done(null, "Solo HTTPS"); return }
         val headers = HashMap<String, String>()
+        var contentType = "application/json"
         request.optJSONObject("headers")?.let { source ->
             source.keys().forEach { key ->
                 val value = source.optString(key)
                 val name = key.lowercase()
-                if (name !in FORBIDDEN_HEADERS && '\n' !in value && '\r' !in value && value.length <= 8192) headers[key] = value
+                if ('\n' in value || '\r' in value || value.length > 8192) return@forEach
+                if (name == "content-type") contentType = value.ifBlank { "application/json" }
+                else if (name !in FORBIDDEN_HEADERS) headers[key] = value
             }
         }
-        val body = request.optString("body").toRequestBody((headers.entries.firstOrNull { it.key.equals("content-type", true) }?.value
-            ?: "application/json").toMediaTypeOrNull())
+        val body = request.optString("body").toRequestBody(contentType.toMediaTypeOrNull())
         val call = runCatching {
             http.newCall(Request.Builder().url(url).headers(headers.toHeaders()).post(body).build())
         }.getOrElse { done(null, "Dirección no válida"); return }
         call.enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) { main.post { done(null, "Sin conexión") } }
+            override fun onFailure(call: Call, e: IOException) {
+                EngineDiagnostics.log("IA de PhantomShield: error de red (${e.javaClass.simpleName})")
+                val error = if (e is InterruptedIOException) "timeout" else "Sin conexión"
+                main.post { done(null, error) }
+            }
 
             override fun onResponse(call: Call, response: Response) {
                 val result = runCatching {
@@ -217,11 +255,12 @@ internal object ShieldAiHost {
                         val buffer = okio.Buffer()
                         // Un byte de más basta para que el clasificador detecte el exceso.
                         if (source != null) while (buffer.size <= MAX_RESPONSE_BYTES && source.read(buffer, 8192) != -1L) Unit
+                        val bytes = buffer.readByteArray(minOf(buffer.size, MAX_RESPONSE_BYTES + 1))
                         val out = JSONObject()
                         it.header("Retry-After")?.let { value -> out.put("retry-after", value.take(64)) }
                         it.header("Content-Type")?.let { value -> out.put("content-type", value.take(128)) }
                         JSONObject().put("status", it.code).put("headers", out)
-                            .put("body", buffer.readUtf8(minOf(buffer.size, MAX_RESPONSE_BYTES + 1)))
+                            .put("body", String(bytes, Charsets.UTF_8))
                     }
                 }
                 main.post { result.fold({ done(it, null) }, { done(null, "Sin conexión") }) }

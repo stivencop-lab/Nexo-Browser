@@ -66,4 +66,24 @@ class PageChannelTest {
         assertNull(channel.parse("not json"))
         assertNull(channel.parse("x".repeat(PageChannel.MAX_REQUEST + 1)))
     }
+
+    @Test fun newFrameReceivesEventsGeneratedDuringItsOwnInitialQuery() {
+        val channel = PageChannel()
+        channel.push("""{"event":"stale"}""")
+        val before = channel.currentSeq()
+        channel.push("""{"event":"browser_state"}""")
+        channel.push("""{"event":"captions"}""")
+        val envelope = channel.envelope("ok", -1, before)
+        val json = JSONObject(envelope)
+        assertEquals(3L, json.getLong("seq"))
+        assertEquals("ok", json.getString("reply"))
+        assertEquals(
+            listOf("""{"event":"browser_state"}""", """{"event":"captions"}"""),
+            events(envelope)
+        )
+    }
+
+    @Test fun maxRequestAccommodatesAudioChunks() {
+        assertTrue(PageChannel.MAX_REQUEST >= 512 * 1024)
+    }
 }

@@ -160,6 +160,7 @@ object PhantomShieldPanel {
             setDimAmount(0.45f)
             setWindowAnimations(android.R.style.Animation_InputMethod)
         }
+        runCatching { web.onResume(); web.setPageVisible(true) }
         web.loadUrl(PhantomShield.BASE_URL + "popup/popup.html")
         return true
     }

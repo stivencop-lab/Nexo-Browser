@@ -49,16 +49,24 @@ class PageChannel {
         Request(message, json.optLong("s", -1L))
     }.getOrNull()
 
-    /** Respuesta a un marco: [reply] para su mensaje y los eventos nuevos desde [since]. */
-    fun envelope(reply: String?, since: Long): String {
+    /** Secuencia actual del canal (para no perder eventos publicados durante la misma consulta). */
+    fun currentSeq(): Long = synchronized(lock) { seq }
+
+    /**
+     * Respuesta a un marco: [reply] para su mensaje y los eventos nuevos desde [since].
+     * Si el marco acaba de arrancar (`since < 0`), no repite eventos anteriores, pero sí
+     * entrega los que su propio mensaje provocó (`n > generatedAfter`).
+     */
+    fun envelope(reply: String?, since: Long, generatedAfter: Long = Long.MAX_VALUE): String {
         connected = true
         val json = JSONObject()
         if (reply != null) json.put("reply", reply)
         synchronized(lock) {
             json.put("seq", seq)
-            if (since >= 0) {
+            val cutoff = if (since >= 0) since else generatedAfter
+            if (cutoff < seq) {
                 val list = JSONArray()
-                events.forEach { (n, text) -> if (n > since) list.put(text) }
+                events.forEach { (n, text) -> if (n > cutoff) list.put(text) }
                 if (list.length() > 0) json.put("events", list)
             }
         }
@@ -72,6 +80,6 @@ class PageChannel {
 
     companion object {
         const val MAX_EVENTS = 64
-        const val MAX_REQUEST = 256 * 1024
+        const val MAX_REQUEST = 512 * 1024
     }
 }

@@ -653,7 +653,7 @@
     video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
     track: null, trackMode: "", trackTimer: 0, knownCues: 0,
     dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
-    restartTimer: 0, capturing: false, waitCancel: null,
+    restartTimer: 0, capturing: false, waitCancel: null, pausedNotified: false,
     target: "", file: null, fileTimer: 0, fileUrls: 0
   };
   const MAX_CUES = 3000;
@@ -967,23 +967,29 @@
    */
   const DOM_CAPTION_TEXT = [
     ".ytp-caption-segment",
+    ".ytm-caption-segment",
     ".player-timedtext-text-container",
     ".atvwebplayersdk-captions-text",
     ".vjs-text-track-display .vjs-text-track-cue",
     ".jw-text-track-cue",
     ".shaka-text-container span",
     ".plyr__caption",
-    ".bmpui-ui-subtitle-label"
+    ".bmpui-ui-subtitle-label",
+    ".vtt-cue",
+    "[data-purpose=\"captions-cue-text\"]",
+    ".mejs__captions-text"
   ].join(",");
   const DOM_CAPTION_BOXES = [
     ".ytp-caption-window-container",
+    ".ytm-caption-window-container",
     ".player-timedtext",
     ".atvwebplayersdk-captions-overlay",
     ".vjs-text-track-display",
     ".jw-captions",
     ".shaka-text-container",
     ".plyr__captions",
-    ".bmpui-ui-subtitle-overlay"
+    ".bmpui-ui-subtitle-overlay",
+    ".mejs__captions-layer"
   ].join(",");
   const DOM_POLL_MS = 250;
   const hiddenBoxes = new Set();
@@ -1373,8 +1379,12 @@
       release();
     }
     if (!captions.granted && video && !video.paused && !video.ended) {
+      captions.pausedNotified = false;
       const rect = video.getBoundingClientRect();
       sendToNexo({ type: "captions_offer", score: Math.round(Math.max(0, rect.width) * Math.max(0, rect.height)) });
+    } else if (!captions.granted && video && video.paused && !video.ended && !captions.pausedNotified) {
+      captions.pausedNotified = true;
+      sendToNexo({ type: "captions_status", code: "paused" });
     }
   }
 
@@ -1386,10 +1396,12 @@
       clearTimeout(lateTrackTimer);
       captions.active = false;
       captions.granted = false;
+      captions.pausedNotified = false;
       captions.video = null;
       return;
     }
     const liveChanged = captions.live !== (live === true);
+    if (!captions.active) captions.pausedNotified = false;
     captions.active = true;
     captions.live = live === true;
     captions.lang = typeof lang === "string" && lang ? lang : "multi";
@@ -1402,6 +1414,7 @@
   // El sondeo también descubre reproductores nuevos (SPA) y videos en Shadow DOM abierto.
   setInterval(discoverCaptions, 1000);
   document.addEventListener("playing", event => {
+    captions.pausedNotified = false;
     discoverCaptions();
     if (captions.granted && (!captions.video || event.target === captions.video)) startRecording();
   }, true);
@@ -1599,6 +1612,7 @@
 
     if (message.type === "captions_grant" && captions.active && !captions.granted) {
       captions.granted = true;
+      captions.pausedNotified = false;
       chooseSource();
     }
     if (message.type === "captions_restart" && captions.active && !textSource()) {
