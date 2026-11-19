@@ -5,6 +5,7 @@
     <string name="app_name">Nexo Browser</string>
     <string name="omnibox_hint">Buscar o escribir dirección</string>
     <string name="open_menu">Abrir menú</string>
+    <string name="nexo_ai_action">Nexo AI ✨: asistente de la página actual</string>
     <string name="open_tabs">Ver pestañas</string>
     <string name="clear_address">Borrar dirección</string>
     <string name="empty_history">Aún no hay páginas en tu historial</string>

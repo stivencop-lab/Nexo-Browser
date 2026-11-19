@@ -61,6 +61,7 @@ class MainActivity :
     private lateinit var suggestions: OmniboxSuggestions
     private lateinit var progress: ProgressBar
     private lateinit var tabButton: Button
+    private lateinit var aiButton: ImageButton
     private lateinit var backButton: ImageButton
     private lateinit var forwardButton: ImageButton
     private lateinit var compactBackButton: ImageButton
@@ -293,6 +294,7 @@ class MainActivity :
         omnibox = findViewById(R.id.omnibox)
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
+        aiButton = findViewById(R.id.aiButton)
         backButton = findViewById(R.id.backButton)
         forwardButton = findViewById(R.id.forwardButton)
         compactBackButton = findViewById(R.id.compactBackButton)
@@ -652,8 +654,8 @@ class MainActivity :
             if (reopen != null) SheetAction(R.drawable.ic_menu_reopen, "Reabrir cerrada") { TabManager.reopenClosed() }
             else SheetAction(R.drawable.ic_tab_tools, "Herramientas") { TabTools.show(this) },
             SheetAction(
-                R.drawable.ic_menu_open,
-                "Nexo AI",
+                R.drawable.ic_nexo_ai_spark,
+                "Nexo AI ✨",
                 active = com.nexo.browser.ai.NexoAiConfig.read(this).enabled,
                 subtitle = "Asistente de página, selección y pestañas"
             ) { com.nexo.browser.ai.NexoAiSheet.show(this) },
@@ -905,6 +907,7 @@ class MainActivity :
 
     private fun startPageAction(action: String) {
         when (action) {
+            "ai" -> com.nexo.browser.ai.NexoAiSheet.show(this)
             "downloads" -> openScreen(DownloadsActivity::class.java)
             "history" -> openScreen(HistoryActivity::class.java)
             "burner" -> BurnerMailbox.open(this)
@@ -1209,6 +1212,9 @@ class MainActivity :
         ThemeManager.styleIconButton(this, compactBackButton)
         styleTabToolsButton(TabManager.activeTab())
         styleMiniPlayerChip()
+        // Botón permanente ✨ de Nexo AI: siempre visible, resaltado con el acento del tema.
+        ThemeManager.styleIconButton(this, aiButton, active = true)
+        aiButton.setOnClickListener { com.nexo.browser.ai.NexoAiSheet.show(this) }
         ThemeManager.styleTabCounter(this, tabButton)
         ThemeManager.styleFlatButton(this, findViewById(R.id.menuButton))
         ThemeManager.styleFlatButton(this, clearOmniboxButton)

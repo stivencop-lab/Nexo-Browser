@@ -48,26 +48,32 @@ object NexoAiSheet {
         var requestGen = 0L
         var lastResponseText = ""
         var lastSnapshot: NexoAiPageAgent.PageSnapshot? = null
+        var lastPrompt = ""
+        var lastLabel = ""
 
         lateinit var sheet: Dialog
         val body = NexoUi.column(activity)
 
-        // --- Interruptor maestro ---
+        // El asistente es visible aunque Nexo AI esté apagado: se activa con un
+        // toque y nunca se envía nada sin una acción explícita del usuario.
         val workspaceBox = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            visibility = if (settings.enabled) View.VISIBLE else View.GONE
         }
 
-        body.addView(NexoUi.switchRow(
+        val enableCard = NexoUi.card(activity).apply {
+            visibility = if (!settings.enabled) View.VISIBLE else View.GONE
+        }
+        enableCard.addView(NexoUi.note(
             activity,
-            "Activar Nexo AI",
-            "Envía contexto saneado solo cuando tú pulses una acción. Nunca lee contraseñas, cookies ni tarjetas.",
-            settings.enabled
-        ) { enabled ->
-            NexoAiConfig.setEnabled(activity, enabled)
+            "Nexo AI está apagado. Actívalo para consultar esta página: el contexto saneado se envía solo cuando pulses una acción. Nunca lee contraseñas, cookies ni tarjetas."
+        ))
+        enableCard.addView(NexoUi.button(activity, "Activar Nexo AI", primary = true) {
+            NexoAiConfig.setEnabled(activity, true)
             settings = NexoAiConfig.read(activity)
-            workspaceBox.visibility = if (enabled) View.VISIBLE else View.GONE
-        })
+            enableCard.visibility = View.GONE
+            Toastish.show(activity, "Nexo AI activado.")
+        }, NexoUi.buttonParams(activity, 8f))
+        body.addView(enableCard)
 
         // --- Consentimiento explícito ---
         val consentBox = LinearLayout(activity).apply {
@@ -191,6 +197,8 @@ object NexoAiSheet {
             }
 
             val myGen = ++requestGen
+            lastPrompt = taskPrompt
+            lastLabel = taskLabel
             activeCancel?.cancel()
             val handle = NexoAiClient.CancelHandle()
             activeCancel = handle
@@ -222,6 +230,11 @@ object NexoAiSheet {
                                 val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 cm.setPrimaryClip(ClipData.newPlainText("Nexo AI", lastResponseText))
                                 Toastish.show(activity, "Respuesta copiada.")
+                            }
+                            if (lastPrompt.isNotBlank()) {
+                                chips += NexoUi.chip(activity, "Reintentar", false) {
+                                    runTask(lastPrompt, lastLabel)
+                                }
                             }
                             if (res.actions.isNotEmpty()) {
                                 res.actions.forEach { proposed ->
@@ -353,11 +366,22 @@ object NexoAiSheet {
 
         body.addView(workspaceBox)
 
+        val pageHost = runCatching { android.net.Uri.parse(TabManager.activeTab()?.url.orEmpty()).host }
+            .getOrNull()?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        val headerSubtitle = if (pageHost.isBlank()) "Página de inicio" else pageHost
+        val configured = settings.enabled && settings.consentAccepted &&
+            NexoAiConfig.validate(settings, NexoAiConfig.apiKey(activity)) == null
         sheet = NexoSheets.show(
             activity,
             NexoSheets.column(
                 activity,
-                NexoSheets.header(activity, "Nexo AI", "Asistente integrado sin recargar la página"),
+                NexoSheets.header(
+                    activity,
+                    "Nexo AI ✨",
+                    headerSubtitle,
+                    badge = if (configured) "${settings.provider} · ${settings.effectiveModel().ifBlank { "modelo" }}" else "Sin configurar",
+                    badgeTone = if (configured) NexoUi.Tone.SUCCESS else NexoUi.Tone.WARNING
+                ),
                 body
             )
         )

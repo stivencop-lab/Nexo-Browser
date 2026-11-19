@@ -289,6 +289,15 @@
             android:textSize="22sp"
             android:visibility="gone" />
 
+        <ImageButton
+            android:id="@+id/aiButton"
+            android:layout_width="@dimen/touch_target"
+            android:layout_height="@dimen/touch_target"
+            android:layout_marginStart="4dp"
+            android:contentDescription="@string/nexo_ai_action"
+            android:scaleType="center"
+            android:src="@drawable/ic_nexo_ai_spark" />
+
         <Button
             android:id="@+id/tabButton"
             android:layout_width="@dimen/touch_target"
