@@ -10,18 +10,19 @@ import org.junit.Test
 class NexoMediaEngineTest {
     @Test
     fun clampSpeedEnforcesSupportedRange() {
-        assertEquals(0.5f, MediaSitePrefs.clampSpeed(0.1f), 0.001f)
+        assertEquals(0.25f, MediaSitePrefs.clampSpeed(0.1f), 0.001f)
         assertEquals(1.5f, MediaSitePrefs.clampSpeed(1.5f), 0.001f)
-        assertEquals(2.5f, MediaSitePrefs.clampSpeed(5.0f), 0.001f)
+        assertEquals(3.0f, MediaSitePrefs.clampSpeed(5.0f), 0.001f)
         assertEquals(1.0f, MediaSitePrefs.clampSpeed(Float.NaN), 0.001f)
     }
 
     @Test
-    fun clampSeekStepFallsBackToDefaultWhenUnsupported() {
+    fun clampSeekStepEnforcesSupportedRange() {
+        assertEquals(3, MediaSitePrefs.clampSeekStep(0))
         assertEquals(5, MediaSitePrefs.clampSeekStep(5))
         assertEquals(15, MediaSitePrefs.clampSeekStep(15))
         assertEquals(30, MediaSitePrefs.clampSeekStep(30))
-        assertEquals(10, MediaSitePrefs.clampSeekStep(99))
+        assertEquals(60, MediaSitePrefs.clampSeekStep(99))
     }
 
     @Test
