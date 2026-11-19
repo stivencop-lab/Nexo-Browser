@@ -97,6 +97,7 @@ class MainActivity :
 
     // Un sitio puso un elemento (normalmente el video) en pantalla completa.
     private var fullScreenActive = false
+    private var fullscreenMediaOverlay: com.nexo.browser.media.NexoMediaEngine.FullscreenOverlay? = null
     private var pendingPipEntry: Runnable? = null
     private var wasBackgrounded = false
 
@@ -258,6 +259,11 @@ class MainActivity :
                 TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true
         }
         browserFrame.onRefresh = { TabManager.reload() }
+        fullscreenMediaOverlay = com.nexo.browser.media.NexoMediaEngine.FullscreenOverlay(
+            activity = this,
+            hostContainer = browserFrame,
+            onOpenPanel = { com.nexo.browser.media.NexoMediaEngine.showSheet(this) { refreshCaptionsUi() } }
+        )
         omnibox = findViewById(R.id.omnibox)
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
@@ -469,7 +475,11 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_download, "Descargas", active = DownloadStore.activeDownloads().isNotEmpty()) {
                 openScreen(DownloadsActivity::class.java)
             },
-            SheetAction(R.drawable.ic_menu_translate, "Traducir") {
+            SheetAction(
+                R.drawable.ic_menu_translate,
+                if (TranslatorManager.isTranslated(current?.session)) "Restaurar original" else "Traducir",
+                active = TranslatorManager.isTranslated(current?.session)
+            ) {
                 TranslatorManager.translateActive(this) { _, message ->
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
@@ -485,6 +495,12 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_pdf, "Guardar PDF") { savePageAsPdf() },
             if (reopen != null) SheetAction(R.drawable.ic_menu_reopen, "Reabrir cerrada") { TabManager.reopenClosed() }
             else SheetAction(R.drawable.ic_tab_tools, "Herramientas") { TabTools.show(this) },
+            SheetAction(
+                R.drawable.ic_menu_open,
+                "Nexo AI",
+                active = com.nexo.browser.ai.NexoAiConfig.read(this).enabled,
+                subtitle = "Asistente de página, selección y pestañas"
+            ) { com.nexo.browser.ai.NexoAiSheet.show(this) },
             SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) },
             SheetAction(
                 R.drawable.ic_menu_update,
@@ -1119,6 +1135,7 @@ class MainActivity :
             if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
 
         setSystemBarsHidden(fullScreenActive && !pip)
+        fullscreenMediaOverlay?.setActive(fullScreenActive && !pip)
         if (hideChrome) startPage.visibility = View.GONE else tab?.let { updateStartPage(it) }
         updateMiniPlayerChip()
         root.requestLayout()
@@ -1936,15 +1953,23 @@ class MainActivity :
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (MigrationMode.enabled(this)) return
-        // La Activity gestiona la rotación: el motor debe enterarse para
-        // actualizar screen.orientation y las media queries.
+        // La Activity gestiona la rotación y cambios de modo claro/oscuro sin destruirse
+        // (evita recrear sesiones Chromium y recargar páginas abiertas).
         com.nexo.browser.engine.Engines.current.onConfigurationChanged(this, newConfig)
         ViewCompat.requestApplyInsets(findViewById(android.R.id.content))
+        if (themeKey.isNotBlank() && themeKey != ThemeManager.themeKey(this)) {
+            ThemeManager.applyWindow(this)
+            applyTheme()
+            com.nexo.browser.engine.Engines.current.applySettings(this)
+            ExtensionManager.sendBrowserState(this)
+        }
         if (BrowserPrefs.isNexoHome(TabManager.activeTab()?.url)) startPage.render(TabManager.activeTab()?.isPrivate == true)
     }
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
+        PerfLog.detach(this)
+        fullscreenMediaOverlay?.detach()
         pendingPipEntry?.let { pageView.removeCallbacks(it) }
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }

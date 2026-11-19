@@ -74,6 +74,9 @@ class CefriumEngineSession internal constructor(
 
     /** PhantomShield de esta pestaña (página principal, bloqueos y puente). */
     internal val shield: PhantomShield.ShieldTab = PhantomShield.newTab(params.isPrivate)
+    internal val isPrivate: Boolean = params.isPrivate
+    /** Token privado por sesión para autenticar llamadas de NXR Runtime desde esta pestaña. */
+    internal val nxrToken: String = java.util.UUID.randomUUID().toString().replace("-", "")
 
     internal var browser: CefriumBrowser? = null
         private set
@@ -162,6 +165,8 @@ class CefriumEngineSession internal constructor(
             val old = boundActivity.get()
             if (old === activity || (old != null && !old.isDestroyed)) return current
             // La Activity de este navegador ya no existe: otro igual en la nueva.
+            EngineDiagnostics.recordSurfaceRebind()
+            EngineDiagnostics.log("recreando superficie de pestaña por Activity destruida")
             val navigation = runCatching { current.serializeNavigationState() }.getOrNull()
             pendingState = CefriumState.of(currentUrl, navigation)
             pendingUrl = null
@@ -190,6 +195,7 @@ class CefriumEngineSession internal constructor(
         browser = target
         boundActivity = WeakReference(activity)
         CefriumEngine.bind(target, this)
+        applyCanvasBackground(target)
         target.setNavigationClient(Navigation())
         target.setChromeClient(Chrome())
         target.setDownloadClient(Downloads())
@@ -199,6 +205,13 @@ class CefriumEngineSession internal constructor(
         ExtensionManager.bindSession(this)
         applySettings()
         if (active) target.onResume() else target.setPageVisible(false)
+    }
+
+    private fun applyCanvasBackground(target: CefriumBrowser) {
+        val hex = com.nexo.browser.NightMode.effective(appContext)
+        val color = if (hex != null) runCatching { android.graphics.Color.parseColor(hex) }.getOrDefault(0xFF0C1222.toInt())
+            else android.graphics.Color.WHITE
+        runCatching { target.setBackgroundColor(color) }
     }
 
     /** Cierra el navegador sin cerrar la pestaña (Activity destruida, transferencia de perfil). */
@@ -227,6 +240,7 @@ class CefriumEngineSession internal constructor(
             val scale = BrowserPrefs.textScale(context)
             target.setZoomLevel(if (scale == 100) 0.0 else ln(scale / 100.0) / ln(1.2))
             target.setDarkMode(CefriumEngine.darkPages(context))
+            applyCanvasBackground(target)
             applyUserAgent(target)
         }
         // El filtro de cookies cuesta en cada cookie: el interceptor cambia solo si cambia la política.
@@ -371,6 +385,7 @@ class CefriumEngineSession internal constructor(
         closed = true
         observer = null
         ExtensionManager.forgetSession(this)
+        shield.dispose()
         main.removeCallbacks(stateTask)
         releaseBrowser()
         host?.detach(this)
@@ -518,10 +533,12 @@ class CefriumEngineSession internal constructor(
         override fun onLoadStart(browser: CefriumBrowser, url: String?) {
             mainFrameError = false
             sslNoticeFor = null
+            EngineDiagnostics.recordDocumentLoad()
             EngineDiagnostics.log("carga iniciada: ${url?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"}")
             // Documento nuevo: sus medios y sus marcos los volverá a informar el puente.
             onMediaState(active = false, playing = false, title = null)
             com.nexo.browser.PageBridge.onNewDocument(this@CefriumEngineSession)
+            com.nexo.browser.TranslatorManager.forget(this@CefriumEngineSession)
             observer?.onPageStart(this@CefriumEngineSession, url ?: currentUrl.orEmpty())
         }
 
@@ -531,6 +548,12 @@ class CefriumEngineSession internal constructor(
             observer.onCanGoForward(this@CefriumEngineSession, canGoForward)
             if (!loading) {
                 observer.onPageStop(this@CefriumEngineSession, !mainFrameError)
+                if (!mainFrameError) {
+                    com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentIdle(
+                        this@CefriumEngineSession,
+                        currentUrl ?: browser.url
+                    )
+                }
                 scheduleState()
             }
         }
@@ -541,6 +564,10 @@ class CefriumEngineSession internal constructor(
 
         override fun onDocumentAvailable(browser: CefriumBrowser) {
             observer?.onFirstContentfulPaint(this@CefriumEngineSession)
+            com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentAvailable(
+                this@CefriumEngineSession,
+                currentUrl ?: browser.url
+            )
         }
 
         override fun onLoadError(browser: CefriumBrowser, error: CefriumLoadError) {
@@ -559,6 +586,7 @@ class CefriumEngineSession internal constructor(
                 CefriumRendererTerminationStatus.KILLED, CefriumRendererTerminationStatus.OOM -> ProcessExit.KILL
                 else -> ProcessExit.CRASH
             }
+            EngineDiagnostics.recordRendererExit(exit == ProcessExit.KILL)
             EngineDiagnostics.log("el proceso de la página terminó: $status (código $errorCode)")
             main.post { observer?.onProcessExit(this@CefriumEngineSession, exit) }
         }

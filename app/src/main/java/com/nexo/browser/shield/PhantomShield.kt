@@ -64,8 +64,8 @@ object PhantomShield {
     private val PANEL_WRITABLE = setOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled",
         "disabled_domains", "aiConfig")
 
-    private val main = Handler(Looper.getMainLooper())
-    private val io = Executors.newSingleThreadScheduledExecutor()
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val io by lazy { Executors.newSingleThreadScheduledExecutor() }
     private lateinit var appContext: Context
     private lateinit var store: ShieldStore
     @Volatile private var started = false
@@ -116,6 +116,7 @@ object PhantomShield {
             topUrl = url
             topHost = UrlParts.host(url)
             blocked.set(0)
+            answers.clear()
             newPage()
             channel.reset()
         }
@@ -129,6 +130,20 @@ object PhantomShield {
                 val stale = replies.values.toList()
                 replies.clear()
                 stale.forEach { it(JSONObject().put("ok", false).put("error", "La página cambió.")) }
+            }
+        }
+
+        /** Libera temporizadores, respuestas pendientes y referencias al cerrar la pestaña. */
+        internal fun dispose() {
+            answers.clear()
+            session = null
+            tabs.removeAll { it.get() == null || it.get() === this }
+            main.post {
+                replyTimeouts.values.forEach { main.removeCallbacks(it) }
+                replyTimeouts.clear()
+                val stale = replies.values.toList()
+                replies.clear()
+                stale.forEach { it(JSONObject().put("ok", false).put("error", "La pestaña se cerró.")) }
             }
         }
 
@@ -551,6 +566,30 @@ object PhantomShield {
             if (result !== PageBridge.LATER) return answer(call.id, result)
             return if (early !== PageBridge.LATER) answer(call.id, early) else null
         }
+        if (call.kind == "nxr_storage" || call.kind == "nxr_message" || call.kind == "nxr_error") {
+            if (session == null) return answer(call.id, null, "Sesión no disponible.")
+            val reply = com.nexo.browser.extensions.nxr.NxrRuntime.onPageMessage(
+                sessionToken = session.nxrToken,
+                isPrivate = session.isPrivate,
+                origin = origin,
+                isMainFrame = isMainFrame,
+                kind = call.kind,
+                payload = call.payload as? JSONObject
+            )
+            return answer(call.id, reply.result, reply.error)
+        }
+        if (call.kind == "nexo_translate_segments") {
+            val ok = session != null && com.nexo.browser.TranslatorManager.onPageSegments(
+                session, isMainFrame, call.payload as? JSONObject
+            )
+            return answer(call.id, ok)
+        }
+        if (call.kind == "nexo_ai_snapshot") {
+            val ok = session != null && com.nexo.browser.ai.NexoAiPageAgent.onPageSnapshot(
+                session, isMainFrame, call.payload as? JSONObject
+            )
+            return answer(call.id, ok)
+        }
         return when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })
@@ -897,6 +936,7 @@ object PhantomShield {
         private fun asset(path: String) = context.assets.open(path).use { it.readBytes().toString(Charsets.UTF_8) }
         private val shim = asset("nexo/phantom-shim.js")
         private val port = asset("nexo/cefrium-port.js")
+        private val darkEngine = asset("nexo/dark-engine.js")
         private val media = asset("nexo/media-reporter.js")
         private val bridgeShim = asset("nexo/bridge-shim.js")
         private val bridge = asset("nexo/bridge/page-bridge.js")
@@ -911,6 +951,8 @@ object PhantomShield {
         val content: String = buildString {
             append("(function(){'use strict';\n")
             append("if (!/^https?:$/.test(location.protocol)) return;\n")
+            // Nexo Dark Engine temprano: corre en document_start antes de que parsee el CSS de la página.
+            append("try {\n").append(darkEngine).append("\n} catch (_) {}\n")
             append(port).append('\n')
             append("if (!nexoCefriumPort(window === window.top)) return;\n")
             // Los medios y el puente de Nexo capturan el puerto antes de que el shim de PhantomShield lo retire.

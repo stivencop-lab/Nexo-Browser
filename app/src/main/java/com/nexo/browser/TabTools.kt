@@ -30,15 +30,29 @@ object TabTools {
         val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
         val body = NexoUi.column(activity)
 
-        // --- Modo nocturno de este sitio ------------------------------------
-        if (host.isNotBlank() && UrlSafety.isWebUrl(tab.url) && NightMode.effective(activity) != null) {
+        // --- Nexo Dark Engine -----------------------------------------------
+        if (host.isNotBlank() && UrlSafety.isWebUrl(tab.url)) {
             val excluded = BrowserPrefs.isNightException(activity, host)
-            body.addView(NexoUi.switchRow(activity, "Modo nocturno en $host",
-                if (excluded) "Desactivado en este sitio: se ve con sus colores originales."
-                else "Las páginas claras se oscurecen; las imágenes y videos conservan sus colores.", !excluded) { on ->
-                NightMode.toggleSite(activity, host, excluded = !on)
-            })
+            if (NightMode.effective(activity) != null || excluded) {
+                body.addView(NexoUi.switchRow(activity, "Nexo Dark Engine en $host",
+                    if (excluded) "Desactivado en este sitio: se ve con sus colores originales."
+                    else "Oscurecimiento temprano híbrido; medios y editores protegidos.", !excluded) { on ->
+                    NightMode.toggleSite(activity, host, excluded = !on)
+                })
+            }
         }
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Nexo Dark Engine", com.nexo.browser.dark.DarkEngine.summary(activity)) {
+            sheet.dismiss()
+            com.nexo.browser.dark.DarkEngine.showSheet(activity, host)
+        })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Nexo Media Engine", "Velocidad, salto rápido, gestos y sincronía de subtítulos") {
+            sheet.dismiss()
+            com.nexo.browser.media.NexoMediaEngine.showSheet(activity)
+        })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_open, "Nexo AI", "Resumir página, analizar selección, tablas y comparar pestañas") {
+            sheet.dismiss()
+            com.nexo.browser.ai.NexoAiSheet.show(activity)
+        })
 
         // --- Grupo ---------------------------------------------------------
         body.addView(NexoUi.section(activity, "Grupo de esta pestaña"))

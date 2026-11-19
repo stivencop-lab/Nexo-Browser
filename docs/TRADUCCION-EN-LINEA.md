@@ -1,4 +1,10 @@
-# Traducción dentro de la página (0.18.0)
+# Traducción dentro de la página
+
+> **Estado actual (Chromium/Cefrium, v0.32.0+):** Desde la migración a Chromium embebido (Cefrium), la traducción completa de páginas ya **no** usa `TranslationsController` de GeckoView. Ahora la implementa `TranslatorManager.kt` + `app/src/main/assets/nexo/page-translator.js`: extrae bloques de texto visibles del DOM (excluyendo scripts, código, formularios y `.notranslate`), traduce en lotes mediante los proveedores configurados en `CaptionProtocol` (Google sin clave, DeepL o IA) y permite restaurar el texto original sin recargar la página.
+>
+> El texto siguiente se conserva únicamente como referencia histórica de la implementación original en 0.18.0 sobre GeckoView.
+
+## Referencia histórica (0.18.0 — GeckoView)
 
 El menú Traducir usa `TranslationsController.SessionTranslation` de GeckoView 159.
 No navega a Google Translate ni crea otra pestaña. El motor modifica el documento

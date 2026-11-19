@@ -89,25 +89,34 @@
     if (!state || typeof state !== "object") return;
     backgroundMedia = state.backgroundMedia !== false;
     // Solo los mensajes que traen el modo nocturno lo cambian (otras respuestas parciales no lo apagan).
-    if (typeof state.night === "boolean") setNight(state.night, typeof state.nightBackground === "string" ? state.nightBackground : "");
+    if (typeof state.night === "boolean") {
+      setNight(
+        state.night,
+        typeof state.nightBackground === "string" ? state.nightBackground : "",
+        typeof state.darkStrategy === "string" ? state.darkStrategy : "hybrid",
+        state.darkOled === true,
+        state.nightException === true
+      );
+    }
   }
 
   // ---------------------------------------------------------------
-  // Modo nocturno (Dark Reader, cargado bajo demanda)
+  // Nexo Dark Engine (híbrido temprano + Dark Reader bajo demanda)
   // ---------------------------------------------------------------
 
-  /*
-   * Con Midnight, OLED o el tema oscuro del sistema, las páginas claras se
-   * oscurecen con el motor dinámico de Dark Reader (también contenido que
-   * aparece después e iframes: cada marco decide por sí mismo). Las páginas
-   * que ya son oscuras se respetan. Imágenes y videos conservan sus colores.
-   * El motor solo se carga en el marco que lo necesita; al desactivarlo se
-   * retiran sus estilos y observadores.
-   */
-  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false, earlyStyle: null };
+  const night = { want: false, background: "#0c1222", active: false, loading: null, waiting: false, earlyStyle: null, controller: null };
 
-  // Fallback de primer render: no oculta la página; solo pinta el canvas base mientras
-  // Dark Reader calcula los estilos completos. Chromium ya anuncia el esquema oscuro nativo.
+  if (globalThis.nexoDarkEngine && typeof globalThis.nexoDarkEngine.createController === "function") {
+    night.controller = globalThis.nexoDarkEngine.createController({
+      document,
+      window,
+      loadDarkReader: () => loadDarkReader(),
+      getDarkReader: () => (typeof DarkReader !== "undefined" ? DarkReader : null)
+    });
+    night.controller.bootstrapEarly();
+  }
+
+  // Fallback de primer render si dark-engine.js no está cargado (entornos de prueba aislados).
   function applyEarlyNight(enabled) {
     try {
       const root = document.documentElement;
@@ -172,8 +181,6 @@
     loadDarkReader().then(ok => {
       if (!ok || !night.want || night.active || pageAlreadyDark()) return;
       try {
-        // fetch del script (principal de la extensión): puede leer hojas de estilo de otros
-        // orígenes; window.fetch sería el de la página, limitado por CORS.
         DarkReader.setFetchMethod(url => fetch(url, { credentials: "omit" }));
         DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
           darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" });
@@ -182,9 +189,20 @@
     });
   }
 
-  function setNight(want, background) {
+  function setNight(want, background, strategy, oled, excluded) {
     if (/^#[0-9a-f]{6}$/i.test(background)) night.background = background;
     night.want = want;
+    if (night.controller) {
+      night.controller.applyConfig({
+        enabled: want,
+        background: night.background,
+        strategy: strategy || "hybrid",
+        oled: Boolean(oled),
+        excluded: Boolean(excluded)
+      });
+      night.active = want && !excluded;
+      return;
+    }
     applyEarlyNight(want);
     if (!want) {
       if (night.active && darkReaderReady()) { try { DarkReader.disable(); } catch (_) {} }
@@ -192,12 +210,10 @@
       return;
     }
     if (night.active) {
-      // Cambió el tema (Midnight ↔ OLED): mismos estilos, otro fondo.
       try { DarkReader.enable({ brightness: 100, contrast: 95, sepia: 0,
         darkSchemeBackgroundColor: night.background, darkSchemeTextColor: "#e8e6e3" }); } catch (_) {}
       return;
     }
-    // El script se ejecuta en document_start; no esperes a DOMContentLoaded.
     enableNight();
   }
 
@@ -651,8 +667,8 @@
   const captions = {
     active: false, live: false, lang: "multi", granted: false, choosing: false, token: 0,
     video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,
-    track: null, trackMode: "", trackTimer: 0, knownCues: 0,
-    dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false,
+    track: null, trackMode: "", trackTimer: 0, knownCues: 0, offsetSec: 0, offsetTimer: 0,
+    dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false, ytTimer: 0,
     restartTimer: 0, capturing: false, waitCancel: null, pausedNotified: false,
     target: "", file: null, fileTimer: 0, fileUrls: 0
   };
@@ -902,19 +918,40 @@
     if (!track) return;
     sendNewCues(track);
     let active = [];
-    try { active = Array.from(track.activeCues || []); } catch (_) {}
+    if (captions.offsetSec !== 0 && captions.video) {
+      const shifted = Math.max(0, (Number(captions.video.currentTime) || 0) + captions.offsetSec);
+      try {
+        const all = Array.from(track.cues || []);
+        for (let i = 0; i < all.length && active.length < 4; i++) {
+          const c = all[i];
+          if (shifted >= Number(c.startTime) && shifted < Number(c.endTime)) active.push(c);
+        }
+      } catch (_) {}
+    } else {
+      try { active = Array.from(track.activeCues || []); } catch (_) {}
+    }
     if (active.some(cue => !cueIds.has(cue))) {
       // La lista cambió sin cambiar de tamaño: volver a revisarla entera.
       captions.knownCues = -1;
       sendNewCues(track);
     }
-    const ids = active.map(cue => cueIds.get(cue)).filter(id => id !== undefined);
+    const ids = active.map(cue => cueIds.get(cue)).filter(id => id !== undefined).slice(0, 4);
     sendToNexo({ type: "captions_active", ids });
+  }
+
+  function syncTrackOffsetTimer() {
+    clearInterval(captions.offsetTimer);
+    captions.offsetTimer = 0;
+    if (captions.track && captions.offsetSec !== 0) {
+      captions.offsetTimer = setInterval(sendActiveCues, 250);
+    }
   }
 
   function releaseTrack() {
     clearTimeout(captions.trackTimer);
     captions.trackTimer = 0;
+    clearInterval(captions.offsetTimer);
+    captions.offsetTimer = 0;
     const track = captions.track;
     captions.track = null;
     captions.knownCues = 0;
@@ -944,7 +981,7 @@
     let attempts = 0;
     const load = () => {
       if (captions.track !== track) return;
-      if (sendNewCues(track) > 0) { sendActiveCues(); return; }
+      if (sendNewCues(track) > 0) { syncTrackOffsetTimer(); sendActiveCues(); return; }
       // Pista vacía o de otro origen sin permiso: probar las otras fuentes.
       if (++attempts >= 10) {
         releaseTrack();
@@ -1090,9 +1127,10 @@
           resolve(true);
           return;
         }
-        if (++attempts >= 10) { resolve(false); return; }
-        setTimeout(check, 300);
+        if (++attempts >= 10) { captions.ytTimer = 0; resolve(false); return; }
+        captions.ytTimer = setTimeout(check, 300);
       };
+      clearTimeout(captions.ytTimer);
       check();
     });
   }
@@ -1267,12 +1305,12 @@
     syncFileCaptions();
   }
 
-  /** Líneas activas según el tiempo del video (como haría una pista). */
+  /** Líneas activas según el tiempo del video (como haría una pista), aplicando desplazamiento sin tocar currentTime. */
   function syncFileCaptions() {
     const file = captions.file, video = captions.video;
     if (!file || !video) return;
     if (document.visibilityState === "hidden" && !pipActive) return;
-    const now = Number(video.currentTime) || 0;
+    const now = Math.max(0, (Number(video.currentTime) || 0) + captions.offsetSec);
     const ids = [];
     for (let i = 0; i < file.cues.length; i++) {
       const cue = file.cues[i];
@@ -1303,6 +1341,8 @@
     captions.token++;
     clearTimeout(captions.restartTimer);
     captions.restartTimer = 0;
+    clearTimeout(captions.ytTimer);
+    captions.ytTimer = 0;
     captions.choosing = false;
     stopRecording(notify);
     releaseTrack();
@@ -1468,6 +1508,13 @@
     const best = playingVideo || anyVideo;
 
     const rect = best ? screenRect(best) : null;
+    const rawRate = best ? Number(best.playbackRate || 1) : 1;
+    const rawTime = best ? Number(best.currentTime || 0) : 0;
+    const rawDur = best ? Number(best.duration || 0) : 0;
+    let hasTracks = false;
+    try {
+      hasTracks = Boolean(best && best.textTracks && best.textTracks.length > 0);
+    } catch (_) {}
     const state = {
       type: "video_state",
       present: !!anyVideo,
@@ -1478,11 +1525,16 @@
       rx: rect ? rect.x : 0,
       ry: rect ? rect.y : 0,
       rw: rect ? rect.w : 0,
-      rh: rect ? rect.h : 0
+      rh: rect ? rect.h : 0,
+      rate: Number.isFinite(rawRate) ? Math.round(rawRate * 100) / 100 : 1,
+      time: Number.isFinite(rawTime) && rawTime >= 0 ? Math.round(rawTime * 10) / 10 : 0,
+      duration: Number.isFinite(rawDur) && rawDur > 0 ? Math.round(rawDur * 10) / 10 : 0,
+      drm: Boolean(best && best.mediaKeys),
+      tracks: hasTracks
     };
 
     const key = `${state.present}|${state.playing}|${state.width}|${state.height}|` +
-      `${state.rx}|${state.ry}|${state.rw}|${state.rh}`;
+      `${state.rx}|${state.ry}|${state.rw}|${state.rh}|${state.rate}|${state.drm}|${state.tracks}`;
     const now = Date.now();
 
     if (key === lastStateKey && now - lastReportAt < HEARTBEAT_MS) return;
@@ -1494,6 +1546,56 @@
     try {
       port.postMessage(state);
     } catch (_) {}
+  }
+
+  /** Comandos de Nexo Media Engine: velocidad, salto configurable, play/pause y desplazamiento CC. */
+  function mediaCommand(message) {
+    const action = String(message && message.action || "");
+    if (action === "set_caption_offset") {
+      const ms = Math.max(-5000, Math.min(5000, Number(message.offsetMs) || 0));
+      captions.offsetSec = ms / 1000;
+      if (captions.file) {
+        captions.file.last = null;
+        syncFileCaptions();
+      }
+      if (captions.track) {
+        syncTrackOffsetTimer();
+        sendActiveCues();
+      }
+      return;
+    }
+
+    const video = pipVideo || pickPipVideo() || captionVideo();
+    if (!video) return;
+
+    if (action === "play" || action === "pause" || action === "toggle") {
+      pipCommand(action);
+      return;
+    }
+    if (action === "set_speed") {
+      const rate = Math.max(0.5, Math.min(2.5, Number(message.speed) || 1));
+      try { video.playbackRate = rate; } catch (_) {}
+      lastStateKey = "";
+      scheduleVideoReport();
+      return;
+    }
+    if (action === "seek_relative") {
+      const delta = Math.max(-120, Math.min(120, Number(message.delta) || 0));
+      if (!delta) return;
+      try {
+        if (video.seekable && video.seekable.length) {
+          const start = video.seekable.start(0);
+          const end = video.seekable.end(video.seekable.length - 1);
+          video.currentTime = Math.max(start, Math.min(end, mediaTime(video) + delta));
+        } else {
+          const dur = Number(video.duration);
+          const next = Math.max(0, mediaTime(video) + delta);
+          video.currentTime = Number.isFinite(dur) && dur > 0 ? Math.min(dur, next) : next;
+        }
+      } catch (_) {}
+      lastStateKey = "";
+      scheduleVideoReport();
+    }
   }
 
   function screenRect(video) {
@@ -1531,7 +1633,8 @@
     "emptied",
     "loadedmetadata",
     "canplay",
-    "waiting"
+    "waiting",
+    "ratechange"
   ].forEach(type => {
     document.addEventListener(type, scheduleVideoReport, true);
   });
@@ -1553,22 +1656,6 @@
   // Conexión con Nexo (con reconexión)
   // ---------------------------------------------------------------
 
-  /*
-   * Captura de Android: un salto al mismo punto hace que el motor cierre y
-   * vuelva a abrir el flujo de audio del video. Abierto con la captura ya
-   * activa, Android lo enruta por la vía que puede oír (no por la de baja latencia).
-   */
-  function nudgeMedia() {
-    const media = new Set(collectVideos().concat(Array.from(document.getElementsByTagName("audio"))));
-    for (const element of media) {
-      try {
-        if (element.paused || element.ended || element.muted || element.readyState < 2) continue;
-        const time = Number(element.currentTime);
-        if (Number.isFinite(time)) element.currentTime = time;
-      } catch (_) {}
-    }
-  }
-
   function onNativeMessage(message) {
     if (!message || typeof message !== "object") return;
 
@@ -1588,6 +1675,10 @@
 
     if (message.type === "pip_command" && typeof message.command === "string") {
       pipCommand(message.command);
+    }
+
+    if (message.type === "media_command") {
+      mediaCommand(message);
     }
 
     if (message.type === "lifecycle") {

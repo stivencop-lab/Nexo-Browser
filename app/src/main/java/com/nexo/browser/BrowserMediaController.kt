@@ -62,7 +62,7 @@ object BrowserMediaController {
      */
     private val playbackHoldUntil = mutableMapOf<String, Long>()
 
-    private val main = Handler(Looper.getMainLooper())
+    private val main by lazy { Handler(Looper.getMainLooper()) }
 
     private var listener: Listener? = null
     private var currentTabId: String? = null
@@ -287,6 +287,7 @@ object BrowserMediaController {
 
     fun resetVideo(tabId: String) {
         videos.remove(tabId)
+        com.nexo.browser.media.NexoMediaEngine.resetTab(tabId)
         listener?.onBrowserMediaStateChanged()
     }
 
@@ -295,6 +296,7 @@ object BrowserMediaController {
         videos.remove(tabId)
         recentPlayback.remove(tabId)
         playbackHoldUntil.remove(tabId)
+        com.nexo.browser.media.NexoMediaEngine.resetTab(tabId)
 
         if (currentTabId == tabId) {
             currentTabId = null

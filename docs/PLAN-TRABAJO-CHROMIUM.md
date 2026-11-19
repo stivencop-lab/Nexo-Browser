@@ -1,5 +1,7 @@
 # Plan de trabajo — Nexo sobre Chromium (Cefrium)
 
+> **Documento histórico (v0.31.1 / PR #46):** El bloqueo de carga inicial descrito abajo fue resuelto en versiones posteriores (hasta `v0.32.0`). Consulta [`README.md`](../README.md) para el estado y la arquitectura vigentes.
+
 Documento de traspaso para el siguiente agente. Léelo entero antes de tocar código.
 Complementa a `docs/CHROMIUM-NATIVE-MIGRATION.md` (arquitectura y decisiones).
 

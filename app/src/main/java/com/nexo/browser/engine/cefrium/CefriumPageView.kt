@@ -30,8 +30,8 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
         current = target
         target.host = this
         target.ensureBrowser()
-        attachBrowser(target)
         target.browser?.setBackgroundColor(background)
+        attachBrowser(target)
     }
 
     /** El navegador de [session] (nuevo o recreado) pasa a esta vista si es la pestaña mostrada. */

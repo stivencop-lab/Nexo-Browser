@@ -105,10 +105,10 @@ object LiveCaptions {
         var stateChangedAt = SystemClock.uptimeMillis()
     }
 
-    private val main = Handler(Looper.getMainLooper())
-    private val io = Executors.newSingleThreadExecutor()
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val io by lazy { Executors.newSingleThreadExecutor() }
     // Peticiones rápidas (Google): anticipadas y respaldo mientras responde el modelo de IA.
-    private val fast = Executors.newSingleThreadExecutor()
+    private val fast by lazy { Executors.newSingleThreadExecutor() }
     private val active = WeakHashMap<EngineSession, Stream>()
     private var listener: Listener? = null
     private val cache = object : LinkedHashMap<String, String>(256, 0.75f, true) {
