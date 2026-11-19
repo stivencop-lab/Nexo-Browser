@@ -1,8 +1,8 @@
 # Nexo Browser
 
-> **Versión en Gradle:** `0.33.0` · `versionCode 67` · Paquete `com.nexo.browser`
+> **Versión en Gradle:** `0.34.0` · `versionCode 68` · Paquete `com.nexo.browser`
 >
-> **Última release publicada:** [v0.33.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.33.0) · Motor **Chromium 156** embebido mediante [Cefrium](https://cefrium.com) `0.21.0` (LGPL-3.0) · Android 10+ (`minSdk 29`, `targetSdk 35`, `compileSdk 37.2`).
+> **Última release publicada:** [v0.34.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.34.0) · Motor **Chromium 156** embebido mediante [Cefrium](https://cefrium.com) `0.21.0` (LGPL-3.0) · Android 10+ (`minSdk 29`, `targetSdk 35`, `compileSdk 37.2`).
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
@@ -94,16 +94,16 @@ Asistente integrado y traductor de páginas bajo control total del usuario:
 
 ## APK disponible
 
-La última release firmada publicada desde `main` es **Nexo Browser v0.33.0** (`versionCode 67`), paquete `com.nexo.browser` *(las mejoras de la auditoría V2 viven en su PR de revisión hasta ser fusionadas y publicadas en una futura versión)*:
+La última release firmada publicada desde `main` es **Nexo Browser v0.34.0** (`versionCode 68`), paquete `com.nexo.browser`:
 
-- [Descargar APK `arm64-v8a` (recomendado)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.33.0/Nexo-v0.33.0-arm64-v8a.apk)
-- [Descargar APK `armeabi-v7a` (32 bits)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.33.0/Nexo-v0.33.0-armeabi-v7a.apk)
-- [Descargar `SHA256SUMS.txt`](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.33.0/SHA256SUMS.txt)
-- [Ver release v0.33.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.33.0)
+- [Descargar APK `arm64-v8a` (recomendado)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.34.0/Nexo-v0.34.0-arm64-v8a.apk)
+- [Descargar APK `armeabi-v7a` (32 bits)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.34.0/Nexo-v0.34.0-armeabi-v7a.apk)
+- [Descargar `SHA256SUMS.txt`](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.34.0/SHA256SUMS.txt)
+- [Ver release v0.34.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.34.0)
 
-Hashes SHA-256 verificados en la release `v0.33.0`:
-- `Nexo-v0.33.0-arm64-v8a.apk`: `60cd27d6ff019885edc859eebd8e0d7157897ff632f1809f8e322e1b87eea41e`
-- `Nexo-v0.33.0-armeabi-v7a.apk`: `1bd13e759263e05b26a2c271ce3c72195c58add15c5064f41ef5bd09d9d6fb90`
+Hashes SHA-256 verificados en la release `v0.34.0`:
+- `Nexo-v0.34.0-arm64-v8a.apk`: `2a3fb15d0d0e7d98089ebe545123e619a2062f1de312164043f1c7284d0385ad`
+- `Nexo-v0.34.0-armeabi-v7a.apk`: `28921cea27f8157b493655ffbcbda170f079f01a0289ca921838ba2b9b1f56a5`
 
 ---
 
