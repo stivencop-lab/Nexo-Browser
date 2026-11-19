@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Process
 import android.text.InputType
+import android.view.ViewGroup
 import android.widget.*
 import java.io.File
 import java.util.concurrent.Executors
