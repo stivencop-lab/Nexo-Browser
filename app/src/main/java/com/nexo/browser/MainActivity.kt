@@ -70,6 +70,12 @@ class MainActivity :
     private lateinit var browserDock: GestureDock
     private lateinit var clearOmniboxButton: Button
     private lateinit var privateBanner: TextView
+    private lateinit var extensionInstallBanner: LinearLayout
+    private lateinit var extensionBannerText: TextView
+    private lateinit var extensionBannerAction: Button
+    private lateinit var extensionBannerDismiss: ImageButton
+    private var currentStoreExtension: com.nexo.browser.extensions.hub.ExtensionStoreResolver.ResolvedTarget.StoreExtension? = null
+    private val dismissedStoreKeys = HashSet<String>()
     private lateinit var miniPlayerButton: Button
     private lateinit var root: View
     private lateinit var browserFrame: PullRefreshLayout
@@ -295,6 +301,10 @@ class MainActivity :
         newTabButton = findViewById(R.id.newTabButton)
         clearOmniboxButton = findViewById(R.id.clearOmniboxButton)
         privateBanner = findViewById(R.id.privateBanner)
+        extensionInstallBanner = findViewById(R.id.extensionInstallBanner)
+        extensionBannerText = findViewById(R.id.extensionBannerText)
+        extensionBannerAction = findViewById(R.id.extensionBannerAction)
+        extensionBannerDismiss = findViewById(R.id.extensionBannerDismiss)
         miniPlayerButton = findViewById(R.id.miniPlayerButton)
         captionsButton = findViewById(R.id.captionsButton)
         captionView = findViewById(R.id.captionView)
@@ -366,6 +376,33 @@ class MainActivity :
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
         privateBanner.setOnClickListener {
             TabManager.activeTab()?.burnerId?.let { BurnerMailbox.show(this, it) }
+        }
+        extensionBannerAction.setOnClickListener {
+            val target = currentStoreExtension ?: return@setOnClickListener
+            val installed = com.nexo.browser.extensions.nxr.NxrRuntime.installed(this)
+                .firstOrNull { it.id == target.extensionId || it.storeId == target.extensionId }
+            if (installed != null) {
+                com.nexo.browser.extensions.nxr.NxrRuntime.showExtensionSheet(
+                    activity = this,
+                    extId = installed.id,
+                    onCheckUpdate = {
+                        com.nexo.browser.extensions.hub.ExtensionHubSheets.openSingleUpdateFlow(this, installed) {
+                            TabManager.activeTab()?.let { tab -> updateExtensionInstallBanner(tab) }
+                        }
+                    },
+                    onChanged = {
+                        TabManager.activeTab()?.let { tab -> updateExtensionInstallBanner(tab) }
+                    }
+                )
+            } else {
+                com.nexo.browser.extensions.hub.ExtensionHubSheets.openStoreInstallFlow(this, target) {
+                    TabManager.activeTab()?.let { tab -> updateExtensionInstallBanner(tab) }
+                }
+            }
+        }
+        extensionBannerDismiss.setOnClickListener {
+            currentStoreExtension?.let { dismissedStoreKeys.add("${it.store.name}:${it.extensionId}") }
+            extensionInstallBanner.visibility = View.GONE
         }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
         captionsButton.setOnClickListener { toggleCaptions() }
@@ -1110,6 +1147,10 @@ class MainActivity :
 
         privateBanner.setBackgroundColor(p.accentSoft)
         privateBanner.setTextColor(p.onAccentSoft)
+        extensionInstallBanner.background = ThemeManager.barBackground(this, lineOnTop = false)
+        extensionBannerText.setTextColor(p.text)
+        ThemeManager.styleButton(this, extensionBannerAction, primary = true)
+        ThemeManager.styleIconButton(this, extensionBannerDismiss)
         progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
         progress.progressBackgroundTintList =
             android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
@@ -1370,6 +1411,7 @@ class MainActivity :
         topBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
         privateBanner.visibility =
             if (!hideChrome && tab?.isPrivate == true) View.VISIBLE else View.GONE
+        if (hideChrome) extensionInstallBanner.visibility = View.GONE else tab?.let { updateExtensionInstallBanner(it) }
         progress.visibility =
             if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
 
@@ -1520,9 +1562,53 @@ class MainActivity :
         forwardButton.alpha = if (tab.canGoForward) 1f else 0.45f
         privateBanner.visibility =
             if (!immersive && tab.isPrivate) View.VISIBLE else View.GONE
+        updateExtensionInstallBanner(tab)
         title = if (tab.isPrivate) "Navegación privada" else tab.title
         updateMiniPlayerChip()
         syncPredictiveBack()
+    }
+
+    /**
+     * Observador puro de URL (sin inyección en el DOM de la tienda ni falsificación de User-Agent):
+     * cuando el usuario abre una ficha de Chrome Web Store o Microsoft Edge Add-ons, ofrece la
+     * barra contextual nativa «Instalar en Nexo» o «Gestionar en Nexo» si ya está instalada.
+     */
+    private fun updateExtensionInstallBanner(tab: BrowserTab) {
+        if (immersive || BrowserPrefs.isNexoHome(tab.url)) {
+            currentStoreExtension = null
+            extensionInstallBanner.visibility = View.GONE
+            return
+        }
+        val target = com.nexo.browser.extensions.hub.ExtensionStoreResolver.detectStorePage(tab.url)
+        if (target == null) {
+            currentStoreExtension = null
+            extensionInstallBanner.visibility = View.GONE
+            return
+        }
+        val key = "${target.store.name}:${target.extensionId}"
+        if (dismissedStoreKeys.contains(key)) {
+            currentStoreExtension = target
+            extensionInstallBanner.visibility = View.GONE
+            return
+        }
+        currentStoreExtension = target
+        val installed = com.nexo.browser.extensions.nxr.NxrRuntime.installed(this)
+            .firstOrNull { it.id == target.extensionId || it.storeId == target.extensionId }
+        if (installed != null) {
+            val state = com.nexo.browser.extensions.nxr.NxrRuntime.lifecycleState(installed.id, this)
+            extensionBannerText.text = "${installed.name} · ${state.label} en Nexo"
+            extensionBannerAction.text = "Gestionar"
+        } else {
+            val label = tab.title
+                .replace(" - Chrome Web Store", "", ignoreCase = true)
+                .replace(" - Microsoft Edge Addons", "", ignoreCase = true)
+                .trim()
+                .takeIf { it.isNotBlank() && !it.startsWith("http", ignoreCase = true) }
+                ?: target.store.label
+            extensionBannerText.text = "$label · ${target.store.label}"
+            extensionBannerAction.text = "Instalar en Nexo"
+        }
+        extensionInstallBanner.visibility = View.VISIBLE
     }
 
     override fun onStart() {
@@ -1558,6 +1644,7 @@ class MainActivity :
         ExtensionManager.attachPromptActivity(this)
         AppUpdater.resumePendingInstallIfAllowed(this)
         TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
+        TabManager.activeTab()?.let { updateExtensionInstallBanner(it) }
         ExtensionManager.consumePendingAction { ok, message ->
             if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
