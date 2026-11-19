@@ -33,7 +33,8 @@ object NavConfig {
         DOWNLOADS("downloads", "Descargas"),
         AI("ai", "Nexo AI"),
         SHIELD("shield", "PhantomShield"),
-        EXTENSIONS("extensions", "Extensiones");
+        EXTENSIONS("extensions", "Extensiones"),
+        READER("reader", "Modo lectura");
 
         companion object {
             fun fromId(raw: String?): Action? =
@@ -128,5 +129,6 @@ object NavConfig {
         Action.AI -> R.drawable.ic_menu_ai
         Action.SHIELD -> R.drawable.ic_menu_shield
         Action.EXTENSIONS -> R.drawable.ic_menu_extensions
+        Action.READER -> R.drawable.ic_menu_reader
     }
 }

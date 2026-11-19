@@ -280,6 +280,15 @@ object SiteControlSheet {
                     activity.runOnUiThread { Toast.makeText(activity, message, Toast.LENGTH_LONG).show() }
                 }
             })
+            body.addView(NexoUi.actionRow(
+                activity,
+                R.drawable.ic_menu_reader,
+                "Modo lectura (Nexo Reader)",
+                "Vista limpia saneada, lectura en voz alta y guardado sin conexión"
+            ) {
+                sheet.dismiss()
+                com.nexo.browser.reader.NexoReader.openActiveTab(activity)
+            })
         }
         body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Nexo Dark Engine", DarkEngine.summary(activity)) {
             sheet.dismiss()

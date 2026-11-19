@@ -198,7 +198,7 @@ class OmniboxSuggestions(
         "phantom_shield" -> R.drawable.ic_menu_shield
         "nexo_ai" -> R.drawable.ic_menu_ai
         "extensions" -> R.drawable.ic_menu_extensions
-        "reader_mode" -> R.drawable.ic_menu_reader
+        "reader_mode", "offline_articles" -> R.drawable.ic_menu_reader
         "bookmarks" -> R.drawable.ic_menu_bookmark
         "nav_customize", "tab_tools" -> R.drawable.ic_tab_tools
         else -> R.drawable.ic_menu_open

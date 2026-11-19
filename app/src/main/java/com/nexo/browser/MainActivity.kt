@@ -592,6 +592,8 @@ class MainActivity :
             "extensions" -> openScreen(ExtensionsActivity::class.java)
             "nav_customize" -> NavCustomizerSheet.show(this) { applyNavigationMode() }
             "tab_tools" -> SiteControlSheet.show(this)
+            "reader_mode" -> com.nexo.browser.reader.NexoReader.openActiveTab(this)
+            "offline_articles" -> com.nexo.browser.reader.NexoReader.openSavedArticlesSheet(this) { viewModel.navigate(it) }
         }
     }
 
@@ -621,6 +623,9 @@ class MainActivity :
                 TranslatorManager.translateActive(this) { _, message ->
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
+            },
+            SheetAction(R.drawable.ic_menu_reader, "Modo lectura") {
+                com.nexo.browser.reader.NexoReader.openActiveTab(this)
             },
             SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = current?.desktopMode == true, checked = current?.desktopMode == true) {
                 TabManager.setDesktopMode(!(current?.desktopMode ?: false))
@@ -1228,6 +1233,7 @@ class MainActivity :
             NavConfig.Action.AI -> com.nexo.browser.ai.NexoAiSheet.show(this)
             NavConfig.Action.SHIELD -> openShieldPanel()
             NavConfig.Action.EXTENSIONS -> openScreen(ExtensionsActivity::class.java)
+            NavConfig.Action.READER -> com.nexo.browser.reader.NexoReader.openActiveTab(this)
         }
     }
 
@@ -2405,7 +2411,7 @@ class MainActivity :
         private val PAGE_ONLY_ACTIONS = setOf(
             R.drawable.ic_menu_copy, R.drawable.ic_menu_share, R.drawable.ic_menu_find,
             R.drawable.ic_menu_pin, R.drawable.ic_menu_screenshot, R.drawable.ic_menu_pdf,
-            R.drawable.ic_menu_translate, R.drawable.ic_menu_desktop
+            R.drawable.ic_menu_translate, R.drawable.ic_menu_desktop, R.drawable.ic_menu_reader
         )
 
         /** Primer enlace web dentro de un texto compartido. */

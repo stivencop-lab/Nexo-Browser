@@ -113,7 +113,9 @@ object NexoCommandEngine {
         CommandSpec("nexo_ai", "Abrir Nexo AI", "Asistente contextual para página y pestañas", listOf("ai", "ia", "asistente", "resumen", "nexo ai")),
         CommandSpec("extensions", "Administrar extensiones", "Abrir Nexo Extension Hub y complementos", listOf("extensiones", "extensions", "complementos", "addons", "hub")),
         CommandSpec("nav_customize", "Personalizar navegación", "Cambiar entre modo Clásico, Compacto y Personalizado", listOf("navegacion", "barra", "dock", "compacto", "personalizar")),
-        CommandSpec("tab_tools", "Control del sitio y pestaña", "Permisos, herramientas, proxy y grupos", listOf("sitio", "permisos", "herramientas", "proxy", "site"))
+        CommandSpec("tab_tools", "Control del sitio y pestaña", "Permisos, herramientas, proxy y grupos", listOf("sitio", "permisos", "herramientas", "proxy", "site")),
+        CommandSpec("reader_mode", "Activar modo lectura", "Vista limpia, tipografía y lectura en voz alta", listOf("lectura", "reader", "leer", "articulo", "voz", "tts"), requiresWebPage = true),
+        CommandSpec("offline_articles", "Artículos sin conexión", "Abrir artículos guardados en Nexo Reader", listOf("offline", "sin conexion", "guardados", "reader", "articulos"))
     )
 
     val SETTINGS: List<SettingSpec> = listOf(
