@@ -49,11 +49,10 @@ object LiveCaptions {
         @Volatile var stopped = false
         val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<okhttp3.Call>()
         var deviceAudio = false
-        // Captura de Android: nivel del audio que llega (0–100), desde cuándo hay señal y si ya se reabrió el audio.
+        // Captura de Android: nivel del audio que llega (0–100) y desde cuándo hay señal.
         var deviceLevel = 0
         var deviceSignalSince = 0L
         var devicePlaying = false
-        var deviceNudged = false
         // El usuario eligió la captura de Android y Android aún pide permiso: la página queda
         // fuera para que un error suyo (p. ej. "no deja grabar") no cancele la solicitud.
         var deviceRequested = false
@@ -249,12 +248,12 @@ object LiveCaptions {
         deliver(app, stream)
         notifyChanged(session)
         // Si la página no respondió, avisar en vez de quedarse en silencio.
-        main.postDelayed({
+        main.postAtTime({
             if (active[session] === stream && !stream.delivered) {
                 setState(stream, State.ERROR, "La página aún no está lista para los subtítulos. Recárgala y vuelve a tocar CC.")
                 notifyChanged(session)
             }
-        }, 8000L)
+        }, stream, SystemClock.uptimeMillis() + 8000L)
         return true
     }
 
@@ -499,7 +498,7 @@ object LiveCaptions {
         ExtensionManager.setCaptions(session,false)
         close(stream); resetSource(stream)
         stream.deviceAudio = true
-        stream.deviceLevel = 0; stream.deviceSignalSince = 0L; stream.devicePlaying = false; stream.deviceNudged = false
+        stream.deviceLevel = 0; stream.deviceSignalSince = 0L; stream.devicePlaying = false
         stream.trackMode = false; stream.domMode = false
         stream.text.clear(); stream.headerChecked = true
         stream.receivedBytes = 0; stream.lastAudioAt = 0; stream.lastResultAt = 0
@@ -533,8 +532,7 @@ object LiveCaptions {
         val level = "nivel ${(stream.deviceLevel / 5) * 5} %".let { if (stream.deviceLevel in 1..4) "nivel bajo" else it }
         return when {
             stream.deviceLevel == 0 && !stream.devicePlaying -> "Android escuchando · aún no llega sonido (¿el video está en pausa?)"
-            stream.deviceLevel == 0 -> "Android captura pero solo llega silencio (nivel 0 %)" +
-                if (stream.deviceNudged) " · reabriendo el audio del video…" else " · comprueba que el video suene"
+            stream.deviceLevel == 0 -> "Android captura pero solo llega silencio (nivel 0 %) · comprueba que el video suene"
             !stream.opened -> "Android oye el video ($level) · conectando con Deepgram…"
             stream.deviceSignalSince > 0 && now - stream.deviceSignalSince > 15000 ->
                 "Android oye el video ($level), pero Deepgram no devuelve texto. Revisa el idioma del audio en CC (ahora: ${languageLabel(stream)})."
@@ -845,7 +843,6 @@ object LiveCaptions {
                         }, delay)
                         return@post
                     }
-                    stream.state = State.ERROR
                     onPageError(context, stream.session, "deepgram", CaptionProtocol.errorFor(code) + " Apaga y activa CC para reintentar.")
                 }
             }
@@ -872,14 +869,7 @@ object LiveCaptions {
             "meter_unavailable" -> "Audio capturado; medidor no disponible. Esperando transcripción…"
             "paused" -> "Esperando reproducción…"
             "muted" -> "El video está en silencio: activa su sonido y Nexo empezará a transcribir."
-            "device_quiet" -> {
-                // Silencio con el video sonando: puede seguir en la vía de baja latencia que
-                // Android no captura. Se reabre su audio una vez (un salto al mismo punto).
-                if (stream.deviceAudio && !stream.deviceNudged) {
-                    stream.deviceNudged = true
-                }
-                deviceMessage(stream, SystemClock.uptimeMillis())
-            }
+            "device_quiet" -> deviceMessage(stream, SystemClock.uptimeMillis())
             else -> stream.message
         }
         notifyChanged(session)
@@ -887,7 +877,12 @@ object LiveCaptions {
 
     /** La app concedió el video de un marco a los subtítulos (diagnóstico). */
     fun onVideoGranted(session: EngineSession) {
-        active[session]?.videoFound = true
+        val stream = active[session] ?: return
+        stream.videoFound = true
+        if (stream.message == "Esperando reproducción…") {
+            stream.message = null
+            notifyChanged(session)
+        }
     }
 
     fun reapply(context: Context) {

@@ -69,6 +69,7 @@ object ExtensionManager {
     }
 
     fun forgetSession(session: EngineSession) {
+        LiveCaptions.stop(session)
         (session as? CefriumEngineSession)?.shield?.session = null
         PageBridge.forget(session)
     }

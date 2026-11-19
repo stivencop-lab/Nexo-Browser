@@ -713,3 +713,18 @@ test('media nudge does not rewrite currentTime', () => {
   assert.match(source, /message.type === \"media_nudge\"/);
   assert.doesNotMatch(source, /if (message.type === \"media_nudge\") nudgeMedia()/);
 });
+
+test('paused video emits paused captions status once while waiting and offers once playing starts', () => {
+  const h = harness();
+  const v = h.video();
+  v.pause();
+  h.message({ type: 'captions', active: true, live: true, lang: 'es', target: 'es' });
+  h.tick(1000);
+  h.tick(1000);
+  const pausedReports = h.reports.filter(m => m.type === 'captions_status' && m.code === 'paused');
+  assert.equal(pausedReports.length, 1, 'paused status is reported once while waiting');
+  assert.equal(h.reports.some(m => m.type === 'captions_offer'), false, 'paused video is not offered');
+  v.paused = false;
+  h.fire('playing', v);
+  assert.equal(h.reports.some(m => m.type === 'captions_offer'), true, 'video is offered as soon as playback starts');
+});

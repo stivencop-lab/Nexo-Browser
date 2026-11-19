@@ -140,10 +140,12 @@
     });
   }
 
-  /** Extrae el objeto JSON aunque el modelo lo envuelva en texto o ```json. */
+  /** Extrae el objeto JSON aunque el modelo lo envuelva en razonamiento (<think>), texto o ```json. */
   function parseDecisions(content, validIds, threshold) {
     let parsed = null;
-    const text = String(content).replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+    const stripped = String(content).replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(stripped);
+    const text = (fenced ? fenced[1] : stripped).trim();
     try { parsed = JSON.parse(text); } catch (error) {
       const start = text.indexOf('{');
       const end = text.lastIndexOf('}');
@@ -319,7 +321,8 @@
           credentials: 'omit', cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer'
         });
       } catch (error) {
-        throw new AIError(controller.timedOut ? 'timeout' : controller.signal.aborted ? 'changed' : 'network');
+        const timedOut = controller.timedOut || (error && error.code === 'timeout');
+        throw new AIError(timedOut ? 'timeout' : controller.signal.aborted ? 'changed' : 'network');
       }
       if (!response.ok) {
         // Back off this API across tabs; malformed or huge Retry-After values cannot overflow timers.
@@ -336,19 +339,24 @@
       // Bound the response before parsing, even if the server ignores the token limit.
       let text = '';
       try {
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let bytes = 0;
-        try {
-          while (true) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            bytes += chunk.value.byteLength;
-            if (bytes > MAX_RESPONSE_BYTES) throw new AIError('format');
-            text += decoder.decode(chunk.value, { stream: true });
-          }
-          text += decoder.decode();
-        } finally { await reader.cancel().catch(function() {}); }
+        if (response.body && typeof response.body.getReader === 'function') {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let bytes = 0;
+          try {
+            while (true) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              bytes += chunk.value.byteLength;
+              if (bytes > MAX_RESPONSE_BYTES) throw new AIError('format');
+              text += decoder.decode(chunk.value, { stream: true });
+            }
+            text += decoder.decode();
+          } finally { await reader.cancel().catch(function() {}); }
+        } else {
+          text = await response.text();
+          if (text.length > MAX_RESPONSE_BYTES) throw new AIError('format');
+        }
       } catch (error) {
         if (error instanceof AIError) throw error;
         throw new AIError(controller.timedOut ? 'timeout' : controller.signal.aborted ? 'changed' : 'network');

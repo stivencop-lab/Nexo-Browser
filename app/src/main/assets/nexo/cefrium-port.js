@@ -9,13 +9,27 @@
  * en cuanto lo captura. Nexo decide qué puede pedir cada origen: este código
  * no concede nada por sí mismo.
  */
-function nexoCefriumPort(isTop) {
+function nexoCefriumPort(isTop, options) {
   'use strict';
   const query = globalThis.cefriumQuery;
   if (typeof query !== 'function') return false;
+  const alwaysPoll = Boolean(options && options.alwaysPoll);
+  const pollMs = options && typeof options.pollMs === 'number' && options.pollMs > 0
+    ? options.pollMs
+    : (isTop ? 2000 : 1500);
   const listeners = [];
+  const seen = Object.create(null);
+  const seenOrder = [];
   let seq = -1;
   let polling = false;
+
+  function markSeen(n) {
+    if (seen[n]) return false;
+    seen[n] = true;
+    seenOrder.push(n);
+    if (seenOrder.length > 256) delete seen[seenOrder.shift()];
+    return true;
+  }
 
   function deliver(text) {
     for (const fn of listeners.slice()) {
@@ -28,8 +42,16 @@ function nexoCefriumPort(isTop) {
     let envelope;
     try { envelope = JSON.parse(raw); } catch (_) { return; }
     if (!envelope || typeof envelope !== 'object') return;
-    if (typeof envelope.seq === 'number' && envelope.seq > seq) seq = envelope.seq;
-    if (Array.isArray(envelope.events)) envelope.events.forEach(function(text) { if (typeof text === 'string') deliver(text); });
+    const hasSeq = typeof envelope.seq === 'number';
+    if (hasSeq && envelope.seq > seq) seq = envelope.seq;
+    if (Array.isArray(envelope.events)) {
+      const base = hasSeq ? envelope.seq - envelope.events.length + 1 : -1;
+      envelope.events.forEach(function(text, index) {
+        if (typeof text !== 'string') return;
+        if (hasSeq && !markSeen(base + index)) return;
+        deliver(text);
+      });
+    }
     if (typeof envelope.reply === 'string') deliver(envelope.reply);
   }
 
@@ -59,17 +81,18 @@ function nexoCefriumPort(isTop) {
     },
     addEventListener: function(type, fn) {
       if (type === 'message' && typeof fn === 'function' && !listeners.includes(fn)) listeners.push(fn);
-    }
+    },
+    wake: poll
   });
   Object.defineProperty(globalThis, '__nexoShield', { value: port, configurable: true, writable: true });
   if (isTop) {
     try { Object.defineProperty(globalThis, '__nexoWake', { value: poll, configurable: true }); } catch (_) {}
   }
-  // Respaldo para marcos visibles: Nexo despierta al principal al publicar
-  // (__nexoWake), así que basta con consultar cada 2 s; los internos, cada 4 s.
+  // Respaldo: Nexo despierta al principal (__nexoWake); el anfitrión oculto
+  // consulta incluso en segundo plano (alwaysPoll) y los iframes cada 1,5 s.
   setInterval(function() {
-    if (document.visibilityState !== 'hidden') poll();
-  }, isTop ? 2000 : 4000);
+    if (alwaysPoll || (typeof document !== 'undefined' && document.visibilityState !== 'hidden')) poll();
+  }, pollMs);
   poll();
   return true;
 }

@@ -171,3 +171,114 @@ test('page shim: Nexo requests with rid reach listeners as PhantomShield and the
   await context.shim.tabs.sendMessage(5, { type: 'AI_SCAN' });
   assert.deepEqual(sent.find(m => m.kind === 'tabs.sendMessage').payload, { tabId: 5, message: { type: 'AI_SCAN' } });
 });
+
+test('queued AI requests flushed during ready are delivered over the real cefrium-port protocol', async () => {
+  const portSource = fs.readFileSync(path.join(nexo, 'cefrium-port.js'), 'utf8');
+  const events = [];
+  let seq = 0;
+  const push = data => { events.push([++seq, JSON.stringify(data)]); };
+  const queued = [];
+  const replies = new Map();
+  let rid = 0;
+  let ready = false;
+
+  const request = (message, sender) => new Promise(resolve => {
+    const id = ++rid;
+    replies.set(id, resolve);
+    const ev = { event: 'request', rid: id, message, sender };
+    if (ready) push(ev); else queued.push(ev);
+  });
+
+  // Encolar antes de que el anfitrión oculto envíe ready (como al abrir la app o probar IA).
+  const pending = request({ type: 'AI_MEMORY_LIST' }, { panel: true });
+
+  const nativeQuery = ({ request: raw, onSuccess }) => {
+    const { m, s } = JSON.parse(raw);
+    const before = seq;
+    let reply;
+    if (m !== null) {
+      const call = JSON.parse(m);
+      if (call.kind === 'ready') {
+        ready = true;
+        reply = JSON.stringify({ id: call.id, result: null });
+        queued.splice(0).forEach(push);
+      } else if (call.kind === 'get') {
+        reply = JSON.stringify({ id: call.id, result: call.payload && !Array.isArray(call.payload) ? call.payload : {} });
+      } else if (call.kind === 'reply') {
+        replies.get(call.payload.rid)?.(call.payload.result);
+        reply = JSON.stringify({ id: call.id, result: null });
+      }
+    }
+    const envelope = { seq };
+    if (reply !== undefined) envelope.reply = reply;
+    const cutoff = s >= 0 ? s : before;
+    if (cutoff < seq) {
+      const list = events.filter(([n]) => n > cutoff).map(([, text]) => text);
+      if (list.length) envelope.events = list;
+    }
+    Promise.resolve().then(() => onSuccess(JSON.stringify(envelope)));
+  };
+
+  const context = vm.createContext({
+    console, URL, Map, Set, Promise, JSON, Object, Array, Error, TypeError, Math, Date, Number, String, Boolean, RegExp,
+    TextEncoder, TextDecoder, AbortController, Response, Headers, DOMException, crypto: globalThis.crypto,
+    document: { visibilityState: 'hidden' },
+    setInterval: (fn, ms) => { const t = setInterval(fn, ms); t.unref(); return t; },
+    setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; },
+    clearTimeout,
+    cefriumQuery: nativeQuery
+  });
+  context.globalThis = context;
+  context.window = context;
+  vm.runInContext(portSource + '\nnexoCefriumPort(true, { alwaysPoll: true, pollMs: 1000 });\n' +
+    hostShim + '\nglobalThis.browser = nexoAiHostShim("https://phantomshield.nexo.invalid/", {version:"9.2.1"});', context);
+  for (const file of scriptsOf(fs.readFileSync(path.join(assets, 'host/ai-host.html'), 'utf8'))) {
+    vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: file });
+  }
+  await flush(30);
+  const res = await pending;
+  assert.equal(res.ok, true);
+  assert.deepEqual([...res.domains], []);
+});
+
+test('native fetch timeout error propagates with code timeout', async () => {
+  const listeners = [];
+  const replies = new Map();
+  let rid = 0;
+  const deliver = data => listeners.forEach(fn => fn({ data: JSON.stringify(data) }));
+  const port = {
+    postMessage(text) {
+      const call = JSON.parse(text);
+      if (call.kind === 'fetch') {
+        Promise.resolve().then(() => deliver({ id: call.id, error: 'timeout' }));
+      } else if (call.kind === 'reply') {
+        replies.get(call.payload.rid)?.(call.payload.result);
+        deliver({ id: call.id, result: null });
+      } else if (call.kind === 'get') {
+        deliver({ id: call.id, result: call.payload && !Array.isArray(call.payload) ? call.payload : {} });
+      } else {
+        deliver({ id: call.id, result: null });
+      }
+    },
+    addEventListener(type, fn) { if (type === 'message') listeners.push(fn); }
+  };
+  const context = vm.createContext({
+    console, URL, Map, Set, Promise, JSON, Object, Array, Error, TypeError, Math, Date, Number, String, Boolean, RegExp,
+    TextEncoder, TextDecoder, AbortController, Response, Headers, DOMException, crypto: globalThis.crypto,
+    setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; }, clearTimeout, __nexoShield: port
+  });
+  context.globalThis = context;
+  context.window = context;
+  vm.runInContext(hostShim + '\nglobalThis.browser = nexoAiHostShim("https://phantomshield.nexo.invalid/", {version:"9.2.1"});', context);
+  for (const file of scriptsOf(fs.readFileSync(path.join(assets, 'host/ai-host.html'), 'utf8'))) {
+    vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: file });
+  }
+  await flush();
+  const id = ++rid;
+  const result = await new Promise(resolve => {
+    replies.set(id, resolve);
+    deliver({ event: 'request', rid: id, message: { type: 'AI_TEST', config: CONFIG }, sender: { panel: true } });
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'timeout');
+});

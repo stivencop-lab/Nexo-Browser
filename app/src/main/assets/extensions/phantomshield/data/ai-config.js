@@ -30,7 +30,7 @@
     claude: { label: 'Claude (Anthropic)', protocol: 'claude', endpoint: 'https://api.anthropic.com/v1', placeholder: 'claude-haiku-5-5',
       models: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] },
     openrouter: { label: 'OpenRouter', protocol: 'chat', endpoint: 'https://openrouter.ai/api/v1', placeholder: 'openai/gpt-4.1-mini',
-      models: ['openai/gpt-4.1-mini', 'google/gemini-2.5-flash', 'anthropic/claude-haiku-5-5', 'meta-llama/llama-3.3-70b-instruct'] },
+      models: ['openai/gpt-4.1-mini', 'google/gemini-2.5-flash', 'anthropic/claude-haiku-5.5', 'meta-llama/llama-3.3-70b-instruct'] },
     gemini: { label: 'Gemini (Google)', protocol: 'chat', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', placeholder: 'gemini-2.5-flash',
       models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'] },
     groq: { label: 'Groq', protocol: 'chat', endpoint: 'https://api.groq.com/openai/v1', placeholder: 'llama-3.3-70b-versatile',
