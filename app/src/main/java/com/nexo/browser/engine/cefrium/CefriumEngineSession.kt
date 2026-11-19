@@ -74,6 +74,9 @@ class CefriumEngineSession internal constructor(
 
     /** PhantomShield de esta pestaña (página principal, bloqueos y puente). */
     internal val shield: PhantomShield.ShieldTab = PhantomShield.newTab(params.isPrivate)
+    internal val isPrivate: Boolean = params.isPrivate
+    /** Token privado por sesión para autenticar llamadas de NXR Runtime desde esta pestaña. */
+    internal val nxrToken: String = java.util.UUID.randomUUID().toString().replace("-", "")
 
     internal var browser: CefriumBrowser? = null
         private set
@@ -544,6 +547,12 @@ class CefriumEngineSession internal constructor(
             observer.onCanGoForward(this@CefriumEngineSession, canGoForward)
             if (!loading) {
                 observer.onPageStop(this@CefriumEngineSession, !mainFrameError)
+                if (!mainFrameError) {
+                    com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentIdle(
+                        this@CefriumEngineSession,
+                        currentUrl ?: browser.url
+                    )
+                }
                 scheduleState()
             }
         }
@@ -554,6 +563,10 @@ class CefriumEngineSession internal constructor(
 
         override fun onDocumentAvailable(browser: CefriumBrowser) {
             observer?.onFirstContentfulPaint(this@CefriumEngineSession)
+            com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentAvailable(
+                this@CefriumEngineSession,
+                currentUrl ?: browser.url
+            )
         }
 
         override fun onLoadError(browser: CefriumBrowser, error: CefriumLoadError) {

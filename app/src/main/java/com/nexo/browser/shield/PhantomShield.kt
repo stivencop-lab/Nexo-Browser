@@ -566,6 +566,18 @@ object PhantomShield {
             if (result !== PageBridge.LATER) return answer(call.id, result)
             return if (early !== PageBridge.LATER) answer(call.id, early) else null
         }
+        if (call.kind == "nxr_storage" || call.kind == "nxr_message" || call.kind == "nxr_error") {
+            if (session == null) return answer(call.id, null, "Sesión no disponible.")
+            val reply = com.nexo.browser.extensions.nxr.NxrRuntime.onPageMessage(
+                sessionToken = session.nxrToken,
+                isPrivate = session.isPrivate,
+                origin = origin,
+                isMainFrame = isMainFrame,
+                kind = call.kind,
+                payload = call.payload as? JSONObject
+            )
+            return answer(call.id, reply.result, reply.error)
+        }
         return when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })

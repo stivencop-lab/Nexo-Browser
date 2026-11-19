@@ -4,25 +4,27 @@ import android.app.Activity
 import android.content.Context
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
+import com.nexo.browser.extensions.nxr.NxrRuntime
 import com.nexo.browser.shield.PhantomShield
 import java.lang.ref.WeakReference
 
 /**
  * Extensiones de Nexo sobre Chromium (Cefrium).
  *
- * Cefrium no ejecuta WebExtensions: PhantomShield funciona con su motor
- * nativo ([PhantomShield]) y el puente de páginas (mini video, subtítulos,
- * modo nocturno) con `page-bridge.js` ([PageBridge]). Las extensiones de terceros
- * llegarán con el runtime NXR; mientras tanto la interfaz común recibe
- * respuestas vacías y explicaciones claras.
+ * Integra:
+ * - PhantomShield (motor nativo integrado de bloqueo y privacidad).
+ * - Puente de páginas (`PageBridge`: mini video, subtítulos, Nexo Dark Engine, Nexo Media Engine).
+ * - Runtime NXR (`NxrRuntime`: extensiones de terceros `.crx`/`.xpi`/`.zip` con content scripts,
+ *   almacenamiento local aislado, permisos por sitio y diagnóstico de APIs).
  */
 object ExtensionManager {
     const val PHANTOMSHIELD_ID = "phantomshield@nexo.internal"
-    private const val NOT_YET = "Las extensiones de terceros llegarán en una próxima versión de Nexo."
 
     private var promptActivity: WeakReference<Activity>? = null
 
-    fun initialize(context: Context) = Unit
+    fun initialize(context: Context) {
+        NxrRuntime.initialize(context)
+    }
 
     fun attachPromptActivity(activity: Activity?) {
         promptActivity = activity?.let { WeakReference(it) }
@@ -37,32 +39,59 @@ object ExtensionManager {
     fun phantomEntry(): ExtensionEntry? =
         ExtensionEntry(PHANTOMSHIELD_ID, "PhantomShield", PhantomShield.isEnabled(), null)
 
-    fun actionEntries(): List<ExtensionEntry> = listOfNotNull(phantomEntry()?.takeIf { it.enabled })
+    fun actionEntries(): List<ExtensionEntry> {
+        val ctx = runCatching { AppContext.get() }.getOrNull()
+        val builtIn = listOfNotNull(phantomEntry()?.takeIf { it.enabled })
+        val nxr = NxrRuntime.extensionEntries(ctx).filter { it.enabled }
+        return builtIn + nxr
+    }
+
     fun phantomBadge(global: Boolean = false): String? = PhantomShield.badge(global)
     fun badgeFor(id: String): String? = if (id == PHANTOMSHIELD_ID) PhantomShield.badge() else null
-    fun loadIconFor(id: String, sizePx: Int, onDone: (android.graphics.Bitmap?) -> Unit) = onDone(null)
+
+    fun loadIconFor(id: String, sizePx: Int, onDone: (android.graphics.Bitmap?) -> Unit) {
+        if (id == PHANTOMSHIELD_ID) {
+            onDone(null)
+            return
+        }
+        val ctx = runCatching { AppContext.get() }.getOrNull()
+        onDone(ctx?.let { NxrRuntime.loadIcon(it, id, sizePx) })
+    }
 
     fun runActionFor(id: String, onDone: (Boolean, String) -> Unit) {
-        if (id != PHANTOMSHIELD_ID) return onDone(false, NOT_YET)
         val activity = promptActivity?.get()
-        if (activity == null || !PhantomShieldPanel.show(activity)) {
-            onDone(false, "No se pudo abrir el panel de PhantomShield. Detalles en Ajustes › diagnóstico del motor.")
-        } else {
-            onDone(true, "PhantomShield")
+        if (id == PHANTOMSHIELD_ID) {
+            if (activity == null || !PhantomShieldPanel.show(activity)) {
+                onDone(false, "No se pudo abrir el panel de PhantomShield. Detalles en Ajustes › diagnóstico del motor.")
+            } else {
+                onDone(true, "PhantomShield")
+            }
+            return
         }
+        if (activity == null) {
+            onDone(false, "Abre Nexo para gestionar esta extensión.")
+            return
+        }
+        NxrRuntime.showExtensionSheet(activity, id)
+        onDone(true, id)
     }
 
     fun setEnabledFor(context: Context, id: String, enabled: Boolean, onDone: (Boolean, String) -> Unit) {
-        if (id != PHANTOMSHIELD_ID) return onDone(false, NOT_YET)
-        PhantomShield.setEnabled(enabled)
-        onDone(true, if (enabled) "PhantomShield activado" else "PhantomShield desactivado")
+        if (id == PHANTOMSHIELD_ID) {
+            PhantomShield.setEnabled(enabled)
+            onDone(true, if (enabled) "PhantomShield activado" else "PhantomShield desactivado")
+            return
+        }
+        val ok = NxrRuntime.setEnabled(context, id, enabled)
+        onDone(ok, if (ok) (if (enabled) "Extensión activada" else "Extensión desactivada") else "Extensión no encontrada.")
     }
 
     fun storeScreen(): Class<out Activity> = ExtensionsActivity::class.java
 
-    /** Los paquetes de extensiones se descargan como archivos hasta que exista el instalador NXR. */
+    /** Los paquetes remotos se descargan para revisión e instalación manual desde Extensiones. */
     fun isRemoteExtensionPackage(url: String): Boolean = false
-    fun installUrl(context: Context, url: String, onDone: (Boolean, String) -> Unit) = onDone(false, NOT_YET)
+    fun installUrl(context: Context, url: String, onDone: (Boolean, String) -> Unit) =
+        onDone(false, "Descarga el archivo .crx, .xpi o .zip e instálalo desde Extensiones › Instalar extensión.")
 
     fun bindSession(session: EngineSession) {
         (session as? CefriumEngineSession)?.let { PhantomShield.bindSession(it.shield, it) }
