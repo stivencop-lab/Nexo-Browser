@@ -69,3 +69,47 @@ test('extractSegments skips code/script/input/notranslate and restores originals
   assert.equal(tTitle.nodeValue, '  Welcome to Nexo  ');
   assert.equal(tBody.nodeValue, 'Fast private browsing.');
 });
+
+test('applyTranslations ignores disconnected SPA nodes and stale generations after restore', () => {
+  const t1 = txt('Live paragraph one.');
+  t1.isConnected = true;
+  const t2 = txt('Removed SPA paragraph.');
+  t2.isConnected = true;
+  const body = el('body', {}, [el('p', {}, [t1]), el('p', {}, [t2])]);
+  const translator = createPageTranslator({ body }, {});
+
+  const meta = translator.extractSegmentsWithMeta();
+  assert.equal(meta.segments.length, 2);
+  assert.equal(meta.totalEligible, 2);
+  assert.equal(meta.truncated, false);
+  const gen = meta.generation;
+
+  // Simulate SPA unmount of second node before batch returns
+  t2.isConnected = false;
+  const applied = translator.applyTranslations([
+    { i: 0, t: 'Párrafo vivo uno.' },
+    { i: 1, t: 'No debería aplicarse.' }
+  ], gen);
+  assert.equal(applied, 1);
+  assert.equal(t1.nodeValue, 'Párrafo vivo uno.');
+  assert.equal(t2.nodeValue, 'Removed SPA paragraph.');
+
+  // Restore advances generation; late batches from the previous generation must be ignored
+  assert.equal(translator.restore(), 1);
+  assert.equal(t1.nodeValue, 'Live paragraph one.');
+  const staleApplied = translator.applyTranslations([{ i: 0, t: 'Late batch' }], gen);
+  assert.equal(staleApplied, 0);
+  assert.equal(t1.nodeValue, 'Live paragraph one.');
+});
+
+test('extractSegmentsWithMeta reports totalEligible and truncated honestly on long documents', () => {
+  const children = [];
+  for (let i = 0; i < 425; i++) {
+    children.push(el('p', {}, [txt(`Paragraph number ${i} with translatable prose.`)]));
+  }
+  const translator = createPageTranslator({ body: el('body', {}, children) }, {});
+  const meta = translator.extractSegmentsWithMeta();
+  assert.equal(meta.segments.length, 400);
+  assert.equal(meta.totalEligible, 425);
+  assert.equal(meta.truncated, true);
+});

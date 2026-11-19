@@ -213,4 +213,27 @@ class NexoAiTest {
         assertTrue(batches.all { batch -> batch.sumOf { it.text.length } <= 120 || batch.size == 1 })
         assertEquals(10, batches.sumOf { it.size })
     }
+
+    @Test
+    fun translatorParseExtractionSupportsEscapedJsonAndTruncationMetadata() {
+        val payload = """{"segments":[{"i":0,"t":"Hello world"},{"i":1,"t":"Second block"}],"totalEligible":425,"truncated":true,"generation":3}"""
+        val direct = TranslatorManager.parseExtraction(payload)
+        assertNotNull(direct)
+        assertEquals(2, direct?.segments?.size)
+        assertEquals(425, direct?.totalEligible)
+        assertEquals(true, direct?.truncated)
+        assertEquals(3, direct?.generation)
+
+        val escaped = TranslatorManager.parseExtraction(JSONObject.quote(payload))
+        assertNotNull(escaped)
+        assertEquals("Hello world", escaped?.segments?.first()?.text)
+
+        assertNull(TranslatorManager.parseExtraction("null"))
+        assertNull(TranslatorManager.parseExtraction(""))
+
+        val job = TranslatorManager.ActiveTranslation(docGen = 7L, targetLang = "es")
+        assertFalse(job.isCancelled)
+        job.cancel()
+        assertTrue(job.isCancelled)
+    }
 }

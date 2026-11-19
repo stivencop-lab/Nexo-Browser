@@ -75,8 +75,6 @@ class CefriumEngineSession internal constructor(
     /** PhantomShield de esta pestaña (página principal, bloqueos y puente). */
     internal val shield: PhantomShield.ShieldTab = PhantomShield.newTab(params.isPrivate)
     internal val isPrivate: Boolean = params.isPrivate
-    /** Token privado por sesión para autenticar llamadas de NXR Runtime desde esta pestaña. */
-    internal val nxrToken: String = java.util.UUID.randomUUID().toString().replace("-", "")
 
     /** Generación monotónica del documento activo; se incrementa en cada `onLoadStart`, `releaseBrowser` y `close`. */
     private val docGen = java.util.concurrent.atomic.AtomicLong(0L)
@@ -241,6 +239,7 @@ class CefriumEngineSession internal constructor(
         val target = browser ?: return
         browser = null
         docGen.incrementAndGet()
+        com.nexo.browser.TranslatorManager.forget(this)
         com.nexo.browser.extensions.nxr.NxrRuntime.forgetSession(this)
         host?.detachBrowser(this, target)
         runCatching {
@@ -420,6 +419,7 @@ class CefriumEngineSession internal constructor(
         docGen.incrementAndGet()
         observer = null
         ExtensionManager.forgetSession(this)
+        com.nexo.browser.TranslatorManager.forget(this)
         com.nexo.browser.extensions.nxr.NxrRuntime.forgetSession(this)
         shield.dispose()
         main.removeCallbacks(stateTask)
