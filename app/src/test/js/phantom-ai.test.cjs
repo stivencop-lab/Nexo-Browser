@@ -132,7 +132,7 @@ test('a Claude refusal hides nothing and is reported without retrying',async()=>
  const h=harness({provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'k'},()=>new Response(JSON.stringify({stop_reason:'refusal',content:[]})));
  const result=await h.ai.classify('one.com',candidate(),false);assert.equal(result.ok,false);assert.equal(result.code,'refusal');assert.equal(h.calls.length,1);
 });
-test('OpenAI uses max_completion_tokens; compatible APIs retry once with the minimal body after HTTP 400',async()=>{
+test('OpenAI uses max_completion_tokens; compatible APIs try the other bodies after HTTP 400',async()=>{
  const openai=harness({provider:'openai',endpoint:'https://api.openai.com/v1',apiKey:'k'},()=>new Response(JSON.stringify({choices:[{message:{content:okBody('c-1')}}]})));
  await openai.ai.classify('one.com',candidate(),false);
  const first=JSON.parse(openai.calls[0].options.body);assert.ok(first.max_completion_tokens>0);assert.equal('max_tokens' in first,false);assert.equal('temperature' in first,false);
@@ -140,10 +140,12 @@ test('OpenAI uses max_completion_tokens; compatible APIs retry once with the min
  const custom=harness({},(_,options)=>{n++;const body=JSON.parse(options.body);
   return 'max_tokens' in body?new Response('{"error":{"message":"Unsupported parameter: max_tokens secret-detail"}}',{status:400})
    :new Response(JSON.stringify({choices:[{message:{content:okBody('c-1')}}]}));});
- const result=await custom.ai.classify('one.com',candidate(),false);assert.equal(result.ok,true);assert.equal(n,2);
+ const result=await custom.ai.classify('one.com',candidate(),false);assert.equal(result.ok,true);
+ // Completo (max_tokens) → básico (max_tokens) → razonamiento (max_completion_tokens), que responde.
+ assert.equal(n,3);
  // La variante aceptada se recuerda: la siguiente petición no repite el error.
- await custom.ai.classify('two.com',candidate('c-1',300),false);assert.equal(n,3);
- assert.equal((await custom.ai.usage()).requests,3);
+ await custom.ai.classify('two.com',candidate('c-1',300),false);assert.equal(n,4);
+ assert.equal((await custom.ai.usage()).requests,4);
 });
 test('provider failures are explained by category and never echo the provider body',async()=>{
  for(const [status,code,pattern] of [[401,'auth',/clave/],[403,'auth',/clave/],[404,'model',/modelo/],[400,'request',/solicitud/],[429,'rate',/limit/i],[500,'server',/temporal/]]){
@@ -179,7 +181,7 @@ test('existing configurations keep the basic detail level and the longer default
  const h=harness();
  assert.equal(h.api.validate({enabled:true,consent:true,endpoint:'https://api.example/v1',model:'m'}).detail,'basic');
  assert.equal(h.api.validate({detail:'rich'}).detail,'rich');assert.throws(()=>h.api.validate({detail:'everything'}));
- assert.equal(h.api.validate({}).timeoutMs,12000);assert.equal(h.api.validate({timeoutMs:30000}).timeoutMs,30000);assert.throws(()=>h.api.validate({timeoutMs:30001}));
+ assert.equal(h.api.validate({}).timeoutMs,20000);assert.equal(h.api.validate({timeoutMs:12000}).timeoutMs,12000);assert.equal(h.api.validate({timeoutMs:30000}).timeoutMs,30000);assert.throws(()=>h.api.validate({timeoutMs:30001}));
 });
 test('connection test works before enabling, uses invented samples and reports the real outcome',async()=>{
  const good=harness({enabled:false,consent:false,provider:'claude',endpoint:'https://api.anthropic.com/v1',apiKey:'saved-key',model:'old'},
@@ -247,4 +249,34 @@ test('reasoning model think tags and prose around fenced JSON are parsed cleanly
  const result=await h.ai.classify('one.com',candidate(),false);
  assert.equal(result.ok,true);
  assert.equal(result.decisions[0].hide,true);
+});
+
+test('NVIDIA-style APIs that reject unknown parameters with HTTP 422 fall back to the basic body',async()=>{
+ const bodies=[];
+ const h=harness({provider:'openai',endpoint:'https://integrate.api.nvidia.com/v1',model:'meta/llama-3.3-70b-instruct',apiKey:'nvapi-secretsecret',jsonMode:true},(_,options)=>{
+  const body=JSON.parse(options.body);bodies.push(body);
+  const extra=Object.keys(body).filter(key=>!['model','messages','max_tokens','temperature','stream','top_p'].includes(key));
+  return extra.length?new Response(JSON.stringify({type:'about:blank',title:'Unprocessable Entity',status:422,detail:'Extra inputs are not permitted: '+extra[0]+' (key nvapi-secretsecret)'}),{status:422})
+   :new Response(JSON.stringify({choices:[{message:{content:okBody('c-1')}}]}));});
+ const result=await h.ai.classify('one.com',candidate(),false);
+ assert.equal(result.ok,true);
+ assert.ok(bodies.length>=2);
+ assert.deepEqual(Object.keys(bodies[bodies.length-1]).sort(),['max_tokens','messages','model']);
+});
+test('Probar conexión explains the provider reason without leaking the key, and repeated tests never hit the per-site budget',async()=>{
+ const h=harness({},()=>new Response(JSON.stringify({type:'about:blank',title:'Unprocessable Entity',status:422,detail:'Model not found: foo/bar for key nvapi-abcdefghijkl'}),{status:422}));
+ for(let i=0;i<5;i++){
+  const reply=await h.ai.probe({provider:'custom',endpoint:'https://integrate.api.nvidia.com/v1',model:'foo/bar',apiKey:'nvapi-abcdefghijkl',timeoutMs:12000});
+  assert.equal(reply.ok,false);assert.equal(reply.code,'request',String(i));assert.equal(reply.http,422);
+  assert.match(reply.detail,/Model not found: foo\/bar/);assert.doesNotMatch(reply.detail,/abcdefghijkl/);
+ }
+});
+test('reasoning models: answer inside reasoning_content or after an unclosed think block is still read',async()=>{
+ const viaReasoning=harness({},()=>new Response(JSON.stringify({choices:[{message:{content:null,reasoning_content:'Pienso {no json} y al final '+okBody('c-1')}}]})));
+ assert.equal((await viaReasoning.ai.classify('one.com',candidate(),false)).ok,true);
+ const unclosed=harness({},()=>new Response(JSON.stringify({choices:[{message:{content:'<think>analizo {a} '+okBody('c-1')}}]})));
+ assert.equal((await unclosed.ai.classify('one.com',candidate(),false)).ok,true);
+ const pending=harness({},()=>new Response('',{status:202}));
+ const result=await pending.ai.classify('one.com',candidate(),false);
+ assert.equal(result.ok,false);assert.equal(result.code,'pending');
 });

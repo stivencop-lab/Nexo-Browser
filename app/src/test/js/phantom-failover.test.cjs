@@ -279,3 +279,12 @@ test('the whole chain respects a total time budget, so Nexo never gives up waiti
   assert.deepEqual(h.calls.map(call => new URL(call.url).host), ['primary.example'], 'no backup started without time left');
   assert.equal(h.ai.active, null, 'no analysis left "in progress"');
 });
+
+test('keys and models pasted with invisible characters are cleaned (they broke the HTTP header)', () => {
+  const { config } = harness(primary, ok);
+  const saved = config.validate({ provider: 'custom', endpoint: 'https://integrate.api.nvidia.com/v1',
+    model: '​meta/llama-3.3-70b-instruct ', apiKey: ' nvapi-ABC​def﻿\n' });
+  assert.equal(saved.apiKey, 'nvapi-ABCdef');
+  assert.equal(saved.model, 'meta/llama-3.3-70b-instruct');
+  assert.throws(() => config.validate({ provider: 'custom', endpoint: 'https://x.com/v1', model: 'm', apiKey: 'clave-ñ' }), /caracteres no válidos/);
+});

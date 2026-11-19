@@ -83,3 +83,15 @@ test('quick AI controls recover after scanning and changing the patcher setting'
    assert.match(h.field('ai-page').className,/\bbad\b/,provider);
   }
  });
+test('an enabled AI on an unlisted site offers «Usar IA en este sitio», which authorizes it in one tap',async()=>{
+  const aiConfig={enabled:true,consent:true,provider:'custom',endpoint:'https://integrate.api.nvidia.com/v1',model:'m',scope:'selected',allowedHosts:[],excludedHosts:['www.example.com']};
+  const h=await harness({aiConfig});
+  assert.equal(h.field('allow-ai').hidden,false);assert.equal(h.field('scan-ai').disabled,true);
+  await h.fire('allow-ai');
+  assert.deepEqual(Array.from(h.state.aiConfig.allowedHosts),['www.example.com']);
+  assert.deepEqual(Array.from(h.state.aiConfig.excludedHosts),[]);
+  assert.equal(h.state.aiConfig.consent,true);
+  assert.equal(h.field('allow-ai').hidden,true);assert.equal(h.field('scan-ai').disabled,false);
+  const off=await harness({aiConfig:{...aiConfig,enabled:false}});assert.equal(off.field('allow-ai').hidden,true);
+  const priv=await harness({aiConfig},{id:10,url:'https://www.example.com/page',incognito:true});assert.equal(priv.field('allow-ai').hidden,true);
+});

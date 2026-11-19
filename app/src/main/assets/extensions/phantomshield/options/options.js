@@ -434,6 +434,10 @@
       if (enabled && saved.apiKey && config.endpoint !== saved.endpoint && !newKey) {
         throw new Error('Al cambiar la dirección de la API, introduce una clave nueva o borra la guardada.');
       }
+      // Sin sitios elegidos la IA no se usaría en ninguna página (parecía «guardada pero sin funcionar»).
+      if (enabled && config.scope === 'selected' && !config.allowedHosts.length) {
+        throw new Error('Añade al menos un sitio en «Sitios autorizados» o elige «Automático en todos los sitios públicos»: así, la IA no se usaría en ninguna página. También puedes autorizar un sitio desde el panel con «Usar IA en este sitio».');
+      }
       if (enabled && nativeConsent) {
         // Aviso nativo del navegador. Un «no» explícito se respeta; si el
         // navegador no admite esta petición (lanza un error), vale el
@@ -468,11 +472,11 @@
       // Se prueba lo que hay escrito en el formulario, aunque no esté guardado.
       const config = draft ? {
         slot: 'backup' + (index + 1), provider: draft.provider.value, endpoint: draft.endpoint.value, model: draft.model.value,
-        apiKey: String(draft.key.value || '').trim(), timeoutMs: Number(field('timeout').value) || 12000,
+        apiKey: String(draft.key.value || '').trim(), timeoutMs: Number(field('timeout').value) || 20000,
         jsonMode: draft.json.checked, detail: 'rich'
       } : {
         slot: 'primary', provider: field('provider').value, endpoint: field('endpoint').value, model: field('model').value,
-        apiKey: field('api-key').value.trim(), timeoutMs: Number(field('timeout').value) || 12000,
+        apiKey: field('api-key').value.trim(), timeoutMs: Number(field('timeout').value) || 20000,
         jsonMode: field('json-mode').checked, detail: 'rich'
       };
       const reply = await browser.runtime.sendMessage({ type: 'AI_TEST', config: config });
@@ -484,8 +488,10 @@
             : 'Respondió, pero no reconoció el anuncio de prueba: considera un modelo más capaz.');
       } else {
         result.className = 'test-result bad';
+        // El motivo del proveedor (saneado) es lo que permite arreglarlo: modelo, parámetro, saldo…
         result.textContent = '✕ ' + (reply && reply.error || 'No se pudo completar la prueba.') +
-          (reply && reply.http ? ' (HTTP ' + reply.http + ')' : '');
+          (reply && reply.http ? ' (HTTP ' + reply.http + ')' : '') +
+          (reply && typeof reply.detail === 'string' && reply.detail ? ' Motivo del proveedor: ' + reply.detail.slice(0, 200) : '');
       }
     } catch (_) {
       result.className = 'test-result bad';

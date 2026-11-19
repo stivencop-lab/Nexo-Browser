@@ -116,6 +116,22 @@ misma página (hasta dos veces) en lugar de cerrarse. La cadena principal +
 respaldos tiene un presupuesto total de 45 s, por debajo de la espera de Nexo
 (75 s), de modo que un análisis nunca queda «en curso» indefinidamente.
 
+#### APIs compatibles estrictas (NVIDIA y similares)
+
+Algunas APIs compatibles (p. ej. `https://integrate.api.nvidia.com/v1`)
+rechazan con **HTTP 422** cualquier parámetro que no conozcan
+(`max_completion_tokens`, `response_format`). El clasificador prueba tres formas
+de cuerpo ante un 400 o un 422 —completa, básica (`model`, `messages`,
+`max_tokens`) y la de razonamiento de OpenAI— y recuerda la que funcionó. Lee
+la respuesta en `content` o, si un modelo razonador la deja ahí, en
+`reasoning_content`, y tolera bloques `<think>` sin cerrar. Un HTTP 202 (petición
+encolada) se explica como tal. «Probar conexión» muestra el motivo que da el
+proveedor (saneado, sin la clave), no gasta el presupuesto por sitio y la clave
+y el modelo se limpian de caracteres invisibles copiados de la web. El tiempo
+límite por defecto pasa a 20 s. No se puede guardar «Solo sitios elegidos» con
+la lista vacía (la IA no se usaría en ninguna página) y el panel ofrece «Usar IA
+en este sitio».
+
 ### Proveedores y contadores en 8.4.0
 
 Las opciones incluyen presets OpenAI Chat Completions, Claude Messages y

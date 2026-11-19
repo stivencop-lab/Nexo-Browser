@@ -4,7 +4,7 @@
   const defaults = Object.freeze({
     enabled: false, consent: false, provider: 'custom', endpoint: '', model: '', apiKey: '',
     allowedHosts: [], scope: 'selected', includeSubdomains: false, excludedHosts: [],
-    requestsPerMinute: 6, requestsPerHour: 60, timeoutMs: 12000, jsonMode: false,
+    requestsPerMinute: 6, requestsPerHour: 60, timeoutMs: 20000, jsonMode: false,
     // 'basic': solo tipo, señales y tamaño. 'rich': añade un fragmento corto del
     // texto visible del candidato, dominios de sus enlaces y nombres de clase.
     detail: 'basic', rememberDecisions: false,
@@ -17,6 +17,7 @@
     backups: []
   });
   const MAX_BACKUPS = 2;
+  const INVISIBLE = /[\u00a0\u200b-\u200f\u2028-\u202f\u2060\ufeff]/g;
 
   /*
    * Proveedores. Solo tres, para que la configuración sea clara y fiable:
@@ -67,8 +68,11 @@
     if (!migrated) throw new Error(prefix + 'Proveedor IA inválido.');
     connection.provider = migrated.provider;
     connection.endpoint = String(migrated.endpoint || providers[connection.provider].endpoint).trim().replace(/\/+$/, '');
-    connection.model = String(input.model || '').trim();
-    connection.apiKey = String(input.apiKey || '').trim();
+    // Al copiar desde la web del proveedor se cuelan espacios duros y caracteres invisibles:
+    // en una cabecera HTTP hacen fallar la petición con un «sin conexión» engañoso.
+    connection.model = String(input.model || '').replace(INVISIBLE, '').trim();
+    connection.apiKey = String(input.apiKey || '').replace(INVISIBLE, '').replace(/\s+/g, '');
+    if (/[^\x21-\x7e]/.test(connection.apiKey)) throw new Error(prefix + 'La clave API tiene caracteres no válidos: cópiala de nuevo.');
     connection.jsonMode = input.jsonMode === true;
     if (connection.endpoint) {
       let url;
