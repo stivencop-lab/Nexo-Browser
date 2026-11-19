@@ -1757,5 +1757,38 @@
     .then(applyState)
     .catch(() => {});
 
+  // Señal pasiva y limitada de dirección de desplazamiento para auto-ocultar la barra inferior.
+  try {
+    if (window === window.top && typeof window.addEventListener === "function") {
+      let anchorY = window.scrollY || 0;
+      let lastSentDir = "";
+      let lastSentAt = 0;
+      window.addEventListener("scroll", () => {
+        if (!port) return;
+        const y = Math.max(0, Math.round(window.scrollY || 0));
+        const now = Date.now();
+        if (y <= 16) {
+          if (lastSentDir !== "up") {
+            lastSentDir = "up";
+            lastSentAt = now;
+            anchorY = y;
+            try { port.postMessage({ type: "scroll_dir", dir: "up", y }); } catch (_) {}
+          }
+          return;
+        }
+        const delta = y - anchorY;
+        if (Math.abs(delta) < 64) return;
+        if (now - lastSentAt < 180) return;
+        const dir = delta > 0 ? "down" : "up";
+        anchorY = y;
+        if (dir !== lastSentDir || (dir === "up" && y < 120)) {
+          lastSentDir = dir;
+          lastSentAt = now;
+          try { port.postMessage({ type: "scroll_dir", dir, y }); } catch (_) {}
+        }
+      }, { passive: true });
+    }
+  } catch (_) {}
+
   connect();
 })();

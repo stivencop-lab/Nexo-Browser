@@ -87,6 +87,7 @@
         <activity android:name="com.nexo.browser.SettingsActivity" android:exported="false" />
         <activity android:name="com.nexo.browser.ExtensionsActivity" android:exported="false" />
         <activity android:name="com.nexo.browser.HistoryActivity" android:exported="false" />
+        <activity android:name="com.nexo.browser.BookmarksActivity" android:exported="false" />
         <activity android:name="com.nexo.browser.DownloadsActivity" android:exported="false" />
         <activity
             android:name="com.nexo.browser.MainActivity"

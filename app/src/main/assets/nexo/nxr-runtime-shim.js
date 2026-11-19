@@ -147,7 +147,7 @@ function createNxrScope(config) {
     id: extId,
     lastError: null,
     getManifest: function() {
-      return JSON.parse(JSON.stringify(manifest));
+      return jsonParse(jsonStringify(manifest));
     },
     getURL: function(path) {
       return 'nxr://' + extId + '/' + String(path || '').replace(/^\/+/, '');
@@ -189,7 +189,34 @@ function createNxrScope(config) {
     tabs: Object.freeze({
       query: unsupportedStub('tabs.query'),
       create: unsupportedStub('tabs.create'),
+      update: unsupportedStub('tabs.update'),
       sendMessage: unsupportedStub('tabs.sendMessage')
+    }),
+    scripting: Object.freeze({
+      executeScript: unsupportedStub('scripting.executeScript'),
+      insertCSS: unsupportedStub('scripting.insertCSS')
+    }),
+    alarms: Object.freeze({
+      create: unsupportedStub('alarms.create'),
+      clear: unsupportedStub('alarms.clear')
+    }),
+    contextMenus: Object.freeze({
+      create: unsupportedStub('contextMenus.create'),
+      removeAll: unsupportedStub('contextMenus.removeAll')
+    }),
+    notifications: Object.freeze({
+      create: unsupportedStub('notifications.create')
+    }),
+    cookies: Object.freeze({
+      get: unsupportedStub('cookies.get'),
+      getAll: unsupportedStub('cookies.getAll'),
+      set: unsupportedStub('cookies.set')
+    }),
+    webNavigation: Object.freeze({
+      onCommitted: Object.freeze({ addListener: unsupportedStub('webNavigation.onCommitted') })
+    }),
+    declarativeNetRequest: Object.freeze({
+      updateDynamicRules: unsupportedStub('declarativeNetRequest.updateDynamicRules')
     }),
     webRequest: Object.freeze({
       onBeforeRequest: Object.freeze({ addListener: unsupportedStub('webRequest.onBeforeRequest') })

@@ -183,17 +183,26 @@ object TabManager {
         return tab
     }
 
-    /** Pestaña normal traída de la app anterior: se añade al final, sin abrirla hasta que se use. */
-    fun importTab(url: String, title: String, groupName: String?, desktopMode: Boolean) {
-        if (!UrlSafety.isWebUrl(url)) return
-        tabs += BrowserTab(
+    /** Pestaña normal traída de un respaldo o espacio de trabajo: se añade al final sin abrir sesión Chromium hasta usarse. */
+    fun importTab(
+        url: String,
+        title: String,
+        groupName: String?,
+        desktopMode: Boolean,
+        pinned: Boolean = false
+    ): BrowserTab? {
+        if (!UrlSafety.isWebUrl(url)) return null
+        val tab = BrowserTab(
             url = url,
             title = title.ifBlank { url },
             groupName = TabGroupRules.name(groupName),
-            desktopMode = desktopMode
+            desktopMode = desktopMode,
+            pinned = pinned
         )
+        tabs += tab
         listener?.onTabCountChanged(tabs.size)
         persist()
+        return tab
     }
 
     fun applyNetwork(id: String, profile: TabNetworkProfile?) {
@@ -224,6 +233,19 @@ object TabManager {
 
     fun renameGroup(old: String, name: String?, privateMode: Boolean) {
         tabs.filter { it.isPrivate == privateMode && it.groupName == old }.forEach { moveToGroup(it.id, name) }
+    }
+
+    /**
+     * Fija o desfija una pestaña en el selector.
+     * Las pestañas fijadas siguen sujetas a [trimSessions] cuando están en segundo plano
+     * para no retener memoria de Chromium permanentemente.
+     */
+    fun togglePin(id: String): Boolean {
+        val tab = tabs.firstOrNull { it.id == id } ?: return false
+        tab.pinned = !tab.pinned
+        listener?.onTabChanged(tab)
+        persist()
+        return tab.pinned
     }
 
     fun openOrSelectTab(url: String) {
@@ -342,6 +364,7 @@ object TabManager {
         val isPrivate: Boolean,
         val groupName: String?,
         val desktopMode: Boolean,
+        val pinned: Boolean,
         val sessionState: String?,
         val networkProfile: TabNetworkProfile?,
         val index: Int,
@@ -379,6 +402,7 @@ object TabManager {
             isPrivate = entry.isPrivate,
             groupName = entry.groupName,
             desktopMode = entry.desktopMode,
+            pinned = entry.pinned,
             networkProfile = entry.networkProfile,
             sessionState = entry.sessionState
         )
@@ -401,7 +425,7 @@ object TabManager {
         if (removed.burnerId == null && !BrowserPrefs.isNexoHome(removed.url) && UrlSafety.isAppNavigable(removed.url)) {
             recentlyClosed.addLast(ClosedTab(
                 removed.id, removed.url, removed.title, removed.isPrivate, removed.groupName,
-                removed.desktopMode, removed.sessionState.takeUnless { removed.isPrivate },
+                removed.desktopMode, removed.pinned, removed.sessionState.takeUnless { removed.isPrivate },
                 removed.networkProfile?.takeIf { it.type != "invalid" }, index, wasActive,
                 if (removed.isPrivate) null else TabPreviewStore.cached(removed.id)
             ))
@@ -1226,6 +1250,7 @@ object TabManager {
                                 groupName = TabGroupRules.name(o.optString("groupName")),
                                 networkProfile = if (o.has("network") && !o.isNull("network")) TabNetworkProfile.fromJson(o.optJSONObject("network")) ?: TabNetworkProfile(type = "invalid") else null,
                                 desktopMode = o.optBoolean("desktopMode", false),
+                                pinned = o.optBoolean("pinned", false),
                                 lastUsed = o.optLong(
                                     "lastUsed",
                                     System.currentTimeMillis()
@@ -1277,6 +1302,7 @@ object TabManager {
         val url: String,
         val title: String,
         val desktopMode: Boolean,
+        val pinned: Boolean,
         val lastUsed: Long,
         val loading: Boolean,
         val sessionState: String,
@@ -1292,7 +1318,7 @@ object TabManager {
         // Copia barata en el hilo principal; el JSON se arma en segundo plano.
         val snapshot = tabs.filterNot { it.isPrivate }.map { tab ->
             TabSnapshot(
-                tab.id, tab.url, tab.title, tab.desktopMode,
+                tab.id, tab.url, tab.title, tab.desktopMode, tab.pinned,
                 tab.lastUsed, tab.isLoading, tab.sessionState ?: "", tab.groupName, tab.networkProfile?.json()
             )
         }
@@ -1306,6 +1332,7 @@ object TabManager {
                         put("url", tab.url)
                         put("title", tab.title)
                         put("desktopMode", tab.desktopMode)
+                        put("pinned", tab.pinned)
                         put("lastUsed", tab.lastUsed)
                         put("loading", tab.loading)
                         put("sessionState", tab.sessionState)

@@ -293,6 +293,53 @@
                 android:paddingBottom="6dp"
                 android:tag="card">
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="2dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:tag="muted"
+                    android:text="Modo de barra de navegación"
+                    android:textSize="12.5sp" />
+
+                <Spinner
+                    android:id="@+id/navModeSpinner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="6dp" />
+
+                <Button
+                    android:id="@+id/customizeNavButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:layout_marginBottom="6dp"
+                    android:text="Personalizar acciones de la barra"
+                    android:textAllCaps="false" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+
+                <Switch
+                    android:id="@+id/autoHideBarsSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/touch_target"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:switchPadding="12dp"
+                    android:text="Ocultar barra inferior al desplazarse"
+                    android:textSize="14sp" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:tag="divider" />
+
                 <Switch
                     android:id="@+id/pullToRefreshSwitch"
                     android:layout_width="match_parent"

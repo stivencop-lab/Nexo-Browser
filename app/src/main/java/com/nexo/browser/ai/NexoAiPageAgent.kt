@@ -134,6 +134,11 @@ object NexoAiPageAgent {
             onDone(null, "Nexo AI está bloqueado en pestañas privadas por seguridad (puedes cambiarlo en Configuración de Nexo AI).")
             return
         }
+        val activeHost = com.nexo.browser.SiteControlModel.hostOf(tab.url)
+        if (activeHost.isNotEmpty() && !NexoAiConfig.isHostAllowed(context, activeHost)) {
+            onDone(null, "Nexo AI está desactivado para $activeHost (puedes habilitarlo en Nexo Site Control).")
+            return
+        }
         val source = loadAgentScript(context)
         if (source == null) {
             onDone(null, "No se pudo cargar el extractor de contexto.")

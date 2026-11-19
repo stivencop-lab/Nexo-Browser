@@ -88,10 +88,20 @@ object ExtensionManager {
 
     fun storeScreen(): Class<out Activity> = ExtensionsActivity::class.java
 
-    /** Los paquetes remotos se descargan para revisión e instalación manual desde Extensiones. */
-    fun isRemoteExtensionPackage(url: String): Boolean = false
-    fun installUrl(context: Context, url: String, onDone: (Boolean, String) -> Unit) =
-        onDone(false, "Descarga el archivo .crx, .xpi o .zip e instálalo desde Extensiones › Instalar extensión.")
+    /** Paquetes HTTPS directos (`.crx`, `.xpi`, `.zip`) pasan por verificación y consentimiento del Hub. */
+    fun isRemoteExtensionPackage(url: String): Boolean =
+        com.nexo.browser.extensions.hub.ExtensionStoreResolver.isDirectExtensionPackageUrl(url)
+
+    fun installUrl(context: Context, url: String, onDone: (Boolean, String) -> Unit) {
+        val activity = promptActivity?.get()
+        if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
+            com.nexo.browser.extensions.hub.ExtensionHubSheets.openDirectUrlInstallFlow(activity, url) {
+                onDone(true, "Extensión instalada en NXR.")
+            }
+            return
+        }
+        onDone(false, "Abre Extensiones › Nexo Extension Hub y pega la URL HTTPS para revisarla e instalarla.")
+    }
 
     fun bindSession(session: EngineSession) {
         (session as? CefriumEngineSession)?.let { PhantomShield.bindSession(it.shield, it) }

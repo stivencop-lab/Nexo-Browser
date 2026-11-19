@@ -63,8 +63,19 @@ class MainActivity :
     private lateinit var tabButton: Button
     private lateinit var backButton: ImageButton
     private lateinit var forwardButton: ImageButton
+    private lateinit var compactBackButton: ImageButton
+    private lateinit var homeButton: ImageButton
+    private lateinit var reloadButton: ImageButton
+    private lateinit var newTabButton: ImageButton
+    private lateinit var browserDock: GestureDock
     private lateinit var clearOmniboxButton: Button
     private lateinit var privateBanner: TextView
+    private lateinit var extensionInstallBanner: LinearLayout
+    private lateinit var extensionBannerText: TextView
+    private lateinit var extensionBannerAction: Button
+    private lateinit var extensionBannerDismiss: ImageButton
+    private var currentStoreExtension: com.nexo.browser.extensions.hub.ExtensionStoreResolver.ResolvedTarget.StoreExtension? = null
+    private val dismissedStoreKeys = HashSet<String>()
     private lateinit var miniPlayerButton: Button
     private lateinit var root: View
     private lateinit var browserFrame: PullRefreshLayout
@@ -79,13 +90,24 @@ class MainActivity :
      */
     private var pipCrop: Rect? = null
     private lateinit var topBar: View
-    private lateinit var navBar: View
+    private lateinit var navBar: LinearLayout
     private lateinit var viewModel: BrowserViewModel
     private var attachedSession: EngineSession? = null
     private var settingsFingerprint = ""
     private var themeKey = ""
     private var mediaNotificationPermissionAsked = false
     private var suppressAutoPipOnce = false
+    private var imeVisible = false
+    private var dockScrollHidden = false
+    private var lastDockToggleMs = 0L
+    private var backCallbackRegistered = false
+    private val predictiveBackCallback: Any? by lazy {
+        if (Build.VERSION.SDK_INT >= 33) {
+            android.window.OnBackInvokedCallback {
+                if (!handleBackNavigation()) finish()
+            }
+        } else null
+    }
 
     // Estado capturado ANTES de que Android/YouTube cambien
     // la Activity de foreground a PiP/background.
@@ -206,6 +228,9 @@ class MainActivity :
         ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            val wasIme = imeVisible
+            imeVisible = ime > 0
+            if (imeVisible && !wasIme) setDockScrollHidden(false)
             view.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, ime))
             WindowInsetsCompat.Builder(insets)
                 .setInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE)
@@ -230,6 +255,7 @@ class MainActivity :
         root = findViewById(R.id.rootView)
         topBar = findViewById(R.id.topBar)
         navBar = findViewById(R.id.navBar)
+        browserDock = findViewById(R.id.browserDock)
         pageView = installPageView()
         engineView = pageView as EngineView
         browserFrame = findViewById(R.id.browserFrame)
@@ -269,8 +295,16 @@ class MainActivity :
         tabButton = findViewById(R.id.tabButton)
         backButton = findViewById(R.id.backButton)
         forwardButton = findViewById(R.id.forwardButton)
+        compactBackButton = findViewById(R.id.compactBackButton)
+        homeButton = findViewById(R.id.homeButton)
+        reloadButton = findViewById(R.id.reloadButton)
+        newTabButton = findViewById(R.id.newTabButton)
         clearOmniboxButton = findViewById(R.id.clearOmniboxButton)
         privateBanner = findViewById(R.id.privateBanner)
+        extensionInstallBanner = findViewById(R.id.extensionInstallBanner)
+        extensionBannerText = findViewById(R.id.extensionBannerText)
+        extensionBannerAction = findViewById(R.id.extensionBannerAction)
+        extensionBannerDismiss = findViewById(R.id.extensionBannerDismiss)
         miniPlayerButton = findViewById(R.id.miniPlayerButton)
         captionsButton = findViewById(R.id.captionsButton)
         captionView = findViewById(R.id.captionView)
@@ -281,7 +315,7 @@ class MainActivity :
 
     private fun configureUi() {
         findViewById<TextView>(R.id.brandText).setOnClickListener { viewModel.goHome() }
-        findViewById<ImageButton>(R.id.reloadButton).apply {
+        reloadButton.apply {
             setOnClickListener { TabManager.reload() }
             // Mantener pulsado: recarga completa, sin caché.
             setOnLongClickListener {
@@ -291,9 +325,10 @@ class MainActivity :
             }
         }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
+        compactBackButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
-        findViewById<ImageButton>(R.id.homeButton).setOnClickListener { viewModel.goHome() }
-        findViewById<ImageButton>(R.id.newTabButton).apply {
+        homeButton.setOnClickListener { viewModel.goHome() }
+        newTabButton.apply {
             setOnClickListener { viewModel.newTab(false) }
             // Mantener pulsado: pestaña privada.
             setOnLongClickListener { viewModel.newTab(true); true }
@@ -301,16 +336,37 @@ class MainActivity :
         tabButton.setOnClickListener { showTabsDialog() }
         tabButton.setOnLongClickListener { showTabQuickMenu(); true }
         // Gestos de la barra: a los lados cambia de pestaña, hacia arriba abre el selector.
-        findViewById<GestureDock>(R.id.browserDock).apply {
+        browserDock.apply {
             gesturesEnabled = {
                 BrowserPrefs.dockGestures(this@MainActivity) && !omnibox.hasFocus() && !fullScreenActive && !isInPictureInPictureMode
             }
             onSwipeTab = { offset -> switchAdjacentTab(offset) }
             onSwipeUp = { showTabsDialog() }
         }
+        PageBridge.onScrollDirection = { session, scrollingDown, scrollY ->
+            if (session === attachedSession) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    val hide = NavConfig.shouldAutoHideDock(
+                        mode = NavConfig.mode(this),
+                        autoHideEnabled = BrowserPrefs.autoHideBars(this),
+                        scrollingDown = scrollingDown,
+                        scrollY = scrollY,
+                        isStartPage = startPage.visibility == View.VISIBLE,
+                        omniboxFocused = omnibox.hasFocus(),
+                        findBarVisible = findBar.visibility == View.VISIBLE,
+                        imeVisible = imeVisible,
+                        fullScreen = fullScreenActive,
+                        isPip = isInPictureInPictureMode
+                    )
+                    setDockScrollHidden(hide)
+                }
+            }
+        }
+        applyNavigationMode()
         findViewById<ImageButton>(R.id.tabToolsButton).apply {
-            setOnClickListener { TabTools.show(this@MainActivity) }
-            // Pulsación larga: el buzón de la identidad actual. Nunca crea una identidad nueva por accidente.
+            setOnClickListener { SiteControlSheet.show(this@MainActivity) }
+            // Pulsación larga: el buzón de la identidad actual o herramientas de red/Burner.
             setOnLongClickListener {
                 val burner = TabManager.activeTab()?.burnerId
                 if (burner != null) BurnerMailbox.show(this@MainActivity, burner) else TabTools.show(this@MainActivity)
@@ -320,6 +376,33 @@ class MainActivity :
         findViewById<Button>(R.id.menuButton).setOnClickListener { showMenu(it) }
         privateBanner.setOnClickListener {
             TabManager.activeTab()?.burnerId?.let { BurnerMailbox.show(this, it) }
+        }
+        extensionBannerAction.setOnClickListener {
+            val target = currentStoreExtension ?: return@setOnClickListener
+            val installed = com.nexo.browser.extensions.nxr.NxrRuntime.installed(this)
+                .firstOrNull { it.id == target.extensionId || it.storeId == target.extensionId }
+            if (installed != null) {
+                com.nexo.browser.extensions.nxr.NxrRuntime.showExtensionSheet(
+                    activity = this,
+                    extId = installed.id,
+                    onCheckUpdate = {
+                        com.nexo.browser.extensions.hub.ExtensionHubSheets.openSingleUpdateFlow(this, installed) {
+                            TabManager.activeTab()?.let { tab -> updateExtensionInstallBanner(tab) }
+                        }
+                    },
+                    onChanged = {
+                        TabManager.activeTab()?.let { tab -> updateExtensionInstallBanner(tab) }
+                    }
+                )
+            } else {
+                com.nexo.browser.extensions.hub.ExtensionHubSheets.openStoreInstallFlow(this, target) {
+                    TabManager.activeTab()?.let { tab -> updateExtensionInstallBanner(tab) }
+                }
+            }
+        }
+        extensionBannerDismiss.setOnClickListener {
+            currentStoreExtension?.let { dismissedStoreKeys.add("${it.store.name}:${it.extensionId}") }
+            extensionInstallBanner.visibility = View.GONE
         }
         miniPlayerButton.setOnClickListener { startMiniPlayer() }
         captionsButton.setOnClickListener { toggleCaptions() }
@@ -333,13 +416,12 @@ class MainActivity :
             omnibox.requestFocus()
         }
 
-        suggestions = OmniboxSuggestions(this, findViewById(R.id.omniboxSuggestions)) { pick ->
-            when (pick) {
-                is OmniboxSuggestion.History -> viewModel.navigate(pick.entry.url)
-                is OmniboxSuggestion.Search -> viewModel.navigate(SearchResolver.searchUrl(this, pick.query))
-            }
-            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(omnibox.windowToken, 0)
-            omnibox.clearFocus()
+        suggestions = OmniboxSuggestions(
+            activity = this,
+            panel = findViewById(R.id.omniboxSuggestions),
+            bookmarksProvider = { com.nexo.browser.workspace.BookmarkStore.toCommandCandidates(applicationContext) }
+        ) { pick ->
+            handleCommandSuggestion(pick)
         }
 
         omnibox.addTextChangedListener(object : TextWatcher {
@@ -365,6 +447,7 @@ class MainActivity :
         omnibox.setOnFocusChangeListener { _, focused ->
             val tab = TabManager.activeTab()
             if (focused) {
+                setDockScrollHidden(false)
                 // Al editar se muestra la URL completa, seleccionada.
                 tab?.takeUnless { BrowserPrefs.isNexoHome(it.url) }?.let { omnibox.setText(it.url) }
                 omnibox.selectAll()
@@ -376,6 +459,7 @@ class MainActivity :
                 suggestions.hide()
                 tab?.let { renderOmnibox(it) }
             }
+            syncPredictiveBack()
         }
 
         findInput.addTextChangedListener(object : TextWatcher {
@@ -401,12 +485,14 @@ class MainActivity :
             Toast.makeText(this, "Abre una página para buscar en ella", Toast.LENGTH_SHORT).show()
             return
         }
+        setDockScrollHidden(false)
         findBar.visibility = View.VISIBLE
         findCount.text = ""
         findInput.requestFocus()
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .showSoftInput(findInput, 0)
         if (!findInput.text.isNullOrEmpty()) findInPage(restart = true)
+        syncPredictiveBack()
     }
 
     private fun hideFindBar() {
@@ -416,6 +502,7 @@ class MainActivity :
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(findInput.windowToken, 0)
         findInput.clearFocus()
+        syncPredictiveBack()
     }
 
     private fun findInPage(backwards: Boolean = false, restart: Boolean = false) {
@@ -430,11 +517,13 @@ class MainActivity :
             // Repetir el mismo texto avanza al siguiente resultado.
             if (restart) finder.clear()
             finder.find(term, backwards) { result ->
+                val p = ThemeManager.palette(this)
                 findCount.text = when {
                     result == null -> ""
                     !result.found -> "0/0"
                     else -> "${result.current}/${result.total}"
                 }
+                findCount.setTextColor(if (result != null && !result.found) p.error.color else p.muted)
             }
         }
     }
@@ -451,10 +540,70 @@ class MainActivity :
     }
 
     private fun navigateOmnibox() {
-        viewModel.navigate(omnibox.text?.toString().orEmpty())
+        val raw = omnibox.text?.toString().orEmpty().trim()
+        if (raw.startsWith("@")) {
+            val localPick = suggestions.firstLocalAction()
+            if (localPick != null) {
+                handleCommandSuggestion(localPick)
+            } else {
+                Toast.makeText(this, "No hay coincidencias locales para $raw", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        viewModel.navigate(raw)
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(omnibox.windowToken, 0)
         omnibox.clearFocus()
+    }
+
+    private fun handleCommandSuggestion(pick: OmniboxSuggestion) {
+        if (pick is OmniboxSuggestion.PrefixHint) {
+            val text = "${pick.scope.prefix} "
+            omnibox.setText(text)
+            omnibox.setSelection(text.length)
+            return
+        }
+        when (pick) {
+            is OmniboxSuggestion.OpenTab -> TabManager.switchTo(pick.tabId)
+            is OmniboxSuggestion.OpenGroup -> TabManager.switchTo(pick.firstTabId)
+            is OmniboxSuggestion.Bookmark -> viewModel.navigate(pick.url)
+            is OmniboxSuggestion.Shortcut -> viewModel.navigate(pick.url)
+            is OmniboxSuggestion.History -> viewModel.navigate(pick.url)
+            is OmniboxSuggestion.Search -> viewModel.navigate(SearchResolver.searchUrl(this, pick.query))
+            is OmniboxSuggestion.Setting -> {
+                suppressAutoPipOnce = true
+                startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_QUERY, pick.spec.query))
+            }
+            is OmniboxSuggestion.Command -> executeCommand(pick.spec.id)
+            is OmniboxSuggestion.PrefixHint -> Unit
+        }
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(omnibox.windowToken, 0)
+        omnibox.clearFocus()
+    }
+
+    private fun executeCommand(commandId: String) {
+        when (commandId) {
+            "new_tab" -> viewModel.newTab(false)
+            "private_tab" -> viewModel.newTab(true)
+            "burner_tab" -> BurnerMailbox.open(this)
+            "translate" -> TranslatorManager.translateActive(this) { _, message ->
+                runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
+            }
+            "find_in_page" -> showFindBar()
+            "downloads" -> openScreen(DownloadsActivity::class.java)
+            "history" -> openScreen(HistoryActivity::class.java)
+            "settings" -> openScreen(SettingsActivity::class.java)
+            "phantom_shield" -> openShieldPanel()
+            "nexo_ai" -> com.nexo.browser.ai.NexoAiSheet.show(this)
+            "extensions" -> openScreen(ExtensionsActivity::class.java)
+            "nav_customize" -> NavCustomizerSheet.show(this) { applyNavigationMode() }
+            "tab_tools" -> SiteControlSheet.show(this)
+            "reader_mode" -> com.nexo.browser.reader.NexoReader.openActiveTab(this)
+            "offline_articles" -> com.nexo.browser.reader.NexoReader.openSavedArticlesSheet(this) { viewModel.navigate(it) }
+            "bookmarks" -> openScreen(BookmarksActivity::class.java)
+            "bookmark_page" -> toggleCurrentBookmark()
+            "workspaces" -> com.nexo.browser.workspace.WorkspaceStore.showSheet(this) { refreshStartPageIfVisible() }
+        }
     }
 
     /** Menú principal: hoja inferior con la página actual y una cuadrícula de acciones. */
@@ -471,6 +620,10 @@ class MainActivity :
         val onPage = current != null && !BrowserPrefs.isNexoHome(current.url)
         val reopen = TabManager.lastClosed()
         val actions = listOf(
+            SheetAction(R.drawable.ic_menu_bookmark, "Favoritos") { openScreen(BookmarksActivity::class.java) },
+            SheetAction(R.drawable.ic_menu_workspace, "Espacios") {
+                com.nexo.browser.workspace.WorkspaceStore.showSheet(this) { refreshStartPageIfVisible() }
+            },
             SheetAction(R.drawable.ic_menu_history, "Historial") { openScreen(HistoryActivity::class.java) },
             SheetAction(R.drawable.ic_menu_download, "Descargas", active = DownloadStore.activeDownloads().isNotEmpty()) {
                 openScreen(DownloadsActivity::class.java)
@@ -483,6 +636,9 @@ class MainActivity :
                 TranslatorManager.translateActive(this) { _, message ->
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
+            },
+            SheetAction(R.drawable.ic_menu_reader, "Modo lectura") {
+                com.nexo.browser.reader.NexoReader.openActiveTab(this)
             },
             SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = current?.desktopMode == true, checked = current?.desktopMode == true) {
                 TabManager.setDesktopMode(!(current?.desktopMode ?: false))
@@ -515,6 +671,20 @@ class MainActivity :
                 this@MainActivity, "Menú de Nexo",
                 if (BrowserPrefs.isNexoHome(current?.url)) "Página de inicio" else current?.url?.let { displayUrl(it) }
             ), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (onPage && !current.isPrivate && UrlSafety.isWebUrl(current.url)) {
+                val bookmarked = com.nexo.browser.workspace.BookmarkStore.isBookmarked(this@MainActivity, current.url)
+                addView(ImageButton(this@MainActivity).apply {
+                    setImageResource(R.drawable.ic_menu_bookmark)
+                    contentDescription = if (bookmarked) "Quitar de favoritos" else "Guardar en favoritos"
+                    ThemeManager.styleIconButton(this@MainActivity, this, active = bookmarked)
+                    setOnClickListener {
+                        dismiss()
+                        toggleCurrentBookmark()
+                    }
+                }, LinearLayout.LayoutParams((48 * resources.displayMetrics.density).toInt(), (48 * resources.displayMetrics.density).toInt()).apply {
+                    marginEnd = (4 * resources.displayMetrics.density).toInt()
+                })
+            }
             addView(ImageButton(this@MainActivity).apply {
                 setImageResource(R.drawable.ic_menu_close)
                 contentDescription = "Cerrar menú"
@@ -725,6 +895,9 @@ class MainActivity :
         if (current != null) actions += SheetAction(R.drawable.ic_menu_close, "Cerrar esta pestaña", danger = true) {
             TabManager.closeTab(current.id)
         }
+        actions += SheetAction(R.drawable.ic_menu_settings, "Personalizar barra de navegación") {
+            NavCustomizerSheet.show(this) { applyNavigationMode() }
+        }
         sheet = NexoSheets.show(this, NexoSheets.column(this,
             NexoSheets.header(this, "Pestañas", "Desliza la barra inferior para cambiar de pestaña"),
             NexoSheets.list(this, actions, dismiss)))
@@ -736,7 +909,35 @@ class MainActivity :
             "history" -> openScreen(HistoryActivity::class.java)
             "burner" -> BurnerMailbox.open(this)
             "settings" -> openScreen(SettingsActivity::class.java)
+            "bookmarks" -> openScreen(BookmarksActivity::class.java)
+            "workspaces" -> com.nexo.browser.workspace.WorkspaceStore.showSheet(this) { refreshStartPageIfVisible() }
+            "reader_offline" -> com.nexo.browser.reader.NexoReader.openSavedArticlesSheet(this) { viewModel.navigate(it) }
         }
+    }
+
+    private fun refreshStartPageIfVisible() {
+        val tab = TabManager.activeTab() ?: return
+        if (BrowserPrefs.isNexoHome(tab.url) && startPage.visibility == View.VISIBLE) {
+            startPage.render(tab.isPrivate)
+        }
+    }
+
+    private fun toggleCurrentBookmark() {
+        val tab = TabManager.activeTab() ?: return
+        if (tab.isPrivate) {
+            Toast.makeText(this, "Las páginas privadas no se guardan en favoritos", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (BrowserPrefs.isNexoHome(tab.url) || !UrlSafety.isWebUrl(tab.url)) {
+            Toast.makeText(this, "Abre una página web para guardarla en favoritos", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val added = com.nexo.browser.workspace.BookmarkStore.toggle(this, tab.title, tab.url)
+        Toast.makeText(
+            this,
+            if (added) "Guardado en favoritos" else "Eliminado de favoritos",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     /** Añade el sitio actual a los accesos rápidos de la página de inicio. */
@@ -909,12 +1110,20 @@ class MainActivity :
         )
     }
 
+    private fun cleanShareUrl(rawUrl: String): Pair<String, Boolean> {
+        val noCreds = UrlSafety.stripCredentials(rawUrl)
+        val stripped = com.nexo.browser.shield.ShieldPolicy.stripTrackingParams(noCreds)
+        return if (stripped != null && stripped != noCreds) stripped to true else noCreds to false
+    }
+
     private fun shareText(text: String) {
+        val (outText, cleaned) = if (UrlSafety.isWebUrl(text.trim())) cleanShareUrl(text.trim()) else text to false
+        if (cleaned) Toast.makeText(this, "Enlace compartido sin parámetros de rastreo", Toast.LENGTH_SHORT).show()
         suppressAutoPipOnce = true
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra(Intent.EXTRA_TEXT, outText)
             }, "Compartir"
         ))
     }
@@ -960,20 +1169,35 @@ class MainActivity :
 
     private fun shareCurrent() {
         val tab = TabManager.activeTab() ?: return
+        val (cleanUrl, stripped) = cleanShareUrl(tab.url)
+        if (stripped) Toast.makeText(this, "Enlace compartido sin parámetros de rastreo", Toast.LENGTH_SHORT).show()
         suppressAutoPipOnce = true
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, tab.title)
-                putExtra(Intent.EXTRA_TEXT, "${tab.title}\n${tab.url}")
+                putExtra(Intent.EXTRA_TEXT, "${tab.title}\n$cleanUrl")
             }, "Compartir página"
         ))
+    }
+
+    private fun styleTabToolsButton(tab: BrowserTab?) {
+        val btn = findViewById<ImageButton>(R.id.tabToolsButton)
+        val muted = (tab?.session as? com.nexo.browser.engine.cefrium.CefriumEngineSession)?.isAudioMuted() == true
+        val active = tab != null && (tab.burnerId != null || tab.networkProfile != null || muted)
+        ThemeManager.styleIconButton(this, btn, active)
+        btn.contentDescription = when {
+            muted -> "Control del sitio (audio silenciado)"
+            tab?.burnerId != null -> "Control del sitio (identidad Burner)"
+            tab?.networkProfile != null -> "Control del sitio (ruta de red personalizada)"
+            else -> "Control del sitio"
+        }
     }
 
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
         root.setBackgroundColor(p.background)
-        findViewById<View>(R.id.browserDock).apply {
+        browserDock.apply {
             background = ThemeManager.rounded(this@MainActivity, p.surface, 28f, p.outline)
             elevation = if (p.isDark) 0f else 4f * resources.displayMetrics.density
         }
@@ -982,7 +1206,8 @@ class MainActivity :
         browserFrame.applyPalette(p.surface, p.accent, p.outlineVariant)
         pageView.setBackgroundColor(p.background)
         ThemeManager.styleEdit(this, omnibox)
-        ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
+        ThemeManager.styleIconButton(this, compactBackButton)
+        styleTabToolsButton(TabManager.activeTab())
         styleMiniPlayerChip()
         ThemeManager.styleTabCounter(this, tabButton)
         ThemeManager.styleFlatButton(this, findViewById(R.id.menuButton))
@@ -991,9 +1216,9 @@ class MainActivity :
         listOf(
             backButton,
             forwardButton,
-            findViewById<ImageButton>(R.id.homeButton),
-            findViewById<ImageButton>(R.id.reloadButton),
-            findViewById<ImageButton>(R.id.newTabButton)
+            homeButton,
+            reloadButton,
+            newTabButton
         ).forEach { ThemeManager.styleIconButton(this, it) }
 
         findBar.background = ThemeManager.barBackground(this, lineOnTop = false)
@@ -1005,11 +1230,139 @@ class MainActivity :
 
         privateBanner.setBackgroundColor(p.accentSoft)
         privateBanner.setTextColor(p.onAccentSoft)
+        extensionInstallBanner.background = ThemeManager.barBackground(this, lineOnTop = false)
+        extensionBannerText.setTextColor(p.text)
+        ThemeManager.styleButton(this, extensionBannerAction, primary = true)
+        ThemeManager.styleIconButton(this, extensionBannerDismiss)
         progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
         progress.progressBackgroundTintList =
             android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+        applyNavigationMode()
         settingsFingerprint = fingerprint()
         themeKey = ThemeManager.themeKey(this)
+    }
+
+    /** Aplica el modo de navegación elegido (Clásico, Compacto o Personalizado) sin perder los controles esenciales. */
+    private fun applyNavigationMode() {
+        val mode = NavConfig.mode(this)
+        val hideChrome = immersive
+        compactBackButton.visibility = if (mode == NavConfig.Mode.COMPACT && !hideChrome) View.VISIBLE else View.GONE
+        compactBackButton.isEnabled = TabManager.canGoBackOrPrevious()
+        compactBackButton.alpha = if (compactBackButton.isEnabled) 1f else 0.45f
+
+        val targetActions = when (mode) {
+            NavConfig.Mode.CLASSIC -> NavConfig.DEFAULT_ACTIONS
+            NavConfig.Mode.CUSTOM -> NavConfig.actions(this)
+            NavConfig.Mode.COMPACT -> emptyList()
+        }
+
+        if (mode == NavConfig.Mode.COMPACT) {
+            dockScrollHidden = false
+            browserDock.animate().cancel()
+            browserDock.translationY = 0f
+            browserDock.alpha = 1f
+            browserDock.visibility = View.GONE
+            return
+        }
+
+        navBar.removeAllViews()
+        val touchTarget = resources.getDimensionPixelSize(R.dimen.touch_target)
+        targetActions.forEach { action ->
+            val btn = when (action) {
+                NavConfig.Action.BACK -> backButton
+                NavConfig.Action.FORWARD -> forwardButton
+                NavConfig.Action.HOME -> homeButton
+                NavConfig.Action.RELOAD -> reloadButton
+                NavConfig.Action.NEW_TAB -> newTabButton
+                else -> ImageButton(this).apply {
+                    setImageResource(NavConfig.iconFor(action))
+                    contentDescription = action.label
+                    scaleType = ImageView.ScaleType.CENTER
+                    setOnClickListener { executeNavAction(action) }
+                }
+            }
+            (btn.parent as? android.view.ViewGroup)?.removeView(btn)
+            ThemeManager.styleIconButton(this, btn)
+            navBar.addView(btn, LinearLayout.LayoutParams(0, touchTarget, 1f))
+        }
+        backButton.isEnabled = TabManager.canGoBackOrPrevious()
+        backButton.alpha = if (backButton.isEnabled) 1f else 0.45f
+        forwardButton.isEnabled = TabManager.activeTab()?.canGoForward == true
+        forwardButton.alpha = if (forwardButton.isEnabled) 1f else 0.45f
+
+        if (hideChrome) {
+            browserDock.visibility = View.GONE
+        } else if (!dockScrollHidden) {
+            browserDock.visibility = View.VISIBLE
+            browserDock.alpha = 1f
+            browserDock.translationY = 0f
+        }
+    }
+
+    private fun executeNavAction(action: NavConfig.Action) {
+        when (action) {
+            NavConfig.Action.BACK -> TabManager.goBackOrPrevious()
+            NavConfig.Action.FORWARD -> TabManager.goForward()
+            NavConfig.Action.HOME -> viewModel.goHome()
+            NavConfig.Action.RELOAD -> TabManager.reload()
+            NavConfig.Action.NEW_TAB -> viewModel.newTab(false)
+            NavConfig.Action.HISTORY -> openScreen(HistoryActivity::class.java)
+            NavConfig.Action.DOWNLOADS -> openScreen(DownloadsActivity::class.java)
+            NavConfig.Action.AI -> com.nexo.browser.ai.NexoAiSheet.show(this)
+            NavConfig.Action.SHIELD -> openShieldPanel()
+            NavConfig.Action.EXTENSIONS -> openScreen(ExtensionsActivity::class.java)
+            NavConfig.Action.READER -> com.nexo.browser.reader.NexoReader.openActiveTab(this)
+            NavConfig.Action.BOOKMARKS -> openScreen(BookmarksActivity::class.java)
+        }
+    }
+
+    /** Ocultación inteligente y suave del dock inferior al desplazarse (respeta reducción de movimiento). */
+    private fun setDockScrollHidden(hide: Boolean) {
+        if (NavConfig.mode(this) == NavConfig.Mode.COMPACT || immersive) return
+        if (dockScrollHidden == hide) return
+        val now = android.os.SystemClock.uptimeMillis()
+        // Al ocultar aplica histéresis breve para evitar parpadeos; al mostrar responde al instante.
+        if (hide && now - lastDockToggleMs < 350L) return
+        lastDockToggleMs = now
+        dockScrollHidden = hide
+
+        val duration = NexoUi.animDuration(this, 160L)
+        browserDock.animate().cancel()
+        if (hide) {
+            if (duration == 0L) {
+                browserDock.visibility = View.GONE
+                browserDock.translationY = 0f
+                browserDock.alpha = 1f
+            } else {
+                val shift = NexoUi.dp(this, 24f).toFloat()
+                browserDock.animate()
+                    .translationY(shift)
+                    .alpha(0f)
+                    .setDuration(duration)
+                    .withEndAction {
+                        if (dockScrollHidden) {
+                            browserDock.visibility = View.GONE
+                            browserDock.translationY = 0f
+                            browserDock.alpha = 1f
+                        }
+                    }
+                    .start()
+            }
+        } else {
+            browserDock.visibility = View.VISIBLE
+            if (duration == 0L) {
+                browserDock.translationY = 0f
+                browserDock.alpha = 1f
+            } else {
+                browserDock.translationY = NexoUi.dp(this, 20f).toFloat()
+                browserDock.alpha = 0f
+                browserDock.animate()
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(duration)
+                    .start()
+            }
+        }
     }
 
     private fun fingerprint(): String =
@@ -1021,7 +1374,9 @@ class MainActivity :
             BrowserPrefs.dnsProvider(this), BrowserPrefs.cookieMode(this),
             BrowserPrefs.httpsOnly(this).toString(), BrowserPrefs.globalPrivacyControl(this).toString(),
             BrowserPrefs.smartPip(this).toString(), BrowserPrefs.backgroundMedia(this).toString(),
-            BrowserPrefs.captionsEnabled(this).toString()
+            BrowserPrefs.captionsEnabled(this).toString(),
+            BrowserPrefs.navMode(this), BrowserPrefs.navActions(this),
+            BrowserPrefs.autoHideBars(this).toString()
         ).joinToString("|")
 
     /*
@@ -1092,6 +1447,7 @@ class MainActivity :
     override fun onActiveTabChanged(tab: BrowserTab, session: EngineSession) {
         if (attachedSession !== session) {
             hideFindBar()
+            setDockScrollHidden(false)
             // Los subtítulos son de la pestaña visible: no seguir transcribiendo otra.
             attachedSession?.let { LiveCaptions.stop(it) }
             // Un permiso pedido desde otra pestaña no se concede desde esta.
@@ -1112,6 +1468,7 @@ class MainActivity :
     override fun onFullScreenChanged(tab: BrowserTab, fullScreen: Boolean) {
         fullScreenActive = fullScreen
         applyChromeVisibility()
+        syncPredictiveBack()
     }
 
     private val immersive: Boolean
@@ -1125,12 +1482,21 @@ class MainActivity :
         val pip = forcePip || isInPictureInPictureMode
         val hideChrome = pip || fullScreenActive
         val tab = TabManager.activeTab()
+        val compact = NavConfig.mode(this) == NavConfig.Mode.COMPACT
 
-        findViewById<View>(R.id.browserDock).visibility = if (hideChrome) View.GONE else View.VISIBLE
+        if (hideChrome) {
+            browserDock.animate().cancel()
+            browserDock.visibility = View.GONE
+            navBar.visibility = View.GONE
+        } else {
+            navBar.visibility = View.VISIBLE
+            browserDock.visibility = if (compact || dockScrollHidden) View.GONE else View.VISIBLE
+        }
+        compactBackButton.visibility = if (!hideChrome && compact) View.VISIBLE else View.GONE
         topBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
-        navBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
         privateBanner.visibility =
             if (!hideChrome && tab?.isPrivate == true) View.VISIBLE else View.GONE
+        if (hideChrome) extensionInstallBanner.visibility = View.GONE else tab?.let { updateExtensionInstallBanner(it) }
         progress.visibility =
             if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
 
@@ -1223,6 +1589,7 @@ class MainActivity :
     private fun updateStartPage(tab: BrowserTab) {
         val show = BrowserPrefs.isNexoHome(tab.url) && !immersive
         if (show) {
+            setDockScrollHidden(false)
             // Re-dibujar solo si cambió la pestaña, el tema o la privacidad.
             val key = tab.id + "|" + tab.isPrivate + "|" + ThemeManager.themeKey(this)
             if (key != startPageKey || startPage.visibility != View.VISIBLE) {
@@ -1268,15 +1635,65 @@ class MainActivity :
         } else "Navegación privada"
         privateBanner.isClickable = tab.burnerId != null
         privateBanner.contentDescription = if (tab.burnerId != null) "Abrir el buzón de esta identidad Burner" else null
-        ThemeManager.styleIconButton(this,findViewById(R.id.tabToolsButton),tab.burnerId != null || tab.networkProfile != null)
+        styleTabToolsButton(tab)
         if (!omnibox.hasFocus()) renderOmnibox(tab)
         updateStartPage(tab)
-        backButton.isEnabled = TabManager.canGoBackOrPrevious()
+        val canBack = TabManager.canGoBackOrPrevious()
+        backButton.isEnabled = canBack
+        backButton.alpha = if (canBack) 1f else 0.45f
+        compactBackButton.isEnabled = canBack
+        compactBackButton.alpha = if (canBack) 1f else 0.45f
         forwardButton.isEnabled = tab.canGoForward
+        forwardButton.alpha = if (tab.canGoForward) 1f else 0.45f
         privateBanner.visibility =
             if (!immersive && tab.isPrivate) View.VISIBLE else View.GONE
+        updateExtensionInstallBanner(tab)
         title = if (tab.isPrivate) "Navegación privada" else tab.title
         updateMiniPlayerChip()
+        syncPredictiveBack()
+    }
+
+    /**
+     * Observador puro de URL (sin inyección en el DOM de la tienda ni falsificación de User-Agent):
+     * cuando el usuario abre una ficha de Chrome Web Store o Microsoft Edge Add-ons, ofrece la
+     * barra contextual nativa «Instalar en Nexo» o «Gestionar en Nexo» si ya está instalada.
+     */
+    private fun updateExtensionInstallBanner(tab: BrowserTab) {
+        if (immersive || BrowserPrefs.isNexoHome(tab.url)) {
+            currentStoreExtension = null
+            extensionInstallBanner.visibility = View.GONE
+            return
+        }
+        val target = com.nexo.browser.extensions.hub.ExtensionStoreResolver.detectStorePage(tab.url)
+        if (target == null) {
+            currentStoreExtension = null
+            extensionInstallBanner.visibility = View.GONE
+            return
+        }
+        val key = "${target.store.name}:${target.extensionId}"
+        if (dismissedStoreKeys.contains(key)) {
+            currentStoreExtension = target
+            extensionInstallBanner.visibility = View.GONE
+            return
+        }
+        currentStoreExtension = target
+        val installed = com.nexo.browser.extensions.nxr.NxrRuntime.installed(this)
+            .firstOrNull { it.id == target.extensionId || it.storeId == target.extensionId }
+        if (installed != null) {
+            val state = com.nexo.browser.extensions.nxr.NxrRuntime.lifecycleState(installed.id, this)
+            extensionBannerText.text = "${installed.name} · ${state.label} en Nexo"
+            extensionBannerAction.text = "Gestionar"
+        } else {
+            val label = tab.title
+                .replace(" - Chrome Web Store", "", ignoreCase = true)
+                .replace(" - Microsoft Edge Addons", "", ignoreCase = true)
+                .trim()
+                .takeIf { it.isNotBlank() && !it.startsWith("http", ignoreCase = true) }
+                ?: target.store.label
+            extensionBannerText.text = "$label · ${target.store.label}"
+            extensionBannerAction.text = "Instalar en Nexo"
+        }
+        extensionInstallBanner.visibility = View.VISIBLE
     }
 
     override fun onStart() {
@@ -1312,6 +1729,7 @@ class MainActivity :
         ExtensionManager.attachPromptActivity(this)
         AppUpdater.resumePendingInstallIfAllowed(this)
         TabManager.activeTab()?.takeIf { BrowserPrefs.isNexoHome(it.url) }?.let { startPage.render(it.isPrivate) }
+        TabManager.activeTab()?.let { updateExtensionInstallBanner(it) }
         ExtensionManager.consumePendingAction { ok, message ->
             if (!ok) runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
@@ -1968,6 +2386,8 @@ class MainActivity :
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
+        PageBridge.onScrollDirection = null
+        unregisterPredictiveBack()
         PerfLog.detach(this)
         fullscreenMediaOverlay?.detach()
         pendingPipEntry?.let { pageView.removeCallbacks(it) }
@@ -1996,15 +2416,66 @@ class MainActivity :
         super.onDestroy()
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
+    private fun canInterceptBack(): Boolean =
+        findBar.visibility == View.VISIBLE ||
+            omnibox.hasFocus() ||
+            fullScreenActive ||
+            TabManager.canGoBackOrPrevious()
+
+    /**
+     * Predictive Back (Android 13+): registra el callback solo cuando Nexo tiene
+     * una acción interna pendiente; en la raíz de la pestaña lo suelta para que
+     * Android muestre la animación nativa de regreso al inicio.
+     */
+    private fun syncPredictiveBack() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val cb = predictiveBackCallback as? android.window.OnBackInvokedCallback ?: return
+        val shouldRegister = canInterceptBack()
+        if (shouldRegister && !backCallbackRegistered) {
+            runCatching {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    cb
+                )
+                backCallbackRegistered = true
+            }
+        } else if (!shouldRegister && backCallbackRegistered) {
+            unregisterPredictiveBack()
+        }
+    }
+
+    private fun unregisterPredictiveBack() {
+        if (Build.VERSION.SDK_INT < 33 || !backCallbackRegistered) return
+        val cb = predictiveBackCallback as? android.window.OnBackInvokedCallback ?: return
+        runCatching { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(cb) }
+        backCallbackRegistered = false
+    }
+
+    private fun handleBackNavigation(): Boolean {
         if (findBar.visibility == View.VISIBLE) {
             hideFindBar()
-            return
+            return true
         }
-        if (TabManager.exitFullScreen()) return
-        if (TabManager.canGoBackOrPrevious()) TabManager.goBackOrPrevious()
-        else super.onBackPressed()
+        if (omnibox.hasFocus()) {
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(omnibox.windowToken, 0)
+            omnibox.clearFocus()
+            return true
+        }
+        if (TabManager.exitFullScreen()) return true
+        if (TabManager.canGoBackOrPrevious()) {
+            TabManager.goBackOrPrevious()
+            return true
+        }
+        return false
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!handleBackNavigation()) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
     }
 
     companion object {
@@ -2019,7 +2490,7 @@ class MainActivity :
         private val PAGE_ONLY_ACTIONS = setOf(
             R.drawable.ic_menu_copy, R.drawable.ic_menu_share, R.drawable.ic_menu_find,
             R.drawable.ic_menu_pin, R.drawable.ic_menu_screenshot, R.drawable.ic_menu_pdf,
-            R.drawable.ic_menu_translate, R.drawable.ic_menu_desktop
+            R.drawable.ic_menu_translate, R.drawable.ic_menu_desktop, R.drawable.ic_menu_reader
         )
 
         /** Primer enlace web dentro de un texto compartido. */

@@ -31,12 +31,14 @@ import android.widget.Switch
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 
-/** Fila de lista con insignia, título, subtítulo y dato secundario. */
+/** Fila de lista con insignia, título, subtítulo, dato secundario y píldora de estado opcional. */
 data class ListRow(
     val title: String,
     val subtitle: String = "",
     val meta: String = "",
-    val badge: String = ""
+    val badge: String = "",
+    val status: String = "",
+    val statusTone: NexoUi.Tone? = null
 )
 
 /**
@@ -262,7 +264,7 @@ object ThemeManager {
     /** Contenedor tipo tarjeta: superficie redondeada con borde fino. */
     fun styleCard(activity: Activity, view: View, radiusDp: Float = 16f) {
         val p = palette(activity)
-        view.background = rounded(activity, p.surface, radiusDp, if (p.isDark) p.outlineVariant else null)
+        view.background = rounded(activity, p.surface, radiusDp, p.outlineVariant)
         view.clipToOutline = true
     }
 
@@ -380,7 +382,8 @@ object ThemeManager {
         val badge: TextView,
         val title: TextView,
         val subtitle: TextView,
-        val meta: TextView
+        val meta: TextView,
+        val statusPill: TextView
     ) {
         fun bind(activity: Activity, row: ListRow) {
             title.text = row.title
@@ -392,6 +395,17 @@ object ThemeManager {
             val label = row.badge.ifBlank { row.title.trim().take(1).uppercase() }.take(4)
             badge.text = label
             badge.textSize = if (label.length > 2) 10.5f else 15f
+
+            if (row.status.isBlank()) {
+                statusPill.visibility = View.GONE
+            } else {
+                val p = palette(activity)
+                val (bg, fg) = NexoUi.toneColors(p, row.statusTone ?: NexoUi.Tone.NEUTRAL)
+                statusPill.text = row.status
+                statusPill.setTextColor(fg)
+                statusPill.background = rounded(activity, bg, 10f)
+                statusPill.visibility = View.VISIBLE
+            }
         }
     }
 
@@ -406,7 +420,7 @@ object ThemeManager {
             minimumHeight = (64 * d).toInt()
             background = ripple(
                 activity,
-                rounded(activity, p.surface, 18f, if (p.isDark) p.outlineVariant else null),
+                rounded(activity, p.surface, 18f, p.outlineVariant),
                 18f
             )
             layoutParams = ViewGroup.LayoutParams(
@@ -417,7 +431,7 @@ object ThemeManager {
 
         val badge = TextView(activity).apply {
             gravity = Gravity.CENTER
-            setTextColor(p.accent)
+            setTextColor(p.onAccentSoft)
             typeface = Typeface.DEFAULT_BOLD
             background = rounded(activity, p.accentSoft, 14f)
             layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt()).apply {
@@ -445,13 +459,28 @@ object ThemeManager {
             alpha = 0.85f
         }
 
+        val statusPill = TextView(activity).apply {
+            textSize = 11f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding((8 * d).toInt(), (3 * d).toInt(), (8 * d).toInt(), (3 * d).toInt())
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = (10 * d).toInt() }
+        }
+
         texts.addView(title)
         texts.addView(subtitle)
         texts.addView(meta)
         root.addView(badge)
         root.addView(texts)
+        root.addView(statusPill)
 
-        return RowHolder(root, badge, title, subtitle, meta).also { root.tag = it }
+        return RowHolder(root, badge, title, subtitle, meta, statusPill).also { root.tag = it }
     }
 
     /** Selector con forma de campo redondeado y flecha a la derecha. */

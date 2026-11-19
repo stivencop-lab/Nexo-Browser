@@ -48,16 +48,7 @@ class DownloadsActivity : Activity() {
         listView.setOnItemLongClickListener { _, _, raw, _ ->
             val position = raw - running.size
             if (position !in entries.indices) return@setOnItemLongClickListener true
-            val entry = entries[position]
-            AlertDialog.Builder(this)
-                .setTitle("Eliminar descarga")
-                .setMessage(entry.fileName)
-                .setNegativeButton("Cancelar", null)
-                .setPositiveButton("Eliminar") { _, _ ->
-                    DownloadStore.remove(this, entry.id)
-                    refresh()
-                }
-                .show()
+            showDownloadOptions(entries[position])
             true
         }
 
@@ -157,6 +148,63 @@ class DownloadsActivity : Activity() {
                 "No se pudo abrir este archivo con una aplicación instalada",
                 Toast.LENGTH_LONG
             ).show()
+        }
+    }
+
+    private fun showDownloadOptions(entry: DownloadEntry) {
+        var sheet: android.app.Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
+        val actions = mutableListOf(
+            SheetAction(R.drawable.ic_menu_open, "Abrir archivo") { open(entry) },
+            SheetAction(R.drawable.ic_menu_share, "Compartir archivo") { share(entry) }
+        )
+        if (entry.sourceUrl.isNotBlank()) {
+            actions += SheetAction(R.drawable.ic_menu_copy, "Copiar enlace de origen") {
+                val clean = com.nexo.browser.shield.ShieldPolicy.stripTrackingParams(UrlSafety.stripCredentials(entry.sourceUrl))
+                    ?: UrlSafety.stripCredentials(entry.sourceUrl)
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(ClipboardPrivacy.plainText("Origen de descarga", clean, sensitive = false))
+                Toast.makeText(this, "Enlace copiado", Toast.LENGTH_SHORT).show()
+            }
+        }
+        actions += SheetAction(R.drawable.ic_menu_close, "Eliminar descarga", danger = true) {
+            AlertDialog.Builder(this)
+                .setTitle("Eliminar descarga")
+                .setMessage(entry.fileName)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Eliminar") { _, _ ->
+                    DownloadStore.remove(this, entry.id)
+                    refresh()
+                }
+                .show()
+        }
+        val sizeStr = Formatter.formatShortFileSize(this, entry.size)
+        sheet = NexoSheets.show(
+            this,
+            NexoSheets.column(
+                this,
+                NexoSheets.header(this, entry.fileName, sizeStr),
+                NexoSheets.list(this, actions, dismiss)
+            )
+        )
+    }
+
+    private fun share(entry: DownloadEntry) {
+        val file = DownloadStore.fileFor(this, entry)
+        if (file == null) {
+            Toast.makeText(this, "El archivo ya no existe", Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = entry.mimeType.ifBlank { "application/octet-stream" }
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Compartir ${entry.fileName}"))
+        }.onFailure {
+            Toast.makeText(this, "No se pudo compartir este archivo", Toast.LENGTH_LONG).show()
         }
     }
 

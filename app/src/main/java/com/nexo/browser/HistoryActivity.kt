@@ -71,15 +71,7 @@ class HistoryActivity : Activity() {
         }
         listView.setOnItemLongClickListener { _, _, position, _ ->
             val entry = entries.getOrNull(position) ?: return@setOnItemLongClickListener true
-            AlertDialog.Builder(this)
-                .setTitle("Quitar del historial")
-                .setMessage(entry.title.ifBlank { entry.url })
-                .setNegativeButton("Cancelar", null)
-                .setPositiveButton("Quitar") { _, _ ->
-                    HistoryStore.remove(this, entry.url)
-                    reload(force = true)
-                }
-                .show()
+            showEntryOptions(entry)
             true
         }
         // Al desplazar la lista se oculta el teclado para ver más resultados.
@@ -217,6 +209,50 @@ class HistoryActivity : Activity() {
     }
 
     private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun showEntryOptions(entry: HistoryEntry) {
+        var sheet: android.app.Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
+        val cleanUrl = com.nexo.browser.shield.ShieldPolicy.stripTrackingParams(UrlSafety.stripCredentials(entry.url))
+            ?: UrlSafety.stripCredentials(entry.url)
+        val actions = listOf(
+            SheetAction(R.drawable.ic_menu_open, "Abrir en pestaña nueva") {
+                hideKeyboard()
+                TabManager.createTab(entry.url)
+                finish()
+            },
+            SheetAction(R.drawable.ic_menu_private, "Abrir en pestaña privada") {
+                hideKeyboard()
+                TabManager.createTab(entry.url, isPrivate = true)
+                finish()
+            },
+            SheetAction(R.drawable.ic_menu_bookmark, "Guardar en favoritos") {
+                val saved = com.nexo.browser.workspace.BookmarkStore.add(this, entry.title.ifBlank { entry.url }, entry.url)
+                android.widget.Toast.makeText(
+                    this,
+                    if (saved != null) "Guardado en favoritos" else "No se pudo guardar este enlace",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            },
+            SheetAction(R.drawable.ic_menu_copy, "Copiar enlace limpio") {
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(ClipboardPrivacy.plainText("Enlace", cleanUrl, sensitive = false))
+                android.widget.Toast.makeText(this, "Enlace copiado", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            SheetAction(R.drawable.ic_menu_close, "Quitar del historial", danger = true) {
+                HistoryStore.remove(this, entry.url)
+                reload(force = true)
+            }
+        )
+        sheet = NexoSheets.show(
+            this,
+            NexoSheets.column(
+                this,
+                NexoSheets.header(this, entry.title.ifBlank { "Página visitada" }, cleanUrl),
+                NexoSheets.list(this, actions, dismiss)
+            )
+        )
+    }
 
     private fun open(url: String) {
         hideKeyboard()

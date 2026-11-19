@@ -126,3 +126,29 @@ test('nxr-runtime-shim rejects oversized envelopes and cefrium-port freezes cefr
   ctx.cefriumQuery({ request: '{}', onSuccess() {}, onFailure() {} });
   assert.ok(realQueryCalled >= 2, 'original cefriumQuery must remain intact');
 });
+
+test('nxr-runtime-shim protects getManifest from JSON monkey-patching and exposes honest stubs', async () => {
+  const mock = makeMockQuery();
+  const origParse = JSON.parse;
+  const origStringify = JSON.stringify;
+  const scope = createNxrScope({
+    extId: 'demo@nxr.test',
+    token: 'tok-json',
+    manifest: { name: 'Protected', version: '2.0' },
+    query: mock.query
+  });
+  try {
+    JSON.parse = () => ({ name: 'HIJACKED' });
+    JSON.stringify = () => '{"name":"HIJACKED"}';
+    assert.equal(scope.chrome.runtime.getManifest().name, 'Protected');
+  } finally {
+    JSON.parse = origParse;
+    JSON.stringify = origStringify;
+  }
+
+  await assert.rejects(() => scope.chrome.scripting.executeScript(), /no soportada/i);
+  await assert.rejects(() => scope.chrome.cookies.get(), /no soportada/i);
+  await assert.rejects(() => scope.chrome.alarms.create(), /no soportada/i);
+  await assert.rejects(() => scope.chrome.declarativeNetRequest.updateDynamicRules(), /no soportada/i);
+});
+

@@ -137,22 +137,31 @@ class ExtensionManifestTest {
         assertEquals(ExtensionCompatibility.Level.PARTIAL, ExtensionCompatibility.evaluate(m).level)
     }
 
-    @Test fun compatibilityReflectsWebViewLimits() {
+    @Test fun compatibilityReflectsCefriumLimits() {
+        assertEquals(20, ExtensionCompatibility.API_MATRIX.size)
+
         val full = ExtensionManifest.parse(
-            """{"manifest_version":3,"name":"a","version":"1","permissions":["storage","alarms"],
-               "content_scripts":[{"matches":["<all_urls>"],"js":["a.js"],"world":"MAIN"}]}"""
+            """{"manifest_version":3,"name":"a","version":"1","permissions":["storage","i18n"],
+               "content_scripts":[{"matches":["https://example.com/*"],"js":["a.js"],"world":"MAIN"}]}"""
         )
-        assertEquals(ExtensionCompatibility.Level.FULL, ExtensionCompatibility.evaluate(full).level)
+        val fullReport = ExtensionCompatibility.evaluate(full)
+        assertEquals(ExtensionCompatibility.Level.FULL, fullReport.level)
+        assertEquals(ExtensionCompatibility.InstallVerdict.FULL, fullReport.verdict)
 
         val partial = ExtensionCompatibility.evaluate(ExtensionManifest.parse(mv3))
         assertEquals(ExtensionCompatibility.Level.PARTIAL, partial.level)
-        assertEquals(listOf("debugger"), partial.unsupported)
+        assertEquals(ExtensionCompatibility.InstallVerdict.LIMITED_INSTALLABLE, partial.verdict)
+        assertTrue("debugger" in partial.unsupported)
+        assertTrue("declarativeNetRequest" in partial.unsupported)
+        assertTrue("background.service_worker" in partial.unsupported)
         assertTrue("content_scripts" in partial.limited)
 
         val none = ExtensionManifest.parse(
             """{"manifest_version":3,"name":"a","version":"1","permissions":["debugger","nativeMessaging"],
                "background":{"service_worker":"sw.js"}}"""
         )
-        assertEquals(ExtensionCompatibility.Level.UNSUPPORTED, ExtensionCompatibility.evaluate(none).level)
+        val noneReport = ExtensionCompatibility.evaluate(none)
+        assertEquals(ExtensionCompatibility.Level.UNSUPPORTED, noneReport.level)
+        assertEquals(ExtensionCompatibility.InstallVerdict.UNSUPPORTED, noneReport.verdict)
     }
 }

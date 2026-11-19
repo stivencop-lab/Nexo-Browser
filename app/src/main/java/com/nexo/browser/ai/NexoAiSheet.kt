@@ -87,6 +87,29 @@ object NexoAiSheet {
         }, NexoUi.buttonParams(activity, 8f))
         workspaceBox.addView(consentBox)
 
+        // --- Estado de permiso por sitio ---
+        val initialHost = runCatching { android.net.Uri.parse(TabManager.activeTab()?.url.orEmpty()).host }
+            .getOrNull()?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        val hostGateCard = NexoUi.card(activity).apply {
+            visibility = if (initialHost.isNotBlank() && !NexoAiConfig.isHostAllowed(activity, initialHost)) View.VISIBLE else View.GONE
+        }
+        if (initialHost.isNotBlank()) {
+            hostGateCard.addView(NexoUi.statusPill(activity, "Bloqueado en $initialHost", NexoUi.Tone.WARNING))
+            hostGateCard.addView(NexoUi.note(
+                activity,
+                "Nexo AI tiene desactivado el acceso a este sitio desde Control del sitio."
+            ))
+            hostGateCard.addView(NexoUi.button(activity, "Permitir Nexo AI en $initialHost") {
+                NexoAiConfig.setHostAllowed(activity, initialHost, true)
+                hostGateCard.visibility = View.GONE
+                Toastish.show(activity, "Nexo AI permitido en $initialHost.")
+            }, NexoUi.buttonParams(activity, 8f))
+            workspaceBox.addView(hostGateCard, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = NexoUi.dp(activity, 8f) })
+        }
+
         // --- Alcance del contexto ---
         workspaceBox.addView(NexoUi.section(activity, "Alcance del contexto"))
         val scopeHolder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -149,6 +172,15 @@ object NexoAiSheet {
                 Toastish.show(activity, "Acepta primero el aviso de privacidad de Nexo AI.")
                 return
             }
+            val currentScope = scope
+            val activeHost = runCatching { android.net.Uri.parse(TabManager.activeTab()?.url.orEmpty()).host }
+                .getOrNull()?.trim()?.lowercase(Locale.ROOT).orEmpty()
+            if (currentScope != "tabs" && activeHost.isNotBlank() && !NexoAiConfig.isHostAllowed(activity, activeHost)) {
+                hostGateCard.visibility = View.VISIBLE
+                statusView.text = "Nexo AI está bloqueado en $activeHost. Permítelo arriba o en Control del sitio."
+                statusView.visibility = View.VISIBLE
+                return
+            }
             val key = NexoAiConfig.apiKey(activity)
             val validation = NexoAiConfig.validate(settings, key)
             if (validation != null) {
@@ -166,9 +198,6 @@ object NexoAiSheet {
             statusView.visibility = View.VISIBLE
             cancelBtn.visibility = View.VISIBLE
             resultCard.visibility = View.GONE
-
-            val currentScope = scope
-            val activeHost = runCatching { android.net.Uri.parse(TabManager.activeTab()?.url.orEmpty()).host }.getOrNull().orEmpty()
 
             fun dispatchWithContext(contextText: String) {
                 if (myGen != requestGen || handle.isCancelled) return

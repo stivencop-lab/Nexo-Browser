@@ -38,6 +38,12 @@ object CaptionsUi {
 
     private fun dp(activity: Activity, value: Float) = (value * activity.resources.displayMetrics.density).toInt()
 
+    fun summary(activity: Activity): String {
+        val language = LANGUAGES.firstOrNull { it.first == BrowserPrefs.captionLanguage(activity) }?.second ?: "Automático"
+        val target = TARGETS.firstOrNull { it.first == BrowserPrefs.captionTranslateTo(activity) }?.second ?: "No traducir"
+        return if (target == "No traducir") "Idioma: $language" else "$language → $target"
+    }
+
     /** Píldora translúcida como la de "Mini"; con el acento cuando está activa. */
     fun styleChip(activity: Activity, button: Button, active: Boolean) {
         val p = ThemeManager.palette(activity)

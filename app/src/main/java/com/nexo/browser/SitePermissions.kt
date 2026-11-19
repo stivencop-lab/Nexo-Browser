@@ -24,6 +24,32 @@ object SitePermissions {
             runCatching { request.deny() }
             return
         }
+        val appContext = AppContext.getOrNull()
+        val origin = request.origin
+        if (appContext != null && !origin.isNullOrBlank()) {
+            val decisions = wanted.map { SitePermissionStore.get(appContext, origin, it) }
+            if (decisions.any { it == SitePermissionStore.Decision.BLOCK }) {
+                runCatching { request.deny() }
+                return
+            }
+            if (decisions.all { it == SitePermissionStore.Decision.ALLOW }) {
+                val android = buildList {
+                    if (CefriumPermission.CAMERA in wanted) add(Manifest.permission.CAMERA)
+                    if (CefriumPermission.MICROPHONE in wanted) {
+                        add(Manifest.permission.RECORD_AUDIO)
+                        add(Manifest.permission.MODIFY_AUDIO_SETTINGS)
+                    }
+                    if (CefriumPermission.GEOLOCATION in wanted) {
+                        add(Manifest.permission.ACCESS_FINE_LOCATION)
+                        add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                    }
+                }
+                SitePermissionPrompts.ensureAndroidPermissions(session, android) { ok ->
+                    runCatching { if (ok) request.grant() else request.deny() }
+                }
+                return
+            }
+        }
         val camera = CefriumPermission.CAMERA in wanted
         val microphone = CefriumPermission.MICROPHONE in wanted
         val location = CefriumPermission.GEOLOCATION in wanted
@@ -32,7 +58,7 @@ object SitePermissions {
             "usar tu micrófono".takeIf { microphone },
             "conocer tu ubicación".takeIf { location }
         ).joinToString(" y ")
-        val host = SitePermissionPrompts.host(request.origin)
+        val host = SitePermissionPrompts.host(origin)
         var answered = false
         fun deny() { if (!answered) { answered = true; runCatching { request.deny() } } }
         val shown = SitePermissionPrompts.ask(session, "$host quiere $what.",

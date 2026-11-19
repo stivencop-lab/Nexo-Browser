@@ -46,6 +46,8 @@ object PageBridge {
     private val states = WeakHashMap<EngineSession, State>()
 
     @Volatile private var darkReader: String? = null
+    /** Notificación ligera del marco principal al desplazarse (solo UI del dock adaptable). */
+    @Volatile var onScrollDirection: ((EngineSession, Boolean, Int) -> Unit)? = null
 
     private fun state(session: EngineSession) = states.getOrPut(session) { State() }
 
@@ -75,6 +77,7 @@ object PageBridge {
         when (type) {
             "video_state" -> if (isMainFrame) videoState(session, json)
             "media_state" -> mediaState(session, state, frame, json)
+            "scroll_dir" -> if (isMainFrame) onScrollDirection?.invoke(session, json.optString("dir") == "down", json.optInt("y", 0))
             else -> captions(session, state, frame, json)
         }
     }
