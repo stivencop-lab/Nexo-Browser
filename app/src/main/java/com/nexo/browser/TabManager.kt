@@ -183,17 +183,26 @@ object TabManager {
         return tab
     }
 
-    /** Pestaña normal traída de la app anterior: se añade al final, sin abrirla hasta que se use. */
-    fun importTab(url: String, title: String, groupName: String?, desktopMode: Boolean) {
-        if (!UrlSafety.isWebUrl(url)) return
-        tabs += BrowserTab(
+    /** Pestaña normal traída de un respaldo o espacio de trabajo: se añade al final sin abrir sesión Chromium hasta usarse. */
+    fun importTab(
+        url: String,
+        title: String,
+        groupName: String?,
+        desktopMode: Boolean,
+        pinned: Boolean = false
+    ): BrowserTab? {
+        if (!UrlSafety.isWebUrl(url)) return null
+        val tab = BrowserTab(
             url = url,
             title = title.ifBlank { url },
             groupName = TabGroupRules.name(groupName),
-            desktopMode = desktopMode
+            desktopMode = desktopMode,
+            pinned = pinned
         )
+        tabs += tab
         listener?.onTabCountChanged(tabs.size)
         persist()
+        return tab
     }
 
     fun applyNetwork(id: String, profile: TabNetworkProfile?) {

@@ -15,14 +15,19 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.nexo.browser.reader.NexoReader
+import com.nexo.browser.reader.OfflineArticleStore
+import com.nexo.browser.workspace.BookmarkStore
+import com.nexo.browser.workspace.WorkspaceStore
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Native rendering of the supplied Nexo prototype; it never fabricates protection counters. */
+/** Native rendering of Nexo Start Page with customizable Nexo Workspace blocks; never fabricates protection counters. */
 @SuppressLint("ViewConstructor")
 class StartPageView(
     private val activity: Activity,
@@ -30,12 +35,69 @@ class StartPageView(
     private val onPrivate: () -> Unit,
     private val onShield: () -> Unit,
     private val onExtensions: () -> Unit,
-    /** Accesos de Nexo: "downloads", "history", "burner", "settings". */
+    /** Accesos de Nexo: "downloads", "history", "burner", "settings", "bookmarks", "workspaces", "reader_offline". */
     private val onAction: (String) -> Unit = {}
 ) : ScrollView(activity) {
+    /** Configuración modular de bloques visibles en la página de inicio. */
+    data class StartPageConfig(
+        val showQuickAccess: Boolean = true,
+        val showBookmarks: Boolean = true,
+        val showWorkspaces: Boolean = true,
+        val showRecentGroups: Boolean = true,
+        val showOfflineReader: Boolean = true,
+        val showPrivacyCard: Boolean = true
+    )
+
     companion object {
         private const val PREFS = "nexo_quick_access"
         private const val MAX_TILES = 11
+
+        fun readConfig(context: Context): StartPageConfig {
+            val sp = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            return StartPageConfig(
+                showQuickAccess = sp.getBoolean("cfg_quick_access", true),
+                showBookmarks = sp.getBoolean("cfg_bookmarks", true),
+                showWorkspaces = sp.getBoolean("cfg_workspaces", true),
+                showRecentGroups = sp.getBoolean("cfg_recent_groups", true),
+                showOfflineReader = sp.getBoolean("cfg_offline_reader", true),
+                showPrivacyCard = sp.getBoolean("cfg_privacy_card", true)
+            )
+        }
+
+        fun saveConfig(context: Context, config: StartPageConfig) {
+            context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean("cfg_quick_access", config.showQuickAccess)
+                .putBoolean("cfg_bookmarks", config.showBookmarks)
+                .putBoolean("cfg_workspaces", config.showWorkspaces)
+                .putBoolean("cfg_recent_groups", config.showRecentGroups)
+                .putBoolean("cfg_offline_reader", config.showOfflineReader)
+                .putBoolean("cfg_privacy_card", config.showPrivacyCard)
+                .apply()
+        }
+
+        /**
+         * Reordena un acceso web desplazándolo [delta] posiciones (-1 antes, +1 después).
+         * Si el acceso no estaba todavía en la lista personalizada, incorpora el orden visible
+         * actual de accesos web para que el desplazamiento sea determinista.
+         */
+        fun reorderShortcut(
+            currentCustom: List<String>,
+            visibleWebOrigins: List<String>,
+            targetOrigin: String,
+            delta: Int
+        ): List<String> {
+            val base = LinkedHashSet<String>()
+            currentCustom.forEach { base.add(it) }
+            visibleWebOrigins.forEach { base.add(it) }
+            val list = base.toMutableList()
+            val idx = list.indexOf(targetOrigin)
+            if (idx < 0) return currentCustom
+            val targetIdx = (idx + delta).coerceIn(0, list.lastIndex)
+            if (targetIdx == idx) return list.take(24)
+            list.removeAt(idx)
+            list.add(targetIdx, targetOrigin)
+            return list.take(24)
+        }
 
         /** Fija el origen de [url] en los accesos rápidos. Devuelve su nombre o null si ya estaba. */
         fun pin(context: Context, url: String): String? {
@@ -140,6 +202,7 @@ class StartPageView(
         renderedPrivate = isPrivate
         renderedShieldToken = shieldToken()
         val p = ThemeManager.palette(activity)
+        val cfg = readConfig(activity)
         setBackgroundColor(p.background); content.removeAllViews(); content.setPadding(dp(20f), dp(16f), dp(20f), dp(16f))
         val top = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
         val badge = ExtensionManager.phantomBadge(global = true)
@@ -160,6 +223,14 @@ class StartPageView(
             }, params().apply { width = ViewGroup.LayoutParams.WRAP_CONTENT; marginStart = dp(8f) })
         })
         top.addView(View(activity), params(0, dp(1f)).apply { weight = 1f })
+        if (!isPrivate) {
+            top.addView(ImageView(activity).apply {
+                setImageResource(R.drawable.ic_menu_settings); imageTintList = ColorStateList.valueOf(p.muted)
+                setPadding(dp(12f), dp(12f), dp(12f), dp(12f)); background = ThemeManager.ripple(activity, bento(), 22f)
+                contentDescription = "Personalizar página de inicio"; isClickable = true; isFocusable = true
+                setOnClickListener { openCustomizer() }
+            }, params(dp(48f), dp(48f)).apply { marginEnd = dp(8f) })
+        }
         top.addView(ImageView(activity).apply {
             setImageResource(R.drawable.ic_menu_private); imageTintList = ColorStateList.valueOf(p.muted)
             setPadding(dp(12f), dp(12f), dp(12f), dp(12f)); background = ThemeManager.ripple(activity, bento(), 22f)
@@ -178,33 +249,211 @@ class StartPageView(
         }, params(dp(64f), dp(64f)).apply { topMargin = dp(28f); bottomMargin = dp(16f) })
         content.addView(text(if (isPrivate) "Navegación privada" else "Nexo", 34f, p.text, true).apply { gravity = Gravity.START })
         content.addView(text(if (isPrivate) "Un espacio separado para navegar" else "Navegación rápida, privacidad bajo tu control", 12f, p.muted).apply {
-            gravity = Gravity.START; setPadding(0, dp(6f), 0, dp(24f))
+            gravity = Gravity.START; setPadding(0, dp(6f), 0, dp(20f))
         }, params())
         if (isPrivate) {
             content.addView(text("Estas pestañas no se guardan en el historial ni en las miniaturas. Sus cookies se eliminan al cerrar todas las pestañas privadas. Los archivos que descargues permanecen guardados. Tu proveedor de internet y los sitios que visitas pueden seguir viendo tu actividad.", 14f, p.muted).apply {
                 setLineSpacing(0f, 1.2f); setPadding(dp(4f), dp(16f), dp(4f), dp(16f))
             }, params())
         } else {
-            val heading = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
-            heading.addView(text("Accesos rápidos", 13f, p.muted, true), params(0).apply { weight = 1f })
-            heading.addView(text("Editar", 12f, if (p.isDark) androidx.core.graphics.ColorUtils.blendARGB(p.accent, p.text, 0.5f) else p.accent, true).apply {
-                minimumHeight = dp(48f); gravity = Gravity.CENTER; setPadding(dp(12f), 0, 0, 0)
-                isClickable = true; isFocusable = true; setOnClickListener { editLinks() }
-            })
-            content.addView(heading, params())
-            val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
-            val links = allLinks().filterNot { it.id in hidden }.take(MAX_TILES) + Link("Añadir", kind = "add")
-            val availableWidth = (width / resources.displayMetrics.density).takeIf { it > 0 }
-                ?: resources.configuration.screenWidthDp.toFloat()
-            val columns = UiLayout.actionColumns(minOf(availableWidth, UiLayout.CONTENT_MAX_DP.toFloat()) - 40f, resources.configuration.fontScale)
-            links.chunked(columns).forEach { group ->
-                val row = LinearLayout(activity).apply { weightSum = columns.toFloat() }
-                group.forEach { row.addView(tile(it), params(0).apply { weight = 1f }) }
-                content.addView(row, params())
+            val accentLink = if (p.isDark) androidx.core.graphics.ColorUtils.blendARGB(p.accent, p.text, 0.5f) else p.accent
+
+            if (cfg.showQuickAccess) {
+                val heading = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
+                heading.addView(text("Accesos rápidos", 13f, p.muted, true), params(0).apply { weight = 1f })
+                heading.addView(text("Editar", 12f, accentLink, true).apply {
+                    minimumHeight = dp(48f); gravity = Gravity.CENTER; setPadding(dp(12f), 0, 0, 0)
+                    isClickable = true; isFocusable = true; setOnClickListener { editLinks() }
+                })
+                content.addView(heading, params())
+                val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
+                val links = allLinks().filterNot { it.id in hidden }.take(MAX_TILES) + Link("Añadir", kind = "add")
+                val availableWidth = (width / resources.displayMetrics.density).takeIf { it > 0 }
+                    ?: resources.configuration.screenWidthDp.toFloat()
+                val columns = UiLayout.actionColumns(minOf(availableWidth, UiLayout.CONTENT_MAX_DP.toFloat()) - 40f, resources.configuration.fontScale)
+                links.chunked(columns).forEach { group ->
+                    val row = LinearLayout(activity).apply { weightSum = columns.toFloat() }
+                    group.forEach { row.addView(tile(it), params(0).apply { weight = 1f }) }
+                    content.addView(row, params())
+                }
+            }
+
+            // Franja compacta de acceso a Nexo Workspace (Favoritos, Espacios, Lectura sin conexión).
+            val bookmarks = if (cfg.showBookmarks) BookmarkStore.list(activity) else emptyList()
+            val workspaces = if (cfg.showWorkspaces) WorkspaceStore.list(activity) else emptyList()
+            val offlineArticles = if (cfg.showOfflineReader) {
+                OfflineArticleStore.list(OfflineArticleStore.directory(activity))
+            } else emptyList()
+
+            if (cfg.showBookmarks || cfg.showWorkspaces || cfg.showOfflineReader) {
+                val quickChips = ArrayList<View>()
+                if (cfg.showBookmarks) {
+                    val label = if (bookmarks.isEmpty()) "Favoritos" else "Favoritos (${bookmarks.size})"
+                    quickChips.add(NexoUi.chip(activity, label, selected = false) { onAction("bookmarks") })
+                }
+                if (cfg.showWorkspaces) {
+                    val label = if (workspaces.isEmpty()) "Espacios" else "Espacios (${workspaces.size})"
+                    quickChips.add(NexoUi.chip(activity, label, selected = false) { onAction("workspaces") })
+                }
+                if (cfg.showOfflineReader) {
+                    val label = if (offlineArticles.isEmpty()) "Sin conexión" else "Sin conexión (${offlineArticles.size})"
+                    quickChips.add(NexoUi.chip(activity, label, selected = false) { onAction("reader_offline") })
+                }
+                if (quickChips.isNotEmpty()) {
+                    content.addView(NexoUi.chipRow(activity, quickChips), params().apply { topMargin = dp(10f) })
+                }
+            }
+
+            if (cfg.showBookmarks && bookmarks.isNotEmpty()) {
+                content.addView(sectionHeading("Favoritos", "Ver todos", accentLink) { onAction("bookmarks") }, params().apply { topMargin = dp(14f) })
+                content.addView(horizontalCards(bookmarks.take(8).map { bm ->
+                    val host = runCatching { android.net.Uri.parse(bm.url).host }.getOrNull().orEmpty().removePrefix("www.")
+                    compactCard(bm.title, "${bm.folder} · ${host.ifBlank { bm.url }}", R.drawable.ic_menu_bookmark) {
+                        onOpen(bm.url)
+                    }
+                }), params())
+            }
+
+            if (cfg.showWorkspaces && workspaces.isNotEmpty()) {
+                content.addView(sectionHeading("Espacios de trabajo", "Gestionar", accentLink) { onAction("workspaces") }, params().apply { topMargin = dp(14f) })
+                content.addView(horizontalCards(workspaces.take(8).map { ws ->
+                    compactCard(ws.name, ws.groupSummary(), R.drawable.ic_menu_workspace) {
+                        val count = WorkspaceStore.restoreLazily(ws)
+                        Toastish.show(activity, "Espacio «${ws.name}» abierto ($count pestañas).")
+                    }
+                }), params())
+            }
+
+            if (cfg.showRecentGroups) {
+                val groups = TabManager.allTabs()
+                    .filter { !it.isPrivate && !it.groupName.isNullOrBlank() }
+                    .groupBy { it.groupName!!.trim() }
+                    .entries.toList()
+                if (groups.isNotEmpty()) {
+                    content.addView(sectionHeading("Grupos activos", null, accentLink) {}, params().apply { topMargin = dp(14f) })
+                    val chips = groups.take(10).map { (name, tabs) ->
+                        NexoUi.chip(activity, "$name (${tabs.size})", selected = false, dotColor = TabGroupRules.color(name)) {
+                            TabManager.switchTo(tabs.first().id)
+                        }
+                    }
+                    content.addView(NexoUi.chipRow(activity, chips), params())
+                }
+            }
+
+            if (cfg.showOfflineReader && offlineArticles.isNotEmpty()) {
+                content.addView(sectionHeading("Lectura sin conexión", "Ver todos", accentLink) { onAction("reader_offline") }, params().apply { topMargin = dp(14f) })
+                content.addView(horizontalCards(offlineArticles.take(6).map { art ->
+                    val sub = buildString {
+                        if (art.siteName.isNotBlank()) append(art.siteName).append(" · ")
+                        append("${art.readingMinutes} min")
+                    }
+                    compactCard(art.title, sub, R.drawable.ic_menu_reader) {
+                        NexoReader.showArticleDialog(activity, art, openedOffline = true, onOpenUrl = onOpen)
+                    }
+                }), params())
             }
         }
         content.addView(View(activity), params(1, 0).apply { weight = 1f })
-        content.addView(privacyCard(), params().apply { topMargin = dp(24f) })
+        if (isPrivate || cfg.showPrivacyCard) {
+            content.addView(privacyCard(), params().apply { topMargin = dp(24f) })
+        }
+    }
+
+    private fun sectionHeading(title: String, actionLabel: String?, accentColor: Int, onActionClick: () -> Unit): LinearLayout {
+        val p = ThemeManager.palette(activity)
+        return LinearLayout(activity).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(text(title, 13f, p.muted, true), params(0).apply { weight = 1f })
+            if (!actionLabel.isNullOrBlank()) {
+                addView(text(actionLabel, 12f, accentColor, true).apply {
+                    minimumHeight = dp(48f); gravity = Gravity.CENTER; setPadding(dp(12f), 0, 0, 0)
+                    isClickable = true; isFocusable = true; setOnClickListener { onActionClick() }
+                })
+            }
+        }
+    }
+
+    private fun horizontalCards(cards: List<View>): HorizontalScrollView {
+        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        cards.forEachIndexed { idx, card ->
+            row.addView(card, LinearLayout.LayoutParams(dp(188f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                if (idx > 0) marginStart = dp(10f)
+            })
+        }
+        return HorizontalScrollView(activity).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(row)
+        }
+    }
+
+    private fun compactCard(title: String, subtitle: String, iconRes: Int, onClick: () -> Unit): View {
+        val p = ThemeManager.palette(activity)
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            minimumHeight = dp(74f)
+            setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
+            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, 16f, p.outline), 16f)
+            isClickable = true; isFocusable = true
+            contentDescription = "$title. $subtitle"
+            setOnClickListener { onClick() }
+            addView(LinearLayout(activity).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(ImageView(activity).apply {
+                    setImageResource(iconRes)
+                    imageTintList = ColorStateList.valueOf(p.accent)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, params(dp(16f), dp(16f)).apply { marginEnd = dp(8f) })
+                addView(text(title, 13f, p.text, true).apply {
+                    maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                }, params(0).apply { weight = 1f })
+            })
+            addView(text(subtitle, 11.5f, p.muted).apply {
+                maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(6f), 0, 0)
+            })
+        }
+    }
+
+    private fun openCustomizer() {
+        var cfg = readConfig(activity)
+        val body = NexoUi.column(activity)
+        fun update(next: StartPageConfig) {
+            cfg = next
+            saveConfig(activity, next)
+            render(renderedPrivate)
+        }
+        body.addView(NexoUi.switchRow(activity, "Accesos rápidos", "Cuadrícula de sitios fijados y frecuentes", cfg.showQuickAccess) {
+            update(cfg.copy(showQuickAccess = it))
+        })
+        body.addView(NexoUi.switchRow(activity, "Favoritos", "Franja de sitios guardados en Nexo Workspace", cfg.showBookmarks) {
+            update(cfg.copy(showBookmarks = it))
+        })
+        body.addView(NexoUi.switchRow(activity, "Espacios de trabajo", "Colecciones de pestañas y grupos con carga perezosa", cfg.showWorkspaces) {
+            update(cfg.copy(showWorkspaces = it))
+        })
+        body.addView(NexoUi.switchRow(activity, "Grupos activos", "Acceso directo a los grupos de pestañas abiertos", cfg.showRecentGroups) {
+            update(cfg.copy(showRecentGroups = it))
+        })
+        body.addView(NexoUi.switchRow(activity, "Lectura sin conexión", "Artículos guardados con Nexo Reader", cfg.showOfflineReader) {
+            update(cfg.copy(showOfflineReader = it))
+        })
+        body.addView(NexoUi.switchRow(activity, "Resumen de PhantomShield", "Tarjeta inferior con estado real de protección", cfg.showPrivacyCard) {
+            update(cfg.copy(showPrivacyCard = it))
+        })
+        var sheet: android.app.Dialog? = null
+        body.addView(NexoUi.button(activity, "Elegir accesos rápidos visibles") {
+            sheet?.dismiss()
+            editLinks()
+        }, NexoUi.buttonParams(activity, 14f))
+        sheet = NexoSheets.show(
+            activity,
+            NexoSheets.column(
+                activity,
+                NexoSheets.header(activity, "Personalizar inicio", "Activa o desactiva los bloques de Nexo Workspace"),
+                body
+            )
+        )
     }
 
     private fun tile(link: Link): View {
@@ -368,13 +617,40 @@ class StartPageView(
         dialog.show()
     }
 
-    /** Pulsación larga en un acceso: abrir en otra pestaña o quitarlo de inicio. */
+    private fun moveShortcut(targetUrl: String, delta: Int) {
+        val currentCustom = buildList {
+            val saved = runCatching { JSONArray(prefs.getString("custom", "[]")) }.getOrDefault(JSONArray())
+            for (i in 0 until saved.length()) {
+                val u = BrowserPagePresentation.shortcut(saved.optJSONObject(i)?.optString("url").orEmpty())?.origin
+                if (u != null) add(u)
+            }
+        }
+        val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
+        val visibleWeb = allLinks().filter { it.kind == "web" && it.id !in hidden }.mapNotNull {
+            BrowserPagePresentation.shortcut(it.url)?.origin
+        }
+        val origin = BrowserPagePresentation.shortcut(targetUrl)?.origin ?: return
+        val updated = reorderShortcut(currentCustom, visibleWeb, origin, delta)
+        val arr = JSONArray()
+        updated.forEach { arr.put(JSONObject().put("url", it)) }
+        prefs.edit().putString("custom", arr.toString()).apply()
+        render(renderedPrivate)
+    }
+
+    /** Pulsación larga en un acceso: abrir en otra pestaña, reordenar, guardar o quitarlo de inicio. */
     private fun tileOptions(link: Link) {
         var sheet: android.app.Dialog? = null
         val dismiss = { sheet?.dismiss(); Unit }
         val actions = listOf(
             SheetAction(R.drawable.ic_menu_open, "Abrir en pestaña nueva") { TabManager.createTab(link.url) },
             SheetAction(R.drawable.ic_menu_private, "Abrir en pestaña privada") { TabManager.createTab(link.url, isPrivate = true) },
+            SheetAction(R.drawable.ic_menu_bookmark, "Guardar en favoritos") {
+                BookmarkStore.add(activity, link.label, link.url)
+                Toastish.show(activity, "«${link.label}» guardado en favoritos")
+                render(renderedPrivate)
+            },
+            SheetAction(R.drawable.ic_nav_up, "Mover antes") { moveShortcut(link.url, -1) },
+            SheetAction(R.drawable.ic_nav_down, "Mover después") { moveShortcut(link.url, +1) },
             SheetAction(R.drawable.ic_menu_close, "Quitar de inicio", danger = true) {
                 prefs.edit().putStringSet("hidden", prefs.getStringSet("hidden", emptySet()).orEmpty() + link.id).apply()
                 render(renderedPrivate)

@@ -199,7 +199,8 @@ class OmniboxSuggestions(
         "nexo_ai" -> R.drawable.ic_menu_ai
         "extensions" -> R.drawable.ic_menu_extensions
         "reader_mode", "offline_articles" -> R.drawable.ic_menu_reader
-        "bookmarks" -> R.drawable.ic_menu_bookmark
+        "bookmarks", "bookmark_page" -> R.drawable.ic_menu_bookmark
+        "workspaces" -> R.drawable.ic_menu_workspace
         "nav_customize", "tab_tools" -> R.drawable.ic_tab_tools
         else -> R.drawable.ic_menu_open
     }

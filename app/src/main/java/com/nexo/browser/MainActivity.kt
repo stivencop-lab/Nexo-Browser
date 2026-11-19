@@ -416,7 +416,11 @@ class MainActivity :
             omnibox.requestFocus()
         }
 
-        suggestions = OmniboxSuggestions(this, findViewById(R.id.omniboxSuggestions)) { pick ->
+        suggestions = OmniboxSuggestions(
+            activity = this,
+            panel = findViewById(R.id.omniboxSuggestions),
+            bookmarksProvider = { com.nexo.browser.workspace.BookmarkStore.toCommandCandidates(applicationContext) }
+        ) { pick ->
             handleCommandSuggestion(pick)
         }
 
@@ -594,6 +598,9 @@ class MainActivity :
             "tab_tools" -> SiteControlSheet.show(this)
             "reader_mode" -> com.nexo.browser.reader.NexoReader.openActiveTab(this)
             "offline_articles" -> com.nexo.browser.reader.NexoReader.openSavedArticlesSheet(this) { viewModel.navigate(it) }
+            "bookmarks" -> openScreen(BookmarksActivity::class.java)
+            "bookmark_page" -> toggleCurrentBookmark()
+            "workspaces" -> com.nexo.browser.workspace.WorkspaceStore.showSheet(this) { refreshStartPageIfVisible() }
         }
     }
 
@@ -611,6 +618,10 @@ class MainActivity :
         val onPage = current != null && !BrowserPrefs.isNexoHome(current.url)
         val reopen = TabManager.lastClosed()
         val actions = listOf(
+            SheetAction(R.drawable.ic_menu_bookmark, "Favoritos") { openScreen(BookmarksActivity::class.java) },
+            SheetAction(R.drawable.ic_menu_workspace, "Espacios") {
+                com.nexo.browser.workspace.WorkspaceStore.showSheet(this) { refreshStartPageIfVisible() }
+            },
             SheetAction(R.drawable.ic_menu_history, "Historial") { openScreen(HistoryActivity::class.java) },
             SheetAction(R.drawable.ic_menu_download, "Descargas", active = DownloadStore.activeDownloads().isNotEmpty()) {
                 openScreen(DownloadsActivity::class.java)
@@ -658,6 +669,20 @@ class MainActivity :
                 this@MainActivity, "Menú de Nexo",
                 if (BrowserPrefs.isNexoHome(current?.url)) "Página de inicio" else current?.url?.let { displayUrl(it) }
             ), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (onPage && !current.isPrivate && UrlSafety.isWebUrl(current.url)) {
+                val bookmarked = com.nexo.browser.workspace.BookmarkStore.isBookmarked(this@MainActivity, current.url)
+                addView(ImageButton(this@MainActivity).apply {
+                    setImageResource(R.drawable.ic_menu_bookmark)
+                    contentDescription = if (bookmarked) "Quitar de favoritos" else "Guardar en favoritos"
+                    ThemeManager.styleIconButton(this@MainActivity, this, active = bookmarked)
+                    setOnClickListener {
+                        dismiss()
+                        toggleCurrentBookmark()
+                    }
+                }, LinearLayout.LayoutParams((48 * resources.displayMetrics.density).toInt(), (48 * resources.displayMetrics.density).toInt()).apply {
+                    marginEnd = (4 * resources.displayMetrics.density).toInt()
+                })
+            }
             addView(ImageButton(this@MainActivity).apply {
                 setImageResource(R.drawable.ic_menu_close)
                 contentDescription = "Cerrar menú"
@@ -882,7 +907,35 @@ class MainActivity :
             "history" -> openScreen(HistoryActivity::class.java)
             "burner" -> BurnerMailbox.open(this)
             "settings" -> openScreen(SettingsActivity::class.java)
+            "bookmarks" -> openScreen(BookmarksActivity::class.java)
+            "workspaces" -> com.nexo.browser.workspace.WorkspaceStore.showSheet(this) { refreshStartPageIfVisible() }
+            "reader_offline" -> com.nexo.browser.reader.NexoReader.openSavedArticlesSheet(this) { viewModel.navigate(it) }
         }
+    }
+
+    private fun refreshStartPageIfVisible() {
+        val tab = TabManager.activeTab() ?: return
+        if (BrowserPrefs.isNexoHome(tab.url) && startPage.visibility == View.VISIBLE) {
+            startPage.render(tab.isPrivate)
+        }
+    }
+
+    private fun toggleCurrentBookmark() {
+        val tab = TabManager.activeTab() ?: return
+        if (tab.isPrivate) {
+            Toast.makeText(this, "Las páginas privadas no se guardan en favoritos", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (BrowserPrefs.isNexoHome(tab.url) || !UrlSafety.isWebUrl(tab.url)) {
+            Toast.makeText(this, "Abre una página web para guardarla en favoritos", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val added = com.nexo.browser.workspace.BookmarkStore.toggle(this, tab.title, tab.url)
+        Toast.makeText(
+            this,
+            if (added) "Guardado en favoritos" else "Eliminado de favoritos",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     /** Añade el sitio actual a los accesos rápidos de la página de inicio. */
@@ -1234,6 +1287,7 @@ class MainActivity :
             NavConfig.Action.SHIELD -> openShieldPanel()
             NavConfig.Action.EXTENSIONS -> openScreen(ExtensionsActivity::class.java)
             NavConfig.Action.READER -> com.nexo.browser.reader.NexoReader.openActiveTab(this)
+            NavConfig.Action.BOOKMARKS -> openScreen(BookmarksActivity::class.java)
         }
     }
 

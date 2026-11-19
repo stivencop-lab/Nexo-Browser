@@ -34,7 +34,8 @@ object NavConfig {
         AI("ai", "Nexo AI"),
         SHIELD("shield", "PhantomShield"),
         EXTENSIONS("extensions", "Extensiones"),
-        READER("reader", "Modo lectura");
+        READER("reader", "Modo lectura"),
+        BOOKMARKS("bookmarks", "Favoritos");
 
         companion object {
             fun fromId(raw: String?): Action? =
@@ -130,5 +131,6 @@ object NavConfig {
         Action.SHIELD -> R.drawable.ic_menu_shield
         Action.EXTENSIONS -> R.drawable.ic_menu_extensions
         Action.READER -> R.drawable.ic_menu_reader
+        Action.BOOKMARKS -> R.drawable.ic_menu_bookmark
     }
 }
