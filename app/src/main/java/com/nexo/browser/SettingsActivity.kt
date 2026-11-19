@@ -535,9 +535,9 @@ class SettingsActivity : Activity() {
 
     /** Estado del motor y últimos eventos, para copiar y enviar sin adb. */
     private fun showEngineDiagnostics() {
-        val report = com.nexo.browser.engine.cefrium.EngineDiagnostics.report(this)
+        var currentReport = com.nexo.browser.engine.cefrium.EngineDiagnostics.report(this)
         val body = TextView(this).apply {
-            text = report
+            text = currentReport
             setTextIsSelectable(true)
             textSize = 12f
             typeface = android.graphics.Typeface.MONOSPACE
@@ -550,11 +550,29 @@ class SettingsActivity : Activity() {
             .setView(android.widget.ScrollView(this).apply { addView(body) })
             .setPositiveButton("Copiar") { _, _ ->
                 val clipboard = getSystemService(android.content.ClipboardManager::class.java)
-                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Diagnóstico de Nexo", report))
-                Toast.makeText(this, "Diagnóstico copiado", Toast.LENGTH_SHORT).show()
+                clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Diagnóstico de Nexo", currentReport))
+                Toast.makeText(this, "Diagnóstico saneado copiado", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Compartir") { _, _ ->
+                val share = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "Diagnóstico técnico de Nexo Browser")
+                    putExtra(Intent.EXTRA_TEXT, currentReport)
+                }
+                runCatching { startActivity(Intent.createChooser(share, "Exportar diagnóstico saneado")) }
             }
             .setNegativeButton("Cerrar", null)
             .show()
+
+        val activeSession = TabManager.activeSession() as? com.nexo.browser.engine.cefrium.CefriumEngineSession
+        com.nexo.browser.engine.cefrium.EngineDiagnostics.probeActivePageMetrics(activeSession) { perfLine ->
+            if (!perfLine.isNullOrBlank() && !isFinishing && !isDestroyed) {
+                runOnUiThread {
+                    currentReport = com.nexo.browser.engine.cefrium.EngineDiagnostics.report(this, perfLine)
+                    body.text = currentReport
+                }
+            }
+        }
     }
 
     private fun aboutText(): String {
