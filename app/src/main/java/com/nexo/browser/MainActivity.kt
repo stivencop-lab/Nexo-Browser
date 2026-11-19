@@ -475,7 +475,11 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_download, "Descargas", active = DownloadStore.activeDownloads().isNotEmpty()) {
                 openScreen(DownloadsActivity::class.java)
             },
-            SheetAction(R.drawable.ic_menu_translate, "Traducir") {
+            SheetAction(
+                R.drawable.ic_menu_translate,
+                if (TranslatorManager.isTranslated(current?.session)) "Restaurar original" else "Traducir",
+                active = TranslatorManager.isTranslated(current?.session)
+            ) {
                 TranslatorManager.translateActive(this) { _, message ->
                     runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
                 }
@@ -491,6 +495,12 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_pdf, "Guardar PDF") { savePageAsPdf() },
             if (reopen != null) SheetAction(R.drawable.ic_menu_reopen, "Reabrir cerrada") { TabManager.reopenClosed() }
             else SheetAction(R.drawable.ic_tab_tools, "Herramientas") { TabTools.show(this) },
+            SheetAction(
+                R.drawable.ic_menu_open,
+                "Nexo AI",
+                active = com.nexo.browser.ai.NexoAiConfig.read(this).enabled,
+                subtitle = "Asistente de página, selección y pestañas"
+            ) { com.nexo.browser.ai.NexoAiSheet.show(this) },
             SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) },
             SheetAction(
                 R.drawable.ic_menu_update,

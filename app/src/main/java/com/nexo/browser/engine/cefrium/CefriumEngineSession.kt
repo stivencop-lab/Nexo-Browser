@@ -538,6 +538,7 @@ class CefriumEngineSession internal constructor(
             // Documento nuevo: sus medios y sus marcos los volverá a informar el puente.
             onMediaState(active = false, playing = false, title = null)
             com.nexo.browser.PageBridge.onNewDocument(this@CefriumEngineSession)
+            com.nexo.browser.TranslatorManager.forget(this@CefriumEngineSession)
             observer?.onPageStart(this@CefriumEngineSession, url ?: currentUrl.orEmpty())
         }
 

@@ -49,6 +49,10 @@ object TabTools {
             sheet.dismiss()
             com.nexo.browser.media.NexoMediaEngine.showSheet(activity)
         })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_open, "Nexo AI", "Resumir página, analizar selección, tablas y comparar pestañas") {
+            sheet.dismiss()
+            com.nexo.browser.ai.NexoAiSheet.show(activity)
+        })
 
         // --- Grupo ---------------------------------------------------------
         body.addView(NexoUi.section(activity, "Grupo de esta pestaña"))
