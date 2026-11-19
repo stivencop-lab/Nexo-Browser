@@ -88,13 +88,19 @@ object CaptionsUi {
             pip -> (size * 0.72f).coerceAtLeast(10f)
             else -> size
         }
-        val style = "$textSize|$background|$color|$maxLines|$hint"
+        val font = com.nexo.browser.media.MediaSitePrefs.captionFont(activity)
+        val style = "$textSize|$background|$color|$maxLines|$hint|$font"
         if (style != appliedStyle || view.tag !== CaptionsUi) {
             appliedStyle = style
             view.tag = CaptionsUi
             view.textSize = textSize
             // El aviso de estado se distingue del subtítulo: cursiva y fondo más ligero.
-            view.typeface = Typeface.create("sans-serif-medium", if (hint) Typeface.ITALIC else Typeface.NORMAL)
+            val fontStyle = if (hint) Typeface.ITALIC else Typeface.NORMAL
+            view.typeface = when (font) {
+                com.nexo.browser.media.MediaSitePrefs.FONT_SERIF -> Typeface.create(Typeface.SERIF, fontStyle)
+                com.nexo.browser.media.MediaSitePrefs.FONT_MONO -> Typeface.create(Typeface.MONOSPACE, fontStyle)
+                else -> Typeface.create("sans-serif-medium", fontStyle)
+            }
             view.setTextColor(color)
             // Sin fondo, un contorno oscuro marcado mantiene el texto legible sobre cualquier imagen.
             if (background == "none") view.setShadowLayer(dp(activity, 2.5f).toFloat(), 0f, 0f, 0xF0000000.toInt())
@@ -256,10 +262,13 @@ object CaptionsUi {
             body.addView(sourceRow)
             renderSource()
         }
-        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Más ajustes", "Claves, servicio de traducción, tamaño y límite") {
-            sheet.dismiss(); showSheet(activity) { onChange() }
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Nexo Media Engine", "Velocidad, salto rápido, tipografía y desplazamiento temporal") {
+            sheet.dismiss(); com.nexo.browser.media.NexoMediaEngine.showSheet(activity) { onChange() }
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(activity, 10f)
+        })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Más ajustes", "Claves, servicio de traducción, tamaño y límite") {
+            sheet.dismiss(); showSheet(activity) { onChange() }
         })
         body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Subtítulos instantáneos de Android",
             "Generados en el teléfono, sin enviar nada · funcionan con audífonos") {

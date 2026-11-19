@@ -97,6 +97,7 @@ class MainActivity :
 
     // Un sitio puso un elemento (normalmente el video) en pantalla completa.
     private var fullScreenActive = false
+    private var fullscreenMediaOverlay: com.nexo.browser.media.NexoMediaEngine.FullscreenOverlay? = null
     private var pendingPipEntry: Runnable? = null
     private var wasBackgrounded = false
 
@@ -258,6 +259,11 @@ class MainActivity :
                 TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true
         }
         browserFrame.onRefresh = { TabManager.reload() }
+        fullscreenMediaOverlay = com.nexo.browser.media.NexoMediaEngine.FullscreenOverlay(
+            activity = this,
+            hostContainer = browserFrame,
+            onOpenPanel = { com.nexo.browser.media.NexoMediaEngine.showSheet(this) { refreshCaptionsUi() } }
+        )
         omnibox = findViewById(R.id.omnibox)
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
@@ -1119,6 +1125,7 @@ class MainActivity :
             if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
 
         setSystemBarsHidden(fullScreenActive && !pip)
+        fullscreenMediaOverlay?.setActive(fullScreenActive && !pip)
         if (hideChrome) startPage.visibility = View.GONE else tab?.let { updateStartPage(it) }
         updateMiniPlayerChip()
         root.requestLayout()
@@ -1952,6 +1959,7 @@ class MainActivity :
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
         PerfLog.detach(this)
+        fullscreenMediaOverlay?.detach()
         pendingPipEntry?.let { pageView.removeCallbacks(it) }
         if (!isInPictureInPictureMode) ExtensionManager.setPipMode(attachedSession, false)
         runCatching { unregisterReceiver(pipControlReceiver) }

@@ -45,6 +45,10 @@ object TabTools {
             sheet.dismiss()
             com.nexo.browser.dark.DarkEngine.showSheet(activity, host)
         })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Nexo Media Engine", "Velocidad, salto rápido, gestos y sincronía de subtítulos") {
+            sheet.dismiss()
+            com.nexo.browser.media.NexoMediaEngine.showSheet(activity)
+        })
 
         // --- Grupo ---------------------------------------------------------
         body.addView(NexoUi.section(activity, "Grupo de esta pestaña"))

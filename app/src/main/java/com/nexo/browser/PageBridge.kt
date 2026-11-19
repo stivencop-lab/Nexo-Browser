@@ -120,14 +120,31 @@ object PageBridge {
         val tab = TabManager.tabForSession(session) ?: return
         val rx = json.optInt("rx", 0)
         val ry = json.optInt("ry", 0)
+        val present = json.optBoolean("present", false)
+        val playing = json.optBoolean("playing", false)
         BrowserMediaController.onVideoState(
             tab.id,
-            json.optBoolean("present", false),
-            json.optBoolean("playing", false),
+            present,
+            playing,
             json.optInt("width", 0),
             json.optInt("height", 0),
             android.graphics.Rect(rx, ry, rx + json.optInt("rw", 0), ry + json.optInt("rh", 0))
         )
+        runCatching {
+            com.nexo.browser.media.NexoMediaEngine.onVideoState(
+                context = AppContext.get(),
+                tabId = tab.id,
+                session = session,
+                host = tab.url,
+                present = present,
+                playing = playing,
+                playbackRate = json.optDouble("rate", 1.0).toFloat(),
+                currentTimeSec = json.optDouble("time", 0.0),
+                durationSec = json.optDouble("duration", 0.0),
+                drmProtected = json.optBoolean("drm", false),
+                hasTextTracks = json.optBoolean("tracks", false)
+            )
+        }
     }
 
     /** Medios con sonido: un marco es dueño; otro sin medios no los borra. */
@@ -275,6 +292,13 @@ object PageBridge {
         return send(cefrium, JSONObject().put("type", "pip_command").put("command", command), "top")
     }
 
+    /** Envía una orden de Nexo Media Engine (velocidad, salto, play/pause o desplazamiento CC). */
+    fun sendMediaCommand(session: EngineSession?, payload: JSONObject): Boolean {
+        val cefrium = cefrium(session) ?: return false
+        val msg = JSONObject(payload.toString()).put("type", "media_command")
+        return send(cefrium, msg)
+    }
+
     fun sendLifecycle(session: EngineSession?, foreground: Boolean): Boolean {
         val cefrium = cefrium(session) ?: return false
         return send(cefrium, JSONObject().put("type", "lifecycle").put("state", if (foreground) "foreground" else "background"))
@@ -321,6 +345,7 @@ object PageBridge {
 
     /** Documento nuevo en el marco principal: sus marcos se vuelven a conectar. */
     fun onNewDocument(session: EngineSession) {
+        TabManager.tabForSession(session)?.id?.let { com.nexo.browser.media.NexoMediaEngine.resetTab(it) }
         val state = states[session] ?: return
         val hadOwner = state.owner != null
         state.frames.clear()
