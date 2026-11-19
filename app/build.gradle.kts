@@ -91,7 +91,7 @@ kotlin {
 }
 
 dependencies {
-    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.21"))
     // Motor web: Chromium 156 embebido (Cefrium, LGPL-3.0). Hashes verificados
     // en gradle/cefrium-0.21.0.sha256. Un módulo nativo por ABI publicada.
     implementation("com.cefrium:cefrium-sdk-core:0.21.0")
