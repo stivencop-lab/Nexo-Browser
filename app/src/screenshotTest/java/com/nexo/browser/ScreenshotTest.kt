@@ -193,4 +193,37 @@ class ScreenshotTest {
         CaptionsUi.pickLanguage(activity, "ko") {}
         dialogShot(null, "captions-languages-dark")
     }
+
+    @Test fun siteControlDark() {
+        seedTabs(*sampleTabs())
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        SiteControlSheet.show(activity)
+        dialogShot(null, "site-control-dark")
+    }
+
+    @Test fun bookmarksDark() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        BrowserPrefs.setTheme(app, BrowserPrefs.THEME_MIDNIGHT)
+        com.nexo.browser.workspace.BookmarkStore.add(app, "Documentación Cefrium", "https://cefrium.com/guides/public-api/", "Desarrollo")
+        com.nexo.browser.workspace.BookmarkStore.add(app, "Android Design", "https://developer.android.com/design", "Diseño")
+        val activity = Robolectric.buildActivity(BookmarksActivity::class.java).setup().get()
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "bookmarks-dark")
+    }
+
+    @Test fun extensionsHubDark() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        BrowserPrefs.setTheme(app, BrowserPrefs.THEME_MIDNIGHT)
+        val activity = Robolectric.buildActivity(ExtensionsActivity::class.java).setup().get()
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "extensions-hub-dark")
+    }
+
+    @Test fun navCustomizerDark() {
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        NavCustomizerSheet.show(activity) {}
+        dialogShot(null, "nav-customizer-dark")
+    }
 }

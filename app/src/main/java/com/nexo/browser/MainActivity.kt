@@ -517,11 +517,13 @@ class MainActivity :
             // Repetir el mismo texto avanza al siguiente resultado.
             if (restart) finder.clear()
             finder.find(term, backwards) { result ->
+                val p = ThemeManager.palette(this)
                 findCount.text = when {
                     result == null -> ""
                     !result.found -> "0/0"
                     else -> "${result.current}/${result.total}"
                 }
+                findCount.setTextColor(if (result != null && !result.found) p.error.color else p.muted)
             }
         }
     }
@@ -1108,12 +1110,20 @@ class MainActivity :
         )
     }
 
+    private fun cleanShareUrl(rawUrl: String): Pair<String, Boolean> {
+        val noCreds = UrlSafety.stripCredentials(rawUrl)
+        val stripped = com.nexo.browser.shield.ShieldPolicy.stripTrackingParams(noCreds)
+        return if (stripped != null && stripped != noCreds) stripped to true else noCreds to false
+    }
+
     private fun shareText(text: String) {
+        val (outText, cleaned) = if (UrlSafety.isWebUrl(text.trim())) cleanShareUrl(text.trim()) else text to false
+        if (cleaned) Toast.makeText(this, "Enlace compartido sin parámetros de rastreo", Toast.LENGTH_SHORT).show()
         suppressAutoPipOnce = true
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra(Intent.EXTRA_TEXT, outText)
             }, "Compartir"
         ))
     }
@@ -1159,14 +1169,29 @@ class MainActivity :
 
     private fun shareCurrent() {
         val tab = TabManager.activeTab() ?: return
+        val (cleanUrl, stripped) = cleanShareUrl(tab.url)
+        if (stripped) Toast.makeText(this, "Enlace compartido sin parámetros de rastreo", Toast.LENGTH_SHORT).show()
         suppressAutoPipOnce = true
         startActivity(Intent.createChooser(
             Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, tab.title)
-                putExtra(Intent.EXTRA_TEXT, "${tab.title}\n${tab.url}")
+                putExtra(Intent.EXTRA_TEXT, "${tab.title}\n$cleanUrl")
             }, "Compartir página"
         ))
+    }
+
+    private fun styleTabToolsButton(tab: BrowserTab?) {
+        val btn = findViewById<ImageButton>(R.id.tabToolsButton)
+        val muted = (tab?.session as? com.nexo.browser.engine.cefrium.CefriumEngineSession)?.isAudioMuted() == true
+        val active = tab != null && (tab.burnerId != null || tab.networkProfile != null || muted)
+        ThemeManager.styleIconButton(this, btn, active)
+        btn.contentDescription = when {
+            muted -> "Control del sitio (audio silenciado)"
+            tab?.burnerId != null -> "Control del sitio (identidad Burner)"
+            tab?.networkProfile != null -> "Control del sitio (ruta de red personalizada)"
+            else -> "Control del sitio"
+        }
     }
 
     private fun applyTheme() {
@@ -1182,7 +1207,7 @@ class MainActivity :
         pageView.setBackgroundColor(p.background)
         ThemeManager.styleEdit(this, omnibox)
         ThemeManager.styleIconButton(this, compactBackButton)
-        ThemeManager.styleIconButton(this, findViewById(R.id.tabToolsButton), TabManager.activeTab()?.let { it.burnerId != null || it.networkProfile != null } == true)
+        styleTabToolsButton(TabManager.activeTab())
         styleMiniPlayerChip()
         ThemeManager.styleTabCounter(this, tabButton)
         ThemeManager.styleFlatButton(this, findViewById(R.id.menuButton))
@@ -1610,7 +1635,7 @@ class MainActivity :
         } else "Navegación privada"
         privateBanner.isClickable = tab.burnerId != null
         privateBanner.contentDescription = if (tab.burnerId != null) "Abrir el buzón de esta identidad Burner" else null
-        ThemeManager.styleIconButton(this, findViewById(R.id.tabToolsButton), tab.burnerId != null || tab.networkProfile != null)
+        styleTabToolsButton(tab)
         if (!omnibox.hasFocus()) renderOmnibox(tab)
         updateStartPage(tab)
         val canBack = TabManager.canGoBackOrPrevious()

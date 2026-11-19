@@ -49,6 +49,9 @@ class SettingsActivity : Activity() {
     private lateinit var forceZoom: Switch
     private lateinit var pullToRefresh: Switch
     private lateinit var dockGestures: Switch
+    private lateinit var navMode: Spinner
+    private lateinit var autoHideBars: Switch
+    private lateinit var customizeNavButton: Button
     private lateinit var parallelDownloads: Switch
     private lateinit var desktopDefault: Switch
     private lateinit var javascript: Switch
@@ -63,6 +66,7 @@ class SettingsActivity : Activity() {
     private lateinit var settingsSearchInput: EditText
     private lateinit var settingsSearchClear: ImageButton
 
+    private val navModes = NavConfig.Mode.entries.map { it.label to it }
     private val textSizes = listOf(80, 90, 100, 110, 120, 135, 150, 175, 200)
     private val autoplayOptions = listOf(
         "Permitir" to BrowserPrefs.AUTOPLAY_ALLOW,
@@ -155,6 +159,9 @@ class SettingsActivity : Activity() {
         forceZoom = findViewById(R.id.forceZoomSwitch)
         pullToRefresh = findViewById(R.id.pullToRefreshSwitch)
         dockGestures = findViewById(R.id.dockGesturesSwitch)
+        navMode = findViewById(R.id.navModeSpinner)
+        autoHideBars = findViewById(R.id.autoHideBarsSwitch)
+        customizeNavButton = findViewById(R.id.customizeNavButton)
         parallelDownloads = findViewById(R.id.parallelDownloadsSwitch)
         desktopDefault = findViewById(R.id.desktopDefaultSwitch)
         javascript = findViewById(R.id.javascriptSwitch)
@@ -193,6 +200,22 @@ class SettingsActivity : Activity() {
             AppUpdater.checkManual(this) { updateAboutAndUpdateSummary() }
         }
         findViewById<Button>(R.id.resetSettingsButton).setOnClickListener { confirmResetDefaults() }
+        customizeNavButton.setOnClickListener {
+            NavCustomizerSheet.show(this) {
+                val currentMode = NavConfig.mode(this)
+                navMode.setSelection(navModes.indexOfFirst { it.second == currentMode }.coerceAtLeast(0))
+                autoHideBars.isChecked = BrowserPrefs.autoHideBars(this)
+                updateDependencies()
+            }
+        }
+        navMode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateDependencies()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {
+                updateDependencies()
+            }
+        }
 
         dns.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -373,6 +396,9 @@ class SettingsActivity : Activity() {
         )
         textSize.adapter = ThemeManager.spinnerAdapter(this, textSizes.map { if (it == 100) "100 % (normal)" else "$it %" })
         autoplay.adapter = ThemeManager.spinnerAdapter(this, autoplayOptions.map { it.first })
+        navMode.adapter = ThemeManager.spinnerAdapter(this, navModes.map { it.first })
+        navMode.setSelection(navModes.indexOfFirst { it.second == NavConfig.mode(this) }.coerceAtLeast(0))
+        autoHideBars.isChecked = BrowserPrefs.autoHideBars(this)
         textSize.setSelection(textSizes.indexOf(BrowserPrefs.textScale(this)).takeIf { it >= 0 } ?: textSizes.indexOf(100))
         autoplay.setSelection(autoplayOptions.indexOfFirst { it.second == BrowserPrefs.autoplay(this) }.coerceAtLeast(0))
         forceZoom.isChecked = BrowserPrefs.forceZoom(this)
@@ -433,6 +459,9 @@ class SettingsActivity : Activity() {
     private fun updateDependencies() {
         strictTracking.isEnabled = tracking.isChecked
         strictTracking.alpha = if (tracking.isChecked) 1f else 0.38f
+        val hasDock = navModes.getOrNull(navMode.selectedItemPosition)?.second != NavConfig.Mode.COMPACT
+        autoHideBars.isEnabled = hasDock
+        autoHideBars.alpha = if (hasDock) 1f else 0.38f
         listOf<View>(findViewById(R.id.configureCaptionsButton), findViewById(R.id.captionsSummary)).forEach {
             it.isEnabled = captionsEnabled.isChecked
             it.alpha = if (captionsEnabled.isChecked) 1f else 0.38f
@@ -468,6 +497,8 @@ class SettingsActivity : Activity() {
         BrowserPrefs.setBackgroundMedia(this, backgroundMedia.isChecked)
         BrowserPrefs.setTextScale(this, textSizes[textSize.selectedItemPosition])
         BrowserPrefs.setAutoplay(this, autoplayOptions[autoplay.selectedItemPosition].second)
+        NavConfig.setMode(this, navModes[navMode.selectedItemPosition].second)
+        BrowserPrefs.setAutoHideBars(this, autoHideBars.isChecked)
         BrowserPrefs.setForceZoom(this, forceZoom.isChecked)
         BrowserPrefs.setPullToRefresh(this, pullToRefresh.isChecked)
         BrowserPrefs.setDockGestures(this, dockGestures.isChecked)
@@ -609,13 +640,13 @@ class SettingsActivity : Activity() {
         styleReadableTree(settingsRoot)
         listOf(
             theme, accent, search, liveTabs,
-            dns, cookies, translatorTarget, textSize, autoplay
+            dns, cookies, translatorTarget, textSize, autoplay, navMode
         ).forEach {
             ThemeManager.styleSpinner(this, it)
         }
         listOf(
             restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
-            forceZoom, pullToRefresh, dockGestures, parallelDownloads, desktopDefault, javascript,
+            forceZoom, pullToRefresh, dockGestures, autoHideBars, parallelDownloads, desktopDefault, javascript,
             strictTracking, safeBrowsing, fingerprinting, queryStripping, clearOnExit, remoteDebug,
             captionsEnabled, dnsStrict, autoUpdate
         ).forEach {
@@ -628,6 +659,7 @@ class SettingsActivity : Activity() {
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton), danger = true)
         ThemeManager.styleButton(this, findViewById(R.id.defaultBrowserButton))
+        ThemeManager.styleButton(this, customizeNavButton)
         ThemeManager.styleButton(this, findViewById(R.id.configureCaptionsButton))
         ThemeManager.styleButton(this, findViewById(R.id.checkUpdatesButton))
         ThemeManager.styleButton(this, findViewById(R.id.perfLogButton))
