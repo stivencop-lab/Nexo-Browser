@@ -1,6 +1,8 @@
 # Auditoría y plan: migración de Nexo a Chromium WebView
 
-> Estado: **fases 1 y 2 implementadas** (ver [§7](#7-decisiones), [§10](#10-estado-de-la-fase-1) y [§11](#11-estado-de-la-fase-2)).
+> **Documento histórico (archivado):** Este análisis evaluó migrar desde GeckoView hacia Android System WebView en `0.30.2`. Finalmente Nexo adoptó **Chromium 156 embebido vía Cefrium (`0.21.0`)**, no System WebView. Consulta [`README.md`](../README.md) y [`docs/CHROMIUM-NATIVE-MIGRATION.md`](CHROMIUM-NATIVE-MIGRATION.md) para la arquitectura vigente.
+>
+> Estado original: **fases 1 y 2 implementadas** (ver [§7](#7-decisiones), [§10](#10-estado-de-la-fase-1) y [§11](#11-estado-de-la-fase-2)).
 > Base revisada: `main` en v0.30.2 (`versionCode 61`), commit `9bcb1ca`.
 
 ## 1. Resumen
