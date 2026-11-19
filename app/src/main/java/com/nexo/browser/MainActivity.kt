@@ -380,12 +380,7 @@ class MainActivity :
         }
 
         suggestions = OmniboxSuggestions(this, findViewById(R.id.omniboxSuggestions)) { pick ->
-            when (pick) {
-                is OmniboxSuggestion.History -> viewModel.navigate(pick.entry.url)
-                is OmniboxSuggestion.Search -> viewModel.navigate(SearchResolver.searchUrl(this, pick.query))
-            }
-            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(omnibox.windowToken, 0)
-            omnibox.clearFocus()
+            handleCommandSuggestion(pick)
         }
 
         omnibox.addTextChangedListener(object : TextWatcher {
@@ -502,10 +497,65 @@ class MainActivity :
     }
 
     private fun navigateOmnibox() {
-        viewModel.navigate(omnibox.text?.toString().orEmpty())
+        val raw = omnibox.text?.toString().orEmpty().trim()
+        if (raw.startsWith("@")) {
+            val localPick = suggestions.firstLocalAction()
+            if (localPick != null) {
+                handleCommandSuggestion(localPick)
+            } else {
+                Toast.makeText(this, "No hay coincidencias locales para $raw", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        viewModel.navigate(raw)
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(omnibox.windowToken, 0)
         omnibox.clearFocus()
+    }
+
+    private fun handleCommandSuggestion(pick: OmniboxSuggestion) {
+        if (pick is OmniboxSuggestion.PrefixHint) {
+            val text = "${pick.scope.prefix} "
+            omnibox.setText(text)
+            omnibox.setSelection(text.length)
+            return
+        }
+        when (pick) {
+            is OmniboxSuggestion.OpenTab -> TabManager.switchTo(pick.tabId)
+            is OmniboxSuggestion.OpenGroup -> TabManager.switchTo(pick.firstTabId)
+            is OmniboxSuggestion.Bookmark -> viewModel.navigate(pick.url)
+            is OmniboxSuggestion.Shortcut -> viewModel.navigate(pick.url)
+            is OmniboxSuggestion.History -> viewModel.navigate(pick.url)
+            is OmniboxSuggestion.Search -> viewModel.navigate(SearchResolver.searchUrl(this, pick.query))
+            is OmniboxSuggestion.Setting -> {
+                suppressAutoPipOnce = true
+                startActivity(Intent(this, SettingsActivity::class.java).putExtra(SettingsActivity.EXTRA_QUERY, pick.spec.query))
+            }
+            is OmniboxSuggestion.Command -> executeCommand(pick.spec.id)
+            is OmniboxSuggestion.PrefixHint -> Unit
+        }
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(omnibox.windowToken, 0)
+        omnibox.clearFocus()
+    }
+
+    private fun executeCommand(commandId: String) {
+        when (commandId) {
+            "new_tab" -> viewModel.newTab(false)
+            "private_tab" -> viewModel.newTab(true)
+            "burner_tab" -> BurnerMailbox.open(this)
+            "translate" -> TranslatorManager.translateActive(this) { _, message ->
+                runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
+            }
+            "find_in_page" -> showFindBar()
+            "downloads" -> openScreen(DownloadsActivity::class.java)
+            "history" -> openScreen(HistoryActivity::class.java)
+            "settings" -> openScreen(SettingsActivity::class.java)
+            "phantom_shield" -> openShieldPanel()
+            "nexo_ai" -> com.nexo.browser.ai.NexoAiSheet.show(this)
+            "extensions" -> openScreen(ExtensionsActivity::class.java)
+            "nav_customize" -> NavCustomizerSheet.show(this) { applyNavigationMode() }
+            "tab_tools" -> TabTools.show(this)
+        }
     }
 
     /** Menú principal: hoja inferior con la página actual y una cuadrícula de acciones. */

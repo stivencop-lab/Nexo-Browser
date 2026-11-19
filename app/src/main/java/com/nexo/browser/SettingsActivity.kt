@@ -219,6 +219,10 @@ class SettingsActivity : Activity() {
         findViewById<Button>(R.id.configureCaptionsButton).setOnClickListener {
             CaptionsUi.showSheet(this) { updateCaptionsSummary() }
         }
+        intent?.getStringExtra(EXTRA_QUERY)?.trim()?.takeIf { it.isNotEmpty() }?.let { initialQuery ->
+            settingsSearchInput.setText(initialQuery)
+            settingsSearchInput.setSelection(initialQuery.length)
+        }
     }
 
     override fun onResume() {
@@ -264,27 +268,31 @@ class SettingsActivity : Activity() {
         updateDefaultBrowserVisibility()
         var currentSection: View? = null
         var currentSectionTitle = ""
+        var sectionHasMatch = false
         for (i in 0 until column.childCount) {
             val child = column.getChildAt(i)
             if (child.id == R.id.settingsSearchBox || child.id == R.id.defaultBrowserButton || child.id == R.id.aboutText) continue
             if (child is TextView && child.tag == "section") {
+                currentSection?.visibility = if (terms.isEmpty() || sectionHasMatch) View.VISIBLE else View.GONE
                 currentSection = child
                 currentSectionTitle = normalize(child.text?.toString().orEmpty())
+                sectionHasMatch = false
                 if (terms.isEmpty()) child.visibility = View.VISIBLE
                 continue
             }
             if (child.tag == "card") {
                 if (terms.isEmpty()) {
                     child.visibility = View.VISIBLE
-                    currentSection?.visibility = View.VISIBLE
+                    sectionHasMatch = true
                 } else {
                     val haystack = currentSectionTitle + " " + collectText(child)
                     val matches = terms.all { haystack.contains(it) }
                     child.visibility = if (matches) View.VISIBLE else View.GONE
-                    currentSection?.visibility = if (matches) View.VISIBLE else View.GONE
+                    if (matches) sectionHasMatch = true
                 }
             }
         }
+        currentSection?.visibility = if (terms.isEmpty() || sectionHasMatch) View.VISIBLE else View.GONE
     }
 
     private fun collectText(view: View): String {
@@ -635,6 +643,7 @@ class SettingsActivity : Activity() {
     }
 
     companion object {
+        const val EXTRA_QUERY = "nexo_settings_query"
         private const val REQUEST_DEFAULT_BROWSER = 51
     }
 }

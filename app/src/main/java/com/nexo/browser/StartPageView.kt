@@ -59,6 +59,35 @@ class StartPageView(
             prefs.edit().putString("custom", updated.toString()).putStringSet("hidden", hidden - shortcut.origin).apply()
             return shortcut.title
         }
+
+        /** Devuelve los accesos web guardados visibles para el buscador universal Nexo Command. */
+        fun savedShortcuts(context: Context): List<NexoCommandEngine.ShortcutCandidate> {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
+            val out = ArrayList<NexoCommandEngine.ShortcutCandidate>()
+            val seen = HashSet<String>()
+            val saved = runCatching { JSONArray(prefs.getString("custom", "[]")) }.getOrDefault(JSONArray())
+            for (index in 0 until saved.length()) {
+                val shortcut = BrowserPagePresentation.shortcut(saved.optJSONObject(index)?.optString("url").orEmpty())
+                if (shortcut != null && shortcut.origin !in hidden && seen.add(shortcut.identity)) {
+                    out.add(NexoCommandEngine.ShortcutCandidate(shortcut.title, shortcut.origin))
+                }
+            }
+            listOf(
+                "YouTube" to "https://m.youtube.com/",
+                "Google" to "https://www.google.com/",
+                "Wikipedia" to "https://es.wikipedia.org/",
+                "GitHub" to "https://github.com/",
+                "Gmail" to "https://mail.google.com/",
+                "Maps" to "https://maps.google.com/"
+            ).forEach { (title, url) ->
+                val identity = BrowserPagePresentation.shortcut(url)?.identity ?: url
+                if (url !in hidden && seen.add(identity)) {
+                    out.add(NexoCommandEngine.ShortcutCandidate(title, url))
+                }
+            }
+            return out
+        }
     }
 
     private data class Link(val label: String, val url: String = "", val kind: String = "web") {
