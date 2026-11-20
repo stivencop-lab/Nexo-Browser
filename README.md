@@ -6,7 +6,7 @@
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
-Nexo Browser es un navegador Android nativo en **Kotlin/XML** con Chromium embebido (Cefrium), sistema de diseño unificado (**Nexo Flow 3.0**), buscador universal (**Nexo Command**), organización avanzada de pestañas (**Nexo Tabs Pro**), panel unificado por sitio (**Nexo Site Control**), tienda/gestor de extensiones Chromium (**Nexo Extension Hub** sobre **NXR**), modo lectura con voz alta y guardado offline (**Nexo Reader**), favoritos y espacios de trabajo (**Nexo Workspace**), bloqueo integrado (**PhantomShield**), reproductor multimedia (**Nexo Media Engine**), modo oscuro temprano (**Nexo Dark Engine**), asistente opcional (**Nexo AI**, con botón permanente ✨ en la barra y asistente contextual por dominio), subtítulos en vivo y traducción completa en el DOM.
+Nexo Browser es un navegador Android nativo en **Kotlin/XML** con Chromium embebido (Cefrium), sistema de diseño unificado **Nexo UI 5.0** (superficies tonales limpias, cápsula unificada de direcciones con botón permanente ✨ de Nexo AI, dock inferior flotante y modo OLED cuidado), buscador universal (**Nexo Command**), organización avanzada de pestañas (**Nexo Tabs Pro**), panel unificado por sitio (**Nexo Site Control**), tienda/gestor de extensiones Chromium (**Nexo Extension Hub** sobre **NXR**), modo lectura con voz alta y guardado offline (**Nexo Reader**), favoritos y espacios de trabajo (**Nexo Workspace**), bloqueo integrado (**PhantomShield**), reproductor multimedia (**Nexo Media Engine**), modo oscuro temprano (**Nexo Dark Engine**), asistente conversacional opcional (**Nexo AI**), subtítulos en vivo y traducción completa en el DOM.
 
 Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a Chromium nativo](docs/CHROMIUM-NATIVE-MIGRATION.md)). Desde `0.25.0`, el identificador Android es `com.nexo.browser` (ver [cambio de identidad](docs/IDENTIDAD-NEXO.md)).
 
@@ -16,7 +16,7 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 
 | Capa | Componentes reales en el repositorio |
 | --- | --- |
-| **Interfaz nativa — Nexo Flow 3.0 (Kotlin/XML)** | `MainActivity`, `NexoSheets`, `NexoUi`, `ThemeManager`, `BrowserColors`, `UiLayout`, `NavConfig`, `NavCustomizerSheet`, `StartPageView`, `SettingsActivity`, `HistoryActivity`, `DownloadsActivity`, `BookmarksActivity` |
+| **Interfaz nativa — Nexo UI 5.0 (Kotlin/XML)** | `MainActivity`, `NexoSheets`, `NexoUi`, `ThemeManager`, `BrowserColors`, `UiLayout`, `NavConfig`, `NavCustomizerSheet`, `StartPageView`, `SettingsActivity`, `HistoryActivity`, `DownloadsActivity`, `BookmarksActivity` |
 | **Nexo Command y Tabs Pro** | `NexoCommandEngine`, `OmniboxSuggestions`, `TabSwitcher`, `TabProModel`, `TabManager`, `TabTools` |
 | **Nexo Site Control** | `SiteControlSheet`, `SiteControlModel`, `SitePermissionStore`, `SiteZoomStore`, `SitePermissions` |
 | **Motor Chromium (Cefrium público)** | `app/src/main/java/com/nexo/browser/engine/cefrium/` (`CefriumEngine`, `CefriumEngineSession`, `CefriumPageView`, `EngineDiagnostics`) usando exclusivamente la API pública `com.cefrium.*` |
@@ -33,9 +33,10 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 
 ## Subsistemas principales
 
-### 1. Nexo Flow 3.0 y Navegación adaptable
-- **Sistema visual unificado** ([diseño V3](docs/NEXO-FLOW-V3-DESIGN.md)): tokens de contraste WCAG AAA/AA en `BrowserColors`, primitivas Flow 3.0 (`statusPill`, `metricTile`, `emptyState`, `searchBar`, `divider`) en `NexoUi` y `ThemeManager`, temas **Claro / Midnight / OLED (`#000000`) / Color dinámico**, soporte verificado de escala `200 %` y respeto a reducción de movimiento (`ANIMATOR_DURATION_SCALE`).
-- **Tres modos de navegación (`NavConfig`, `NavCustomizerSheet`)**: **Clásico**, **Compacto** (barra única con botón Atrás integrado) y **Personalizado** (3 a 6 acciones elegibles y ordenables). Incluye ocultación inteligente del dock al desplazarse (nunca durante edición de URL, búsqueda, IME, inicio, pantalla completa o PiP), *edge-to-edge* y **Predictive Back** en Android 13+.
+### 1. Nexo UI 5.0 y Navegación adaptable
+- **Sistema visual Nexo Premium:** tokens de contraste WCAG AAA/AA en `BrowserColors`, primitivas tonales unificadas (`NexoUi.Tokens`, `statusPill`, `metricTile`, `emptyState`, `searchBar`, `insetDivider`, `NexoSheets.showFixed`) en `NexoUi`, `NexoSheets` y `ThemeManager`, tipografía Inter + JetBrains Mono, temas **Claro / Midnight / OLED (`#000000`) / Color dinámico**, verificación de escala `200 %`, adaptabilidad `360 dp` / `412 dp` / `600 dp+` / horizontal y respeto a reducción de movimiento (`ANIMATOR_DURATION_SCALE`).
+- **Chrome principal rediseñado (`activity_main.xml`, `MainActivity`):** cápsula unificada de direcciones (seguridad del sitio + omnibox expandida + botón permanente ✨ de Nexo AI integrado), contador de pestañas y menú `⋮` alineados ópticamente, y dock inferior flotante con pista de gestos.
+- **Tres modos de navegación (`NavConfig`, `NavCustomizerSheet`):** **Clásico**, **Compacto** y **Personalizado** (3 a 6 acciones). Incluye ocultación inteligente del dock al desplazarse (nunca durante edición de URL, búsqueda, IME, inicio, pantalla completa o PiP), *edge-to-edge* y **Predictive Back** en Android 13+.
 
 ### 2. Nexo Command (`NexoCommandEngine` + `OmniboxSuggestions`)
 - **Buscador universal local + web:** busca simultáneamente en pestañas abiertas, grupos, favoritos, accesos rápidos, historial local, ajustes y comandos del navegador, además de sugerencias web cuando corresponde.
@@ -43,7 +44,7 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 - **Aislamiento de privacidad:** nunca envía datos locales ni consultas con prefijo `@` o pestañas privadas/Burner a buscadores remotos; las sugerencias remotas jamás pueden invocar comandos privilegiados.
 
 ### 3. Nexo Tabs Pro (`TabSwitcher` + `TabProModel`)
-- **Tres vistas:** **Cuadrícula**, **Compacta** y **Lista**, con búsqueda instantánea por título, dominio o grupo.
+- **Experiencia visual renovada:** cabecera compacta con selector segmentado integrado (*Pestañas* | *Privadas*) y cambio rápido de vista (**Cuadrícula**, **Compacta** y **Lista**), buscador y rail único de grupos/duplicadas, tarjetas de altura uniforme con insignias sobre la miniatura y barra inferior ergonómica para una sola mano.
 - **Pestañas fijadas sin fuga de RAM:** las pestañas fijadas se anclan al principio con insignia, pero siguen sujetas a `TabManager.trimSessions()` cuando no están activas.
 - **Detección no destructiva de duplicados:** señala URLs duplicadas con insignia y filtro rápido sin cerrar ninguna pestaña automáticamente.
 
@@ -69,7 +70,7 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 - **Nexo Media Engine (`com.nexo.browser.media`):** velocidad (`0.25x–3.0x`), salto rápido (`5–30 s`), gestos en pantalla completa, subtítulos nativos/WebVTT/HLS/SRT o Deepgram con desfase en ms, PiP y reproducción en segundo plano con preferencias por sitio.
 - **Nexo Dark Engine (`com.nexo.browser.dark`):** Auto/Claro/Oscuro/OLED, política síncrona por sitio en `document_start`, modo híbrido sin autointerferencia y protección de imágenes/vídeos/canvas/formularios.
 - **PhantomShield:** bloqueo de red EasyList/uBlock con caché LRU, reglas cosméticas, YouTube, popunders (`$popup`), limpieza de parámetros de rastreo (también al compartir enlaces desde `MainActivity`) e IA opcional (3 proveedores, soporte NVIDIA/APIs estrictas, timeout 90 s).
-- **Nexo AI y Traductor:** opt-in con consentimiento, claves en Android Keystore (`SecretStore`), extracción sin token vía `evaluateJavaScript`, defensa `<UNTRUSTED_PAGE_CONTEXT>`, control por dominio, comparación de pestañas y traducción completa restaurable sin recargar.
+- **Nexo AI y Traductor:** interfaz conversacional nativa (`NexoAiSheet`) con cabecera fija, vista de configuración integrada sin salir del asistente, acciones rápidas en cuadrícula, hilo legible y campo de entrada fijo con envío/cancelación; opt-in con consentimiento, claves en Android Keystore (`SecretStore`), extracción sin token vía `evaluateJavaScript`, defensa `<UNTRUSTED_PAGE_CONTEXT>`, control por dominio, comparación de pestañas y traducción completa restaurable sin recargar.
 
 ---
 
@@ -78,7 +79,7 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 | Área / Capacidad | Estado real | Notas técnicas |
 | --- | --- | --- |
 | Motor Chromium 156 (Cefrium `0.21.0`), ciclo de vida endurecido (`isClosed`, `docGen`), pestañas, Burner, descargas | **Implementado y verificado en CI** | API pública `com.cefrium.*`; pruebas JVM y política de seguridad en CI |
-| **Nexo Flow 3.0**, Navegación adaptable, Predictive Back, pantallas secundarias y compartir URL limpia | **Implementado y verificado (JVM + Robolectric)** | Capturas antes/después, contraste AAA/AA y escala de fuente `200 %` verificados |
+| **Nexo UI 5.0**, Navegación adaptable, Predictive Back, Inicio, Selector de pestañas, Nexo AI, Ajustes y pantallas secundarias | **Implementado y verificado (JVM + Robolectric)** | Capturas antes/después (render Robolectric Native Graphics), contraste AAA/AA, `360 dp`/`412 dp`/`680 dp`/horizontal, Claro/Midnight/OLED y escala `200 %` verificados; validación interactiva en dispositivo físico Android pendiente |
 | **Nexo Command** (`@tabs`, `@history`, `@actions`, `@settings`, `@bookmarks`) y **Nexo Tabs Pro** | **Implementado y probado (JVM + Robolectric)** | Privacidad estricta de búsqueda local; pestañas fijadas y detección no destructiva de duplicados |
 | **Nexo Site Control** (5 secciones: sitio, privacidad, experiencia, extensiones, IA) | **Implementado y probado (JVM + Robolectric)** | Conectado a `setZoomLevel`, `setAudioMuted`, `SitePermissionStore`, PhantomShield, Dark Engine, NXR y Nexo AI |
 | **Nexo Extension Hub + NXR** (CWS, Edge Add-ons, local, HTTPS directo, CRX3, actualizaciones, 20 APIs) | **Parcialmente soportado (progresivo y honesto)** | Descarga/verifica/actualiza CRX3 reales y ejecuta `content_scripts`, CSS, `storage` por origen, `i18n` y acciones; **sin** mundos V8 aislados, *service workers* MV3 persistentes, DNR ni `chrome.tabs`/`cookies` de terceros por límites de Cefrium `0.21.0` |
