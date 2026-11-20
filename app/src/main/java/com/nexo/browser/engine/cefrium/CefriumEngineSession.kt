@@ -685,6 +685,9 @@ class CefriumEngineSession internal constructor(
             applyZoomFor(browser, value)
             com.nexo.browser.SitePermissionStore.applyAllToBrowser(appContext, browser, value)
             shield.onLocation(value)
+            if (!browser.isClosed) {
+                com.nexo.browser.extensions.nxr.NxrRuntime.onUrlChanged(this@CefriumEngineSession, value)
+            }
             val observer = observer ?: return
             observer.onLocationChange(this@CefriumEngineSession, value, false)
             if (!browser.isClosed) {

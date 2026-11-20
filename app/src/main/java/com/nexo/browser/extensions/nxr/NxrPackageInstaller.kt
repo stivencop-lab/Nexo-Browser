@@ -18,7 +18,8 @@ import java.util.zip.ZipInputStream
  *
  * Controles de seguridad:
  * - Protección estricta contra Zip Slip (normalización + validación de ruta canónica) y entradas duplicadas.
- * - Límites duros de tamaño total descomprimido (10 MB), archivo individual (2 MB), archivos (200) y ratio zip bomb.
+ * - Extracción e inspección en flujo directo a disco (sin cargar el paquete completo en RAM) con protección
+ *   contra zip bombs (relación de compresión anómala) y cotas amplias compatibles con extensiones de escritorio.
  * - Verificación criptográfica CRX2/CRX3 mediante [CrxPackage] (anti-políglota EOCD).
  * - Continuidad de clave pública ([publicKeySha256]): bloquea degradaciones a paquetes sin firma o con clave distinta.
  * - Activación segura por defecto (`enabled = false`) en paquetes no firmados, incompatibles, parciales con APIs
@@ -27,9 +28,11 @@ import java.util.zip.ZipInputStream
  * Puro sobre [File]: probado en la JVM.
  */
 object NxrPackageInstaller {
-    const val MAX_UNCOMPRESSED_BYTES = 10L * 1024L * 1024L
-    const val MAX_SINGLE_FILE_BYTES = 2 * 1024 * 1024
-    const val MAX_FILES = 200
+    const val MAX_UNCOMPRESSED_BYTES = 512L * 1024L * 1024L
+    const val MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024
+    const val MAX_FILES = 20_000
+    private const val MAX_TEXT_SCRIPT_BYTES = 16 * 1024 * 1024
+    private const val MAX_METADATA_JSON_BYTES = 2 * 1024 * 1024
     const val ORIGIN_CHROME_WEB_STORE = "chrome_web_store"
     const val ORIGIN_EDGE_ADDONS = "edge_addons"
     const val ORIGIN_LOCAL_FILE = "local_file"
@@ -172,13 +175,16 @@ object NxrPackageInstaller {
         }
     }
 
-    private data class VerifiedArchive(
+    private data class VerifiedArchiveSummary(
         val sourceType: String,
         val crxId: String?,
         val publicKeySha256: String?,
         val signatureVerified: Boolean,
         val signerCount: Int,
-        val entries: Map<String, ByteArray>
+        val manifestBytes: ByteArray?,
+        val localeMessages: Map<String, ByteArray>,
+        val entryPaths: Set<String>,
+        val totalUncompressedBytes: Long
     )
 
     /** Evalúa si es seguro activar automáticamente una nueva instalación sin confirmación adicional. */
@@ -213,15 +219,15 @@ object NxrPackageInstaller {
         localeTag: String = Locale.getDefault().toLanguageTag(),
         expectedId: String? = null
     ): Inspection {
-        val archive = readVerifiedZip(packageFile, expectedId)
-        val manifestBytes = archive.entries["manifest.json"]
+        val archive = streamVerifiedZip(packageFile, expectedId, extractDir = null)
+        val manifestBytes = archive.manifestBytes
             ?: throw InstallException("El paquete no contiene manifest.json en la raíz.")
         val manifestText = manifestBytes.toString(Charsets.UTF_8)
         val manifest = runCatching { ExtensionManifest.parse(manifestText) }
             .getOrElse { throw InstallException(it.message ?: "manifest.json no es válido.") }
 
         val messages = ExtensionMessages.load("", manifest.defaultLocale, localeTag) { folder ->
-            archive.entries["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
+            archive.localeMessages["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
         }
         val id = deriveExtensionId(archive.crxId, manifest, manifestBytes)
         if (expectedId != null && id != expectedId) {
@@ -232,8 +238,7 @@ object NxrPackageInstaller {
         val requiredScriptFiles = manifest.contentScripts.flatMap { it.js + it.css }
             .mapNotNull { ExtensionManifest.normalizePath(it) }
             .distinct()
-        val missingFiles = requiredScriptFiles.filterNot { it in archive.entries }
-        val totalBytes = archive.entries.values.sumOf { it.size.toLong() }
+        val missingFiles = requiredScriptFiles.filterNot { it in archive.entryPaths }
         val (recommendedEnabled, riskReasons) = evaluateRisk(capabilities, archive.signatureVerified, missingFiles)
         val verdict = when {
             capabilities.level == ExtensionCompatibility.Level.UNSUPPORTED -> ExtensionCompatibility.InstallVerdict.UNSUPPORTED
@@ -250,8 +255,8 @@ object NxrPackageInstaller {
             capabilities = capabilities,
             requestedHosts = requestedHosts,
             missingFiles = missingFiles,
-            fileCount = archive.entries.size,
-            totalUncompressedBytes = totalBytes,
+            fileCount = archive.entryPaths.size,
+            totalUncompressedBytes = archive.totalUncompressedBytes,
             publicKeySha256 = archive.publicKeySha256,
             signatureVerified = archive.signatureVerified,
             signerCount = archive.signerCount,
@@ -275,64 +280,54 @@ object NxrPackageInstaller {
         enableAfterInstall: Boolean? = null,
         expectedId: String? = null
     ): InstalledExtension {
-        val archive = readVerifiedZip(packageFile, expectedId)
-        val manifestBytes = archive.entries["manifest.json"]
-            ?: throw InstallException("El paquete no contiene manifest.json.")
-        val manifestText = manifestBytes.toString(Charsets.UTF_8)
-        val manifest = runCatching { ExtensionManifest.parse(manifestText) }
-            .getOrElse { throw InstallException(it.message ?: "manifest.json no es válido.") }
-        val messages = ExtensionMessages.load("", manifest.defaultLocale, localeTag) { folder ->
-            archive.entries["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
-        }
-        val id = deriveExtensionId(archive.crxId, manifest, manifestBytes)
-        if (expectedId != null && id != expectedId) {
-            throw InstallException("El identificador del paquete ($id) no coincide con el esperado ($expectedId).")
-        }
-        val capabilities = NxrPermissions.summarizeCapabilities(manifest)
-        val requestedHosts = NxrPermissions.requestedHostPatterns(manifest)
-        val effectiveHosts = (grantedHosts ?: requestedHosts).filter { it.isNotBlank() }.distinct()
-        val requiredScriptFiles = manifest.contentScripts.flatMap { it.js + it.css }
-            .mapNotNull { ExtensionManifest.normalizePath(it) }
-            .distinct()
-        val missingFiles = requiredScriptFiles.filterNot { it in archive.entries }
-        val (recommendedEnabled, _) = evaluateRisk(capabilities, archive.signatureVerified, missingFiles)
-
         rootDir.mkdirs()
-        val extDir = File(rootDir, id)
-        val existingMeta = readInstalledMeta(extDir)
-
-        // Continuidad de clave criptográfica: nunca permitir degradación sin firma o cambio de clave.
-        if (existingMeta != null && !existingMeta.publicKeySha256.isNullOrBlank()) {
-            if (!archive.signatureVerified || archive.publicKeySha256.isNullOrBlank()) {
-                throw InstallException(
-                    "Actualización bloqueada por seguridad: un paquete sin firma no puede sobrescribir la extensión firmada «${existingMeta.name}»."
-                )
-            }
-            if (archive.publicKeySha256 != existingMeta.publicKeySha256) {
-                throw InstallException(
-                    "Actualización bloqueada por seguridad: la huella de la clave pública no coincide con la extensión instalada «${existingMeta.name}»."
-                )
-            }
-        }
-
-        val staging = File(rootDir, "$id.staging-${System.nanoTime()}")
+        val staging = File(rootDir, "nxr.staging-${System.nanoTime()}")
         val filesDir = File(staging, FILES_DIR)
         filesDir.mkdirs()
-        val canonicalRoot = filesDir.canonicalPath + File.separator
 
         try {
-            for ((relPath, bytes) in archive.entries) {
-                val dest = File(filesDir, relPath)
-                if (!dest.canonicalPath.startsWith(canonicalRoot)) {
-                    throw InstallException("Ruta peligrosa detectada en el paquete: $relPath")
+            val archive = streamVerifiedZip(packageFile, expectedId, extractDir = filesDir)
+            val manifestBytes = archive.manifestBytes
+                ?: throw InstallException("El paquete no contiene manifest.json.")
+            val manifestText = manifestBytes.toString(Charsets.UTF_8)
+            val manifest = runCatching { ExtensionManifest.parse(manifestText) }
+                .getOrElse { throw InstallException(it.message ?: "manifest.json no es válido.") }
+            val messages = ExtensionMessages.load("", manifest.defaultLocale, localeTag) { folder ->
+                archive.localeMessages["_locales/$folder/messages.json"]?.toString(Charsets.UTF_8)
+            }
+            val id = deriveExtensionId(archive.crxId, manifest, manifestBytes)
+            if (expectedId != null && id != expectedId) {
+                throw InstallException("El identificador del paquete ($id) no coincide con el esperado ($expectedId).")
+            }
+            val capabilities = NxrPermissions.summarizeCapabilities(manifest)
+            val requestedHosts = NxrPermissions.requestedHostPatterns(manifest)
+            val effectiveHosts = (grantedHosts ?: requestedHosts).filter { it.isNotBlank() }.distinct()
+            val requiredScriptFiles = manifest.contentScripts.flatMap { it.js + it.css }
+                .mapNotNull { ExtensionManifest.normalizePath(it) }
+                .distinct()
+            val missingFiles = requiredScriptFiles.filterNot { it in archive.entryPaths }
+            val (recommendedEnabled, _) = evaluateRisk(capabilities, archive.signatureVerified, missingFiles)
+
+            val extDir = File(rootDir, id)
+            val existingMeta = readInstalledMeta(extDir)
+
+            // Continuidad de clave criptográfica: nunca permitir degradación sin firma o cambio de clave.
+            if (existingMeta != null && !existingMeta.publicKeySha256.isNullOrBlank()) {
+                if (!archive.signatureVerified || archive.publicKeySha256.isNullOrBlank()) {
+                    throw InstallException(
+                        "Actualización bloqueada por seguridad: un paquete sin firma no puede sobrescribir la extensión firmada «${existingMeta.name}»."
+                    )
                 }
-                dest.parentFile?.mkdirs()
-                dest.writeBytes(bytes)
+                if (archive.publicKeySha256 != existingMeta.publicKeySha256) {
+                    throw InstallException(
+                        "Actualización bloqueada por seguridad: la huella de la clave pública no coincide con la extensión instalada «${existingMeta.name}»."
+                    )
+                }
             }
 
             val bestIcon = manifest.icons.entries.maxByOrNull { it.key }?.value
                 ?.let { ExtensionManifest.normalizePath(it) }
-                ?.takeIf { it in archive.entries }
+                ?.takeIf { it in archive.entryPaths }
 
             val mergedSource = sourceInfo ?: existingMeta?.sourceInfo() ?: SourceInfo()
             val installed = InstalledExtension(
@@ -461,7 +456,7 @@ object NxrPackageInstaller {
         val target = File(base, normalized)
         val canonicalBase = base.canonicalPath + File.separator
         if (!target.canonicalPath.startsWith(canonicalBase) || !target.isFile) return null
-        if (target.length() > MAX_SINGLE_FILE_BYTES) return null
+        if (target.length() > MAX_TEXT_SCRIPT_BYTES) return null
         return runCatching { target.readText(Charsets.UTF_8) }.getOrNull()
     }
 
@@ -474,9 +469,17 @@ object NxrPackageInstaller {
     }
 
     private const val MAX_COMPRESSION_RATIO = 100L
-    private const val RATIO_CHECK_MIN_BYTES = 2L * 1024L * 1024L
+    private const val RATIO_CHECK_MIN_BYTES = 25L * 1024L * 1024L
 
-    private fun readVerifiedZip(packageFile: File, expectedId: String? = null): VerifiedArchive {
+    /**
+     * Verifica firma CRX (si aplica) y recorre el ZIP en streaming sin cargar binarios en memoria.
+     * Si [extractDir] no es nulo, escribe cada archivo validado directamente en disco.
+     */
+    private fun streamVerifiedZip(
+        packageFile: File,
+        expectedId: String? = null,
+        extractDir: File? = null
+    ): VerifiedArchiveSummary {
         if (!packageFile.isFile || packageFile.length() == 0L) {
             throw InstallException("Archivo de extensión vacío o inaccesible.")
         }
@@ -505,11 +508,15 @@ object NxrPackageInstaller {
             zipStream = packageFile.inputStream()
         }
 
-        val files = linkedMapOf<String, ByteArray>()
+        val canonicalRoot = extractDir?.let { it.canonicalPath + File.separator }
+        val seenPaths = HashSet<String>()
+        var manifestBytes: ByteArray? = null
+        val localeMessages = HashMap<String, ByteArray>()
         var totalBytes = 0L
         var fileCount = 0
+
         ZipInputStream(zipStream).use { zis ->
-            val buf = ByteArray(16 * 1024)
+            val buf = ByteArray(64 * 1024)
             while (true) {
                 val entry = zis.nextEntry ?: break
                 val rawName = entry.name
@@ -520,31 +527,68 @@ object NxrPackageInstaller {
                 val normalized = ExtensionManifest.normalizePath(rawName)
                     ?: throw InstallException("Ruta de archivo no válida en el paquete: $rawName")
                 if (entry.isDirectory) continue
-                if (files.containsKey(normalized)) {
+                if (!seenPaths.add(normalized)) {
                     throw InstallException("El paquete contiene entradas duplicadas: $normalized")
                 }
                 if (++fileCount > MAX_FILES) {
-                    throw InstallException("El paquete supera el límite de $MAX_FILES archivos.")
+                    throw InstallException("El paquete supera el límite de seguridad de $MAX_FILES archivos.")
                 }
-                val out = ByteArrayOutputStream()
-                while (true) {
-                    val read = zis.read(buf)
-                    if (read < 0) break
-                    totalBytes += read
-                    if (out.size() + read > MAX_SINGLE_FILE_BYTES) {
-                        throw InstallException("El archivo «$normalized» supera el límite de ${MAX_SINGLE_FILE_BYTES / (1024 * 1024)} MB.")
+
+                val isManifest = normalized == "manifest.json"
+                val isLocale = normalized.startsWith("_locales/") && normalized.endsWith("/messages.json")
+                val captureBuf = if (isManifest || isLocale) ByteArrayOutputStream() else null
+
+                val diskOut = if (extractDir != null && canonicalRoot != null) {
+                    val dest = File(extractDir, normalized)
+                    if (!dest.canonicalPath.startsWith(canonicalRoot)) {
+                        throw InstallException("Ruta peligrosa detectada en el paquete: $normalized")
                     }
-                    if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
-                        throw InstallException("El paquete descomprimido supera el límite de ${MAX_UNCOMPRESSED_BYTES / (1024 * 1024)} MB.")
+                    dest.parentFile?.mkdirs()
+                    dest.outputStream().buffered(64 * 1024)
+                } else null
+
+                var entryBytes = 0L
+                try {
+                    while (true) {
+                        val read = zis.read(buf)
+                        if (read < 0) break
+                        entryBytes += read
+                        totalBytes += read
+                        if (entryBytes > MAX_SINGLE_FILE_BYTES) {
+                            throw InstallException("El archivo «$normalized» supera el límite de seguridad de ${MAX_SINGLE_FILE_BYTES / (1024 * 1024)} MB.")
+                        }
+                        if (totalBytes > MAX_UNCOMPRESSED_BYTES) {
+                            throw InstallException("El paquete descomprimido supera el límite de seguridad de ${MAX_UNCOMPRESSED_BYTES / (1024 * 1024)} MB.")
+                        }
+                        if (totalBytes > RATIO_CHECK_MIN_BYTES && totalBytes > compressedSize * MAX_COMPRESSION_RATIO) {
+                            throw InstallException("Relación de compresión anómala detectada (posible zip bomb).")
+                        }
+                        diskOut?.write(buf, 0, read)
+                        if (captureBuf != null && captureBuf.size() + read <= MAX_METADATA_JSON_BYTES) {
+                            captureBuf.write(buf, 0, read)
+                        }
                     }
-                    if (totalBytes > RATIO_CHECK_MIN_BYTES && totalBytes > compressedSize * MAX_COMPRESSION_RATIO) {
-                        throw InstallException("Relación de compresión anómala detectada (posible zip bomb).")
-                    }
-                    out.write(buf, 0, read)
+                } finally {
+                    diskOut?.close()
                 }
-                files[normalized] = out.toByteArray()
+
+                if (isManifest && captureBuf != null) {
+                    manifestBytes = captureBuf.toByteArray()
+                } else if (isLocale && captureBuf != null) {
+                    localeMessages[normalized] = captureBuf.toByteArray()
+                }
             }
         }
-        return VerifiedArchive(sourceType, crxId, publicKeySha256, signatureVerified, signerCount, files)
+        return VerifiedArchiveSummary(
+            sourceType = sourceType,
+            crxId = crxId,
+            publicKeySha256 = publicKeySha256,
+            signatureVerified = signatureVerified,
+            signerCount = signerCount,
+            manifestBytes = manifestBytes,
+            localeMessages = localeMessages,
+            entryPaths = seenPaths,
+            totalUncompressedBytes = totalBytes
+        )
     }
 }

@@ -86,6 +86,22 @@ class ExtensionHubStoreTest {
         assertEquals(ExtensionStoreResolver.StoreKind.EDGE_ADDONS, edge!!.store)
         assertEquals("ifoakfbpdcdoeenechcleahebpibofpc", edge.extensionId)
 
+        val edgeLocale = ExtensionStoreResolver.detectStorePage("https://microsoftedge.microsoft.com/es-es/addons/detail/dark-reader/ifoakfbpdcdoeenechcleahebpibofpc")
+        assertNotNull(edgeLocale)
+        assertEquals(ExtensionStoreResolver.StoreKind.EDGE_ADDONS, edgeLocale!!.store)
+        assertEquals("ifoakfbpdcdoeenechcleahebpibofpc", edgeLocale.extensionId)
+
+        // Detección amplia de páginas de tienda para activar modo escritorio automáticamente
+        assertTrue(ExtensionStoreResolver.isExtensionStoreUrl("https://chromewebstore.google.com/"))
+        assertTrue(ExtensionStoreResolver.isExtensionStoreUrl("https://chromewebstore.google.com/search/dark%20reader"))
+        assertTrue(ExtensionStoreResolver.isExtensionStoreUrl("https://chrome.google.com/webstore/category/extensions"))
+        assertTrue(ExtensionStoreResolver.isExtensionStoreUrl("https://microsoftedge.microsoft.com/addons/Microsoft-Edge-Extensions-Home"))
+        assertTrue(ExtensionStoreResolver.isExtensionStoreUrl("https://microsoftedge.microsoft.com/es-es/addons/detail/dark-reader/ifoakfbpdcdoeenechcleahebpibofpc"))
+        assertFalse(ExtensionStoreResolver.isExtensionStoreUrl("https://chrome.google.com/sync"))
+        assertFalse(ExtensionStoreResolver.isExtensionStoreUrl("https://microsoftedge.microsoft.com/welcome"))
+        assertFalse(ExtensionStoreResolver.isExtensionStoreUrl("https://example.com/chromewebstore.google.com"))
+        assertFalse(ExtensionStoreResolver.isExtensionStoreUrl("https://user:pass@chromewebstore.google.com/"))
+
         // Rechaza HTTP sin cifrar, credenciales en URL, hosts falsos o páginas sin ID de 32 caracteres [a-p]
         assertNull(ExtensionStoreResolver.detectStorePage("http://chromewebstore.google.com/detail/ublock/$id"))
         assertNull(ExtensionStoreResolver.detectStorePage("https://user:pass@chromewebstore.google.com/detail/ublock/$id"))
@@ -112,6 +128,15 @@ class ExtensionHubStoreTest {
         assertTrue(search is ExtensionStoreResolver.ResolvedTarget.StoreSearch)
         assertTrue(ExtensionStoreResolver.cwsSearchUrl("dark reader").contains("dark%20reader"))
         assertTrue(ExtensionStoreResolver.edgeSearchUrl("dark reader").contains("dark%20reader"))
+
+        // Parámetros Omaha de escritorio y CDN de Google
+        val omaha = ExtensionStoreClient.cwsOmahaUrl("eimadpbcbfnmbkopoojfekhnkhdbieeh")
+        assertTrue(omaha.contains("prod=chromecrx"))
+        assertTrue(omaha.contains("acceptformat=crx2,crx3"))
+        assertTrue(omaha.contains("prodversion=156.0.0.0"))
+        assertTrue(ExtensionStoreClient.cwsDirectRedirectUrl("eimadpbcbfnmbkopoojfekhnkhdbieeh").contains("response=redirect"))
+        assertTrue(ExtensionStoreResolver.isAllowedCwsDownloadHost("edgedl.me.gvt1.com"))
+        assertTrue(ExtensionStoreResolver.isAllowedCwsDownloadHost("r2.sn-test.gvt2.com"))
     }
 
     @Test fun comparesSemanticVersionsAccurately() {
@@ -132,7 +157,7 @@ class ExtensionHubStoreTest {
                   codebase="https://clients2.googleusercontent.com/crx/blobs/abc123/ext.crx"
                   version="4.9.100"
                   hash_sha256="$sha"
-                  size="1048576"/>
+                  size="52428800"/>
               </app>
             </gupdate>
         """.trimIndent()
@@ -140,7 +165,7 @@ class ExtensionHubStoreTest {
         assertEquals(ExtensionStoreResolver.StoreKind.CHROME_WEB_STORE, listing.store)
         assertEquals("4.9.100", listing.version)
         assertEquals(sha, listing.expectedSha256)
-        assertEquals(1048576L, listing.expectedSizeBytes)
+        assertEquals(52428800L, listing.expectedSizeBytes)
 
         // noupdate debe fallar con error claro
         val noUpdateXml = """<gupdate><app appid="$id"><updatecheck status="noupdate"/></app></gupdate>"""
@@ -154,8 +179,8 @@ class ExtensionHubStoreTest {
             ExtensionStoreClient.parseCwsOmahaXml(id, evilXml)
         }
 
-        // Paquete mayor de 25 MB rechazado
-        val hugeXml = """<gupdate><app appid="$id"><updatecheck status="ok" codebase="https://clients2.googleusercontent.com/crx/blobs/big.crx" version="1.0" size="99999999"/></app></gupdate>"""
+        // Paquete desproporcionado (> 256 MB) rechazado
+        val hugeXml = """<gupdate><app appid="$id"><updatecheck status="ok" codebase="https://clients2.googleusercontent.com/crx/blobs/big.crx" version="1.0" size="300000000"/></app></gupdate>"""
         assertThrows(ExtensionStoreClient.StoreException::class.java) {
             ExtensionStoreClient.parseCwsOmahaXml(id, hugeXml)
         }

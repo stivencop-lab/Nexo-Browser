@@ -173,10 +173,10 @@ class ExtensionsActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(10f), 0, dp(8f))
         }
-        storesRow.addView(storeSourceCard("Chrome Store", "Catálogo .crx oficial", p.primary.container, p.primary.onContainer) {
+        storesRow.addView(storeSourceCard("Chrome Store", "Modo escritorio auto · .crx", p.primary.container, p.primary.onContainer) {
             openInBrowser(ExtensionStoreResolver.CWS_HOME_URL)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
-        storesRow.addView(storeSourceCard("Edge Add-ons", "Catálogo Edge", p.info.container, p.info.onContainer) {
+        storesRow.addView(storeSourceCard("Edge Add-ons", "Modo escritorio auto · Edge", p.info.container, p.info.onContainer) {
             openInBrowser(ExtensionStoreResolver.EDGE_HOME_URL)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(storesRow)
