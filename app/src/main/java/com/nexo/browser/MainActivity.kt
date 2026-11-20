@@ -63,6 +63,8 @@ class MainActivity :
     private lateinit var progress: ProgressBar
     private lateinit var tabButton: Button
     private lateinit var aiButton: ImageButton
+    private lateinit var nexoAiPill: com.nexo.browser.ai.NexoAiPillView
+    private var aiControllerObserver: ((com.nexo.browser.ai.NexoAiModels.ControllerSnapshot) -> Unit)? = null
     private lateinit var backButton: ImageButton
     private lateinit var forwardButton: ImageButton
     private lateinit var compactBackButton: ImageButton
@@ -299,6 +301,22 @@ class MainActivity :
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
         aiButton = findViewById(R.id.aiButton)
+        nexoAiPill = findViewById(R.id.nexoAiPill)
+        com.nexo.browser.ai.NexoAiController.initialize(this)
+        nexoAiPill.onRestore = {
+            ThemeManager.animateAiSparkTap(aiButton)
+            com.nexo.browser.ai.NexoAiSheet.show(this)
+        }
+        nexoAiPill.onDismissPill = {
+            com.nexo.browser.ai.NexoAiController.dismissMinimizedPill()
+        }
+        aiControllerObserver = { snap ->
+            if (!isFinishing && !isDestroyed) {
+                ThemeManager.styleAiSparkButton(this, aiButton, snap.indicatorState)
+                nexoAiPill.render(this, snap)
+            }
+        }
+        aiControllerObserver?.let { com.nexo.browser.ai.NexoAiController.observe(it) }
         backButton = findViewById(R.id.backButton)
         forwardButton = findViewById(R.id.forwardButton)
         compactBackButton = findViewById(R.id.compactBackButton)
@@ -1249,9 +1267,14 @@ class MainActivity :
         ThemeManager.styleIconButton(this, compactBackButton)
         styleTabToolsButton(TabManager.activeTab())
         styleMiniPlayerChip()
-        // Botón permanente ✨ de Nexo AI: integrado dentro de la cápsula de direcciones.
-        ThemeManager.styleAiSparkButton(this, aiButton)
-        aiButton.setOnClickListener { com.nexo.browser.ai.NexoAiSheet.show(this) }
+        // Botón permanente ✨ de Nexo AI 5.1: integrado dentro de la cápsula con estados visuales y microanimación.
+        val aiSnap = com.nexo.browser.ai.NexoAiController.snapshot()
+        ThemeManager.styleAiSparkButton(this, aiButton, aiSnap.indicatorState)
+        nexoAiPill.render(this, aiSnap)
+        aiButton.setOnClickListener {
+            ThemeManager.animateAiSparkTap(aiButton)
+            com.nexo.browser.ai.NexoAiSheet.show(this)
+        }
         ThemeManager.styleTabCounter(this, tabButton)
         ThemeManager.styleMenuIconButton(this, findViewById(R.id.menuButton))
         ThemeManager.styleFlatButton(this, clearOmniboxButton)
@@ -2447,6 +2470,8 @@ class MainActivity :
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
+        aiControllerObserver?.let { com.nexo.browser.ai.NexoAiController.unobserve(it) }
+        aiControllerObserver = null
         PageBridge.onScrollDirection = null
         unregisterPredictiveBack()
         PerfLog.detach(this)

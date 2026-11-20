@@ -370,4 +370,206 @@ class ScreenshotTest {
             BrowserPrefs.setTabViewMode(app, TabProModel.ViewMode.GRID.id)
         }
     }
+
+    @Test
+    fun nexoAi51FullVisualFlowAndPersistence() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        seedTabs(*sampleTabs())
+        val storeFile = java.io.File(app.cacheDir, "shot_ai51_${System.nanoTime()}.json")
+        com.nexo.browser.ai.NexoAiConfig.save(
+            app,
+            com.nexo.browser.ai.NexoAiConfig.Settings(
+                enabled = true,
+                consentAccepted = true,
+                provider = "openai",
+                model = "gpt-4.1-mini"
+            )
+        )
+        com.nexo.browser.ai.NexoAiConfig.setApiKey(app, "sk-shot-demo-key")
+
+        // 1. Seed conversación real persistida (flujo Consultar -> Minimizar -> Navegar -> Restaurar -> Leer respuesta)
+        com.nexo.browser.ai.NexoAiController.initializeForTest(
+            storageFile = storeFile,
+            testTransport = com.nexo.browser.ai.NexoAiController.Transport { settings, _, _, _, _, _, _, _, _ ->
+                Result.success(
+                    com.nexo.browser.ai.NexoAiClient.AiResponse(
+                        text = "• Nexo AI 5.1 mantiene las conversaciones en un controlador independiente del panel.\n" +
+                            "• Al minimizar el asistente puedes seguir navegando sin cancelar la generación.\n" +
+                            "• El laboratorio integrado compara entre 2 y 5 modelos con tiempos monotónicos reales.",
+                        usage = com.nexo.browser.ai.NexoAiClient.TokenUsage(184, 62, 246),
+                        actions = listOf(
+                            com.nexo.browser.ai.NexoAiClient.ProposedAction("highlight", "Resaltar arquitectura", "controlador independiente"),
+                            com.nexo.browser.ai.NexoAiClient.ProposedAction("open_link", "Abrir documentación", "https://example.com/docs")
+                        ),
+                        metrics = com.nexo.browser.ai.NexoAiModels.AiMetrics(
+                            totalDurationMs = 1840L,
+                            networkLatencyMs = 210L,
+                            timeToFirstTokenMs = 420L,
+                            generationDurationMs = 1420L,
+                            tokensPerSecond = 43.7,
+                            httpStatus = 200,
+                            streamed = true,
+                            model = settings.effectiveModel(),
+                            provider = settings.provider
+                        )
+                    )
+                )
+            }
+        )
+        val s = com.nexo.browser.ai.NexoAiConfig.read(app)
+        val binding = com.nexo.browser.ai.NexoAiModels.PageBinding("t1", "https://developer.android.com/guide", "developer.android.com", "Android Developers", 1L)
+        com.nexo.browser.ai.NexoAiController.setPanelState(com.nexo.browser.ai.NexoAiModels.PanelState.MINIMIZED)
+        com.nexo.browser.ai.NexoAiController.sendPrompt(
+            settings = s,
+            apiKey = "sk-shot-demo-key",
+            userTask = "Resume los cambios clave de esta documentación",
+            untrustedContext = "Contenido de ejemplo",
+            pageBinding = binding
+        )
+
+        // 2. Capturar vista minimizada (botón ✨ en estado READY + píldora flotante in-app sobre el navegador)
+        val chromeActivity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        chromeActivity.setContentView(R.layout.activity_main)
+        val p = ThemeManager.palette(chromeActivity)
+        chromeActivity.findViewById<View>(R.id.rootView).setBackgroundColor(p.background)
+        val capsule = chromeActivity.findViewById<android.widget.LinearLayout>(R.id.omniboxCapsule)
+        val omnibox = chromeActivity.findViewById<android.widget.EditText>(R.id.omnibox)
+        val aiBtn = chromeActivity.findViewById<android.widget.ImageButton>(R.id.aiButton)
+        val pill = chromeActivity.findViewById<com.nexo.browser.ai.NexoAiPillView>(R.id.nexoAiPill)
+        val dock = chromeActivity.findViewById<View>(R.id.browserDock)
+        val tabBtn = chromeActivity.findViewById<android.widget.Button>(R.id.tabButton)
+        val menuBtn = chromeActivity.findViewById<android.widget.Button>(R.id.menuButton)
+        val lockBtn = chromeActivity.findViewById<android.widget.ImageButton>(R.id.tabToolsButton)
+        ThemeManager.styleOmniboxCapsule(chromeActivity, capsule, false)
+        ThemeManager.styleOmniboxInput(chromeActivity, omnibox)
+        omnibox.setText("developer.android.com/guide")
+        ThemeManager.styleIconButton(chromeActivity, lockBtn)
+        ThemeManager.styleTabCounter(chromeActivity, tabBtn)
+        tabBtn.text = "3"
+        ThemeManager.styleMenuIconButton(chromeActivity, menuBtn)
+        ThemeManager.styleFloatingDock(chromeActivity, dock, chromeActivity.findViewById(R.id.dockGesturePill))
+        listOf(R.id.backButton, R.id.forwardButton, R.id.homeButton, R.id.reloadButton).forEach {
+            ThemeManager.styleIconButton(chromeActivity, chromeActivity.findViewById(it))
+        }
+        ThemeManager.styleDockPrimaryIcon(chromeActivity, chromeActivity.findViewById(R.id.newTabButton))
+        val readySnap = com.nexo.browser.ai.NexoAiController.snapshot()
+        ThemeManager.styleAiSparkButton(chromeActivity, aiBtn, readySnap.indicatorState)
+        pill.render(chromeActivity, readySnap)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(chromeActivity.window.decorView, "ai51-minimized-ready-dark")
+
+        // 3. Restaurar conversación en Panel parcial (66 %) y verificar persistencia tras navegar
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        com.nexo.browser.ai.NexoAiSheet.show(activity, initialTab = com.nexo.browser.ai.NexoAiSheet.Tab.CHAT, initialExpanded = false)
+        dialogShot(null, "ai51-chat-partial-dark")
+
+        // 4. Pantalla expandida (94 %) con respuesta restaurada y métricas reales
+        com.nexo.browser.ai.NexoAiSheet.show(activity, initialTab = com.nexo.browser.ai.NexoAiSheet.Tab.CHAT, initialExpanded = true)
+        dialogShot(null, "ai51-chat-expanded-dark")
+
+        // 5. Tema Claro y OLED
+        val lightAct = themed(BrowserPrefs.THEME_LIGHT)
+        lightAct.setContentView(FrameLayout(lightAct))
+        com.nexo.browser.ai.NexoAiSheet.show(lightAct, initialTab = com.nexo.browser.ai.NexoAiSheet.Tab.CHAT, initialExpanded = false)
+        dialogShot(null, "ai51-chat-light")
+
+        val oledAct = themed(BrowserPrefs.THEME_OLED)
+        oledAct.setContentView(FrameLayout(oledAct))
+        com.nexo.browser.ai.NexoAiSheet.show(oledAct, initialTab = com.nexo.browser.ai.NexoAiSheet.Tab.CHAT, initialExpanded = false)
+        dialogShot(null, "ai51-chat-oled")
+
+        // 6. Laboratorio de Benchmark multimodelo (3 modelos: 2 exitosos con TTFT/sin streaming + 1 HTTP 429)
+        val benchPool = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val benchDone = java.util.concurrent.CountDownLatch(3)
+        com.nexo.browser.ai.NexoAiBenchmark.resetForTest(
+            testExecutor = benchPool,
+            testTransport = com.nexo.browser.ai.NexoAiController.Transport { st, _, _, _, _, _, _, _, _ ->
+                val m = st.effectiveModel()
+                try {
+                    when (m) {
+                        "gpt-4.1-mini" -> Result.success(
+                            com.nexo.browser.ai.NexoAiClient.AiResponse(
+                                text = "HTTP/3 utiliza QUIC sobre UDP para reducir la latencia de conexión y evitar bloqueo de cabecera.",
+                                usage = com.nexo.browser.ai.NexoAiClient.TokenUsage(28, 34, 62),
+                                metrics = com.nexo.browser.ai.NexoAiModels.AiMetrics(
+                                    totalDurationMs = 1420L, networkLatencyMs = 180L, timeToFirstTokenMs = 390L,
+                                    generationDurationMs = 1030L, tokensPerSecond = 33.0, streamed = true,
+                                    model = m, provider = st.provider
+                                )
+                            )
+                        )
+                        "gpt-4.1" -> Result.success(
+                            com.nexo.browser.ai.NexoAiClient.AiResponse(
+                                text = "HTTP/3 reemplaza TCP por QUIC sobre UDP, integrando TLS 1.3 y multiplexación independiente de flujos.",
+                                usage = com.nexo.browser.ai.NexoAiClient.TokenUsage(28, 41, 69),
+                                metrics = com.nexo.browser.ai.NexoAiModels.AiMetrics(
+                                    totalDurationMs = 3180L, networkLatencyMs = 240L, timeToFirstTokenMs = null,
+                                    streamed = false, model = m, provider = st.provider
+                                )
+                            )
+                        )
+                        else -> Result.failure(com.nexo.browser.ai.NexoAiClient.HttpStatusException(429, "Límite de solicitudes alcanzado (HTTP 429)."))
+                    }
+                } finally {
+                    benchDone.countDown()
+                }
+            }
+        )
+        com.nexo.browser.ai.NexoAiBenchmark.startComparison(
+            baseSettings = s,
+            apiKey = "sk-shot-demo-key",
+            models = listOf("gpt-4.1-mini", "gpt-4.1", "o4-mini"),
+            prompt = "Explica HTTP/3 en una frase clara y técnica."
+        )
+        benchDone.await(3, java.util.concurrent.TimeUnit.SECONDS)
+        benchPool.shutdownNow()
+        com.nexo.browser.ai.NexoAiSheet.show(activity, initialTab = com.nexo.browser.ai.NexoAiSheet.Tab.BENCHMARK, initialExpanded = true)
+        dialogShot(null, "ai51-benchmark-dark")
+
+        // 7. Configuración de proveedores integrada
+        com.nexo.browser.ai.NexoAiSheet.show(activity, initialTab = com.nexo.browser.ai.NexoAiSheet.Tab.SETTINGS, initialExpanded = true)
+        dialogShot(null, "ai51-settings-dark")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h740dp-xhdpi")
+    fun nexoAi51Compact360dpAndRecreationPersistence() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        seedTabs(*sampleTabs())
+        val storeFile = java.io.File(app.cacheDir, "shot_ai51_compact_${System.nanoTime()}.json")
+        com.nexo.browser.ai.NexoAiController.initializeForTest(
+            storageFile = storeFile,
+            testTransport = com.nexo.browser.ai.NexoAiController.Transport { _, _, _, _, _, _, _, _, _ ->
+                Result.success(com.nexo.browser.ai.NexoAiClient.AiResponse("Respuesta persistida tras recreación y en 360 dp.", null))
+            }
+        )
+        com.nexo.browser.ai.NexoAiController.sendPrompt(
+            settings = com.nexo.browser.ai.NexoAiConfig.Settings(enabled = true, consentAccepted = true, provider = "openai", model = "gpt-4.1-mini"),
+            apiKey = "sk-test",
+            userTask = "Comprueba accesibilidad en pantalla compacta",
+            untrustedContext = ""
+        )
+
+        // Simular recreación de Activity (p. ej. rotación de pantalla) y abrir de nuevo Nexo AI
+        val firstActivity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        firstActivity.setContentView(FrameLayout(firstActivity))
+        com.nexo.browser.ai.NexoAiSheet.show(firstActivity)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        org.robolectric.shadows.ShadowDialog.getLatestDialog()?.dismiss()
+        firstActivity.finish()
+
+        val recreatedActivity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        recreatedActivity.resources.configuration.fontScale = 1.5f
+        recreatedActivity.setContentView(FrameLayout(recreatedActivity))
+        com.nexo.browser.ai.NexoAiSheet.show(recreatedActivity)
+        dialogShot(null, "ai51-compact-360dp")
+
+        val snap = com.nexo.browser.ai.NexoAiController.snapshot()
+        org.junit.Assert.assertEquals(2, snap.activeConversation?.messages?.size)
+        org.junit.Assert.assertEquals(
+            "Respuesta persistida tras recreación y en 360 dp.",
+            snap.activeConversation?.messages?.last()?.text
+        )
+    }
 }
