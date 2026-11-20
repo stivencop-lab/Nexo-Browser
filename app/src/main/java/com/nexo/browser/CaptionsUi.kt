@@ -252,13 +252,67 @@ object CaptionsUi {
                 }
             }))
         }
-        // Diagnóstico por etapas: dónde se corta (reproductor, pista, señal, Deepgram, texto).
-        LiveCaptions.stages(session).takeIf { it.isNotEmpty() }?.let { stages ->
-            body.addView(NexoUi.section(activity, "Estado"))
-            body.addView(NexoUi.note(activity, stages.joinToString("\n") { (label, ok) ->
-                (when (ok) { true -> "✓ "; false -> "✗ "; null -> "… " }) + label
-            } + (LiveCaptions.aiTranslationWinner(activity)?.let { "\n✓ Traducción IA: $it" } ?: "")))
+        // Tarjeta de estado en vivo + medidor de señal de audio (Nexo UI 5.0)
+        val p = ThemeManager.palette(activity)
+        val statusCard = NexoUi.card(activity).apply {
+            val topRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+            val tone = when {
+                LiveCaptions.state(session) == LiveCaptions.State.ERROR -> NexoUi.Tone.DANGER
+                LiveCaptions.usingDeviceAudio(session) || LiveCaptions.state(session) == LiveCaptions.State.LISTENING -> NexoUi.Tone.SUCCESS
+                LiveCaptions.state(session) == LiveCaptions.State.CONNECTING -> NexoUi.Tone.INFO
+                else -> NexoUi.Tone.NEUTRAL
+            }
+            topRow.addView(NexoUi.statusPill(activity, LiveCaptions.sourceLabel(session), tone))
+            if (LiveCaptions.usingDeviceAudio(session)) {
+                val lvl = LiveCaptions.deviceLevel(session)
+                topRow.addView(
+                    NexoUi.statusPill(activity, "Nivel $lvl %", if (lvl > 0) NexoUi.Tone.ACCENT else NexoUi.Tone.WARNING),
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { marginStart = dp(activity, 6f) }
+                )
+            }
+            addView(topRow)
+
+            if (LiveCaptions.usingDeviceAudio(session)) {
+                val meterBg = android.widget.ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    progress = LiveCaptions.deviceLevel(session).coerceIn(0, 100)
+                    progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
+                    progressBackgroundTintList = android.content.res.ColorStateList.valueOf(p.surfaceContainerHighest)
+                }
+                addView(meterBg, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(activity, 6f)).apply {
+                    topMargin = dp(activity, 10f)
+                })
+            }
+
+            LiveCaptions.stages(session).takeIf { it.isNotEmpty() }?.let { stages ->
+                addView(TextView(activity).apply {
+                    text = stages.joinToString("\n") { (label, ok) ->
+                        (when (ok) { true -> "✓ "; false -> "✗ "; null -> "… " }) + label
+                    } + (LiveCaptions.aiTranslationWinner(activity)?.let { "\n✓ Traducción IA: $it" } ?: "")
+                    textSize = 12.5f
+                    typeface = NexoUi.regular(activity)
+                    setTextColor(p.muted)
+                    setLineSpacing(dp(activity, 2f).toFloat(), 1f)
+                    setPadding(0, dp(activity, 8f), 0, 0)
+                })
+            }
         }
+        body.addView(statusCard)
+
+        // Acción destacada en un toque para capturar TODO el audio con Android (videos, iframes, streams, podcasts).
+        if (activity is MainActivity && android.os.Build.VERSION.SDK_INT >= 29 && !LiveCaptions.usingDeviceAudio(session)) {
+            body.addView(NexoUi.button(activity, "Capturar todo el audio con Android", primary = true) {
+                sheet.dismiss()
+                PlaybackAudioCapture.request(activity)
+            }, NexoUi.buttonParams(activity, 10f))
+        }
+
         body.addView(NexoUi.section(activity, "Traducir a"))
         body.addView(targetRow)
         body.addView(modeRow)
@@ -273,28 +327,22 @@ object CaptionsUi {
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(activity, 10f)
         })
-        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Más ajustes", "Claves, servicio de traducción, tamaño y límite") {
-            sheet.dismiss(); showSheet(activity) { onChange() }
-        })
-        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Subtítulos instantáneos de Android",
-            "Generados en el teléfono, sin enviar nada · funcionan con audífonos") {
-            sheet.dismiss(); SystemCaptions.openSystemSettings(activity)
-        })
         if (activity is MainActivity && !LiveCaptions.isTrackMode(session) && !LiveCaptions.isDomMode(session) &&
-            !LiveCaptions.audioAllowed(session) && BrowserPrefs.deepgramKey(activity).isNotBlank()
+            !LiveCaptions.usingDeviceAudio(session) && !LiveCaptions.audioAllowed(session) && BrowserPrefs.deepgramKey(activity).isNotBlank()
         ) {
-            body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Transcribir el audio de este video",
-                "Se envía el audio del video a Deepgram (no el micrófono)") {
+            body.addView(NexoUi.actionRow(activity, R.drawable.ic_nav_reload, "Transcribir audio desde la página",
+                "Intenta leer el audio del reproductor web y enviarlo a Deepgram") {
                 sheet.dismiss(); LiveCaptions.allowAudio(activity, session); onChange()
             })
         }
-        if (activity is MainActivity && android.os.Build.VERSION.SDK_INT >= 29) {
-            body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Capturar audio con Android",
-                "Si la página no da su audio · capta el audio multimedia del teléfono (puede incluir otras apps), con tu autorización") {
-                sheet.dismiss(); PlaybackAudioCapture.request(activity)
-            })
-        }
-        body.addView(NexoUi.button(activity, "Apagar subtítulos", danger = true) { sheet.dismiss(); onOff() }, NexoUi.buttonParams(activity, 8f))
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Subtítulos instantáneos de Android (Offline)",
+            "Generados localmente en el teléfono para cualquier sonido, sin enviar nada") {
+            sheet.dismiss(); SystemCaptions.openSystemSettings(activity)
+        })
+        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Más ajustes de subtítulos", "Claves API, captura universal, servicio de traducción y estilo") {
+            sheet.dismiss(); showSheet(activity) { onChange() }
+        })
+        body.addView(NexoUi.button(activity, "Apagar subtítulos", danger = true) { sheet.dismiss(); onOff() }, NexoUi.buttonParams(activity, 10f))
         sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Subtítulos en vivo", stateText(activity, session)), body))
     }
 
@@ -422,6 +470,13 @@ object CaptionsUi {
             "Si el video no trae subtítulos de texto, enviar su audio a Deepgram directamente. Apagado: Nexo pregunta antes.", audioAuto) {
             audioAuto = it
         })
+        var preferDeviceAudio = BrowserPrefs.captionPreferDeviceAudio(activity)
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            body.addView(NexoUi.switchRow(activity, "Priorizar captura universal de Android",
+                "Al tocar CC con Deepgram configurado, abrir directamente la captura de audio del sistema para captar cualquier video, stream o podcast.", preferDeviceAudio) {
+                preferDeviceAudio = it
+            })
+        }
         var friendlyAudio = BrowserPrefs.captureFriendlyAudio(activity)
         body.addView(NexoUi.switchRow(activity, "Audio compatible con la captura de Android",
             "Los reproductores con Web Audio suenan por la vía que Android puede capturar (~0,1 s más de retardo en juegos web). Apágalo para comparar si la captura no lo necesita.", friendlyAudio) {
@@ -504,6 +559,7 @@ object CaptionsUi {
             BrowserPrefs.setCaptionHideOriginal(activity, hideOriginal)
             BrowserPrefs.setCaptionDailyLimit(activity, limit)
             BrowserPrefs.setCaptionAudioAuto(activity, audioAuto)
+            BrowserPrefs.setCaptionPreferDeviceAudio(activity, preferDeviceAudio)
             if (friendlyAudio != BrowserPrefs.captureFriendlyAudio(activity)) {
                 BrowserPrefs.setCaptureFriendlyAudio(activity, friendlyAudio)
                 com.nexo.browser.engine.Engines.current.applyAudioSettings(activity)

@@ -13,6 +13,7 @@ function createNxrScope(config) {
   'use strict';
   const extId = String(config && config.extId || '');
   const token = String(config && config.token || '');
+  const baseUrl = (config && typeof config.baseUrl === 'string' && config.baseUrl) ? config.baseUrl.replace(/\/+$/, '') + '/' : ('nxr://' + extId + '/');
   const manifest = (config && config.manifest && typeof config.manifest === 'object') ? config.manifest : {};
   const messages = (config && config.messages && typeof config.messages === 'object') ? config.messages : {};
   const queryFn = (config && typeof config.query === 'function')
@@ -26,6 +27,7 @@ function createNxrScope(config) {
   const messageListeners = [];
   const connectListeners = [];
   const installedListeners = [];
+  const actionClickedListeners = [];
   const storageChangedListeners = [];
   const sessionStore = Object.create(null);
 
@@ -139,7 +141,11 @@ function createNxrScope(config) {
   }
 
   function createPersistentStorageArea(areaName) {
+    const isSync = areaName === 'sync';
     return Object.freeze({
+      QUOTA_BYTES: isSync ? 102400 : 4194304,
+      QUOTA_BYTES_PER_ITEM: isSync ? 8192 : 524288,
+      MAX_ITEMS: isSync ? 512 : 2048,
       get: function(keys, callback) {
         let actualKeys = keys;
         let cb = callback;
@@ -199,6 +205,7 @@ function createNxrScope(config) {
   const storageSync = createPersistentStorageArea('sync');
 
   const storageSession = Object.freeze({
+    QUOTA_BYTES: 1048576,
     get: function(keys, callback) {
       let actualKeys = keys;
       let cb = callback;
@@ -253,7 +260,7 @@ function createNxrScope(config) {
   });
 
   function resolveUrl(path) {
-    return 'nxr://' + extId + '/' + String(path || '').replace(/^\/+/, '');
+    return baseUrl + String(path || '').replace(/^\/+/, '');
   }
 
   function createSafePort(name) {
@@ -287,6 +294,18 @@ function createNxrScope(config) {
       return jsonParse(jsonStringify(manifest));
     },
     getURL: resolveUrl,
+    getPlatformInfo: function(callback) {
+      return withOptionalCallback(
+        Promise.resolve({ os: 'android', arch: 'arm', nacl_arch: 'arm' }),
+        callback
+      );
+    },
+    getBrowserInfo: function(callback) {
+      return withOptionalCallback(
+        Promise.resolve({ name: 'Nexo', vendor: 'Nexo', version: '5.0', buildID: 'cefrium-0.21.0' }),
+        callback
+      );
+    },
     sendMessage: function() {
       const args = Array.prototype.slice.call(arguments);
       let callback;
@@ -314,6 +333,52 @@ function createNxrScope(config) {
     inIncognitoContext: false
   });
 
+  const grantedPerms = Array.isArray(manifest.permissions) ? manifest.permissions.slice() : [];
+  const grantedOrigins = Array.isArray(manifest.host_permissions) ? manifest.host_permissions.slice() : [];
+  const permissionsApi = Object.freeze({
+    contains: function(req, callback) {
+      const wantedPerms = req && Array.isArray(req.permissions) ? req.permissions : [];
+      const wantedOrigins = req && Array.isArray(req.origins) ? req.origins : [];
+      const permsOk = wantedPerms.every(function(p) { return grantedPerms.includes(p); });
+      const originsOk = wantedOrigins.length === 0 || grantedOrigins.includes('<all_urls>') ||
+        wantedOrigins.every(function(o) { return grantedOrigins.includes(o); });
+      return withOptionalCallback(Promise.resolve(permsOk && originsOk), callback);
+    },
+    getAll: function(callback) {
+      return withOptionalCallback(
+        Promise.resolve({ permissions: grantedPerms.slice(), origins: grantedOrigins.slice() }),
+        callback
+      );
+    },
+    request: function(req, callback) {
+      return permissionsApi.contains(req, callback);
+    }
+  });
+
+  let actionBadgeText = '';
+  let actionTitle = String(manifest.name || '');
+  const actionApi = Object.freeze({
+    setBadgeText: function(details, cb) {
+      if (details && details.text != null) actionBadgeText = String(details.text);
+      return withOptionalCallback(Promise.resolve(), cb);
+    },
+    getBadgeText: function(_details, cb) {
+      if (typeof _details === 'function') { cb = _details; }
+      return withOptionalCallback(Promise.resolve(actionBadgeText), cb);
+    },
+    setBadgeBackgroundColor: function(_details, cb) { return withOptionalCallback(Promise.resolve(), cb); },
+    setTitle: function(details, cb) {
+      if (details && details.title != null) actionTitle = String(details.title);
+      return withOptionalCallback(Promise.resolve(), cb);
+    },
+    getTitle: function(_details, cb) {
+      if (typeof _details === 'function') { cb = _details; }
+      return withOptionalCallback(Promise.resolve(actionTitle), cb);
+    },
+    setIcon: function(_details, cb) { return withOptionalCallback(Promise.resolve(), cb); },
+    onClicked: makeEventTarget(actionClickedListeners)
+  });
+
   const i18n = Object.freeze({
     getMessage: function(key, substitutions) {
       const k = String(key || '');
@@ -330,12 +395,21 @@ function createNxrScope(config) {
     },
     getUILanguage: function() {
       return (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'es';
+    },
+    getAcceptLanguages: function(callback) {
+      const langs = (typeof navigator !== 'undefined' && Array.isArray(navigator.languages) && navigator.languages.length)
+        ? navigator.languages.slice()
+        : [i18n.getUILanguage()];
+      return withOptionalCallback(Promise.resolve(langs), callback);
     }
   });
 
   const api = Object.freeze({
     runtime: runtime,
     extension: extensionLegacy,
+    permissions: permissionsApi,
+    action: actionApi,
+    browserAction: actionApi,
     storage: Object.freeze({
       local: storageLocal,
       sync: storageSync,

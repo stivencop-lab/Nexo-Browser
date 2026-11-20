@@ -689,8 +689,16 @@
 
   function captionVideo() {
     const videos = collectVideos().filter(video => hasMedia(video));
-    return (pipVideo && pipVideo.isConnected ? pipVideo : null) ||
+    const foundVideo = (pipVideo && pipVideo.isConnected ? pipVideo : null) ||
       bestVideo(videos, true) || bestVideo(videos, false);
+    if (foundVideo) return foundVideo;
+    // También detectar reproductores <audio> (podcasts, radio web, notas de voz) si no hay <video>.
+    try {
+      const audios = Array.from(document.querySelectorAll("audio")).filter(a => hasMedia(a));
+      return audios.find(a => !a.paused && !a.ended) || audios[0] || null;
+    } catch (_) {
+      return null;
+    }
   }
 
   function bytesToBase64(buffer) {

@@ -434,6 +434,17 @@ object LiveCaptions {
     fun captureToken(session: EngineSession): Any? = active[session]
     fun matchesCapture(session: EngineSession, token: Any): Boolean = active[session] === token
     fun usingDeviceAudio(session: EngineSession?): Boolean = session?.let { active[it]?.deviceAudio } == true
+    fun deviceLevel(session: EngineSession?): Int = session?.let { active[it]?.deviceLevel } ?: 0
+    fun sourceLabel(session: EngineSession?): String {
+        val stream = session?.let { active[it] } ?: return "Desactivados"
+        return when {
+            stream.deviceAudio -> "Captura universal de Android"
+            stream.trackMode -> "Pista de subtítulos del video"
+            stream.domMode -> "Subtítulos del reproductor"
+            stream.startedAt > 0L -> "Audio directo de la página"
+            else -> "Buscando reproductor o audio…"
+        }
+    }
 
     /** La página no participa: captura de Android activa o pidiendo permiso. */
     fun pageSuspended(session: EngineSession?): Boolean =
@@ -474,7 +485,7 @@ object LiveCaptions {
         val text = stream.lastResultAt > 0L || !stream.text.isEmpty || stream.cues.isNotEmpty()
         val textSource = stream.trackMode || stream.domMode
         val list = mutableListOf<Pair<String, Boolean?>>()
-        list += (if (stream.deviceAudio) "Captura de Android activa" else "Reproductor encontrado") to (stream.deviceAudio || stream.videoFound || textSource || stream.startedAt > 0)
+        list += (if (stream.deviceAudio) "Captura universal de Android activa" else "Reproductor encontrado") to (stream.deviceAudio || stream.videoFound || textSource || stream.startedAt > 0)
         if (textSource) {
             list += (if (stream.trackMode) "Pista de subtítulos del video" else "Texto del reproductor") to true
             list += "Texto recibido" to text
@@ -503,7 +514,7 @@ object LiveCaptions {
         stream.text.clear(); stream.headerChecked = true
         stream.receivedBytes = 0; stream.lastAudioAt = 0; stream.lastResultAt = 0
         stream.startedAt = System.currentTimeMillis(); stream.signal = false
-        setState(stream,State.CONNECTING,"Capturando el audio con Android · conectando…")
+        setState(stream,State.CONNECTING,"Capturando todo el audio con Android · conectando…")
         connect(AppContext.get(),stream,CaptionProtocol.modelFor(stream.language))
         return true
     }
@@ -514,7 +525,7 @@ object LiveCaptions {
     fun onDeviceLevel(session: EngineSession, peak: Int, playing: Boolean) {
         val stream = active[session] ?: return
         if (!stream.deviceAudio || stream.state == State.ERROR) return
-        val level = (peak * 100 / 32767).coerceIn(0, 100).let { if (peak > 120 && it == 0) 1 else it }
+        val level = (peak * 100 / 32767).coerceIn(0, 100).let { if (peak > 24 && it == 0) 1 else it }
         stream.deviceLevel = level
         stream.devicePlaying = playing
         val now = SystemClock.uptimeMillis()
@@ -531,20 +542,20 @@ object LiveCaptions {
     private fun deviceMessage(stream: Stream, now: Long): String {
         val level = "nivel ${(stream.deviceLevel / 5) * 5} %".let { if (stream.deviceLevel in 1..4) "nivel bajo" else it }
         return when {
-            stream.deviceLevel == 0 && !stream.devicePlaying -> "Android escuchando · aún no llega sonido (¿el video está en pausa?)"
-            stream.deviceLevel == 0 -> "Android captura pero solo llega silencio (nivel 0 %) · comprueba que el video suene"
-            !stream.opened -> "Android oye el video ($level) · conectando con Deepgram…"
+            stream.deviceLevel == 0 && !stream.devicePlaying -> "Android escuchando · aún no llega sonido (reproduce el audio o video)"
+            stream.deviceLevel == 0 -> "Android captura pero llega silencio (nivel 0 %) · sube el volumen multimedia"
+            !stream.opened -> "Android oye el audio ($level) · conectando con Deepgram…"
             stream.deviceSignalSince > 0 && now - stream.deviceSignalSince > 15000 ->
-                "Android oye el video ($level), pero Deepgram no devuelve texto. Revisa el idioma del audio en CC (ahora: ${languageLabel(stream)})."
-            else -> "Android oye el video ($level) · Deepgram escuchando (${languageLabel(stream)})…"
+                "Android oye el audio ($level), pero Deepgram no devuelve texto. Revisa el idioma en CC (ahora: ${languageLabel(stream)})."
+            else -> "Android oye el audio ($level) · transcribiendo (${languageLabel(stream)})…"
         }
     }
 
     fun onDeviceAudio(session: EngineSession, bytes: ByteArray) {
         val stream = active[session] ?: return
         if (!stream.deviceAudio) return
-        if (!stream.signal && PlaybackPcm.hasSignal(bytes)) onStatus(session,"signal")
-        acceptAudio(session,stream,bytes)
+        if (!stream.signal && PlaybackPcm.hasWeakSignal(bytes, floor = 24)) onStatus(session, "signal")
+        acceptAudio(session, stream, bytes)
     }
 
     fun onAudio(session: EngineSession, base64: String) {

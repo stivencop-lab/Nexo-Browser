@@ -1,7 +1,6 @@
 package com.nexo.browser.extensions.hub
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Dialog
 import android.os.Handler
 import android.os.Looper
@@ -499,18 +498,47 @@ object ExtensionHubSheets {
         )
     }
 
-    private fun showLoadingDialog(activity: Activity, title: String, message: String): AlertDialog =
-        AlertDialog.Builder(activity)
-            .setTitle(title)
-            .setMessage(message)
-            .setCancelable(false)
-            .show()
+    private fun showLoadingDialog(activity: Activity, title: String, message: String): Dialog {
+        val p = ThemeManager.palette(activity)
+        val body = NexoUi.column(activity)
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, NexoUi.dp(activity, 6f), 0, NexoUi.dp(activity, 10f))
+            addView(android.widget.ProgressBar(activity).apply {
+                isIndeterminate = true
+                indeterminateTintList = android.content.res.ColorStateList.valueOf(p.accent)
+            }, LinearLayout.LayoutParams(NexoUi.dp(activity, 28f), NexoUi.dp(activity, 28f)).apply {
+                marginEnd = NexoUi.dp(activity, 14f)
+            })
+            addView(TextView(activity).apply {
+                text = message
+                textSize = 14f
+                typeface = NexoUi.regular(activity)
+                setTextColor(p.muted)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        body.addView(row)
+        return NexoSheets.show(
+            activity,
+            NexoSheets.column(activity, NexoSheets.header(activity, title, "Verificación criptográfica NXR"), body)
+        ).apply {
+            setCancelable(false)
+            setCanceledOnTouchOutside(false)
+        }
+    }
 
     private fun showErrorDialog(activity: Activity, title: String, message: String) {
-        AlertDialog.Builder(activity)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("Aceptar", null)
-            .show()
+        lateinit var sheet: Dialog
+        val body = NexoUi.column(activity)
+        body.addView(NexoUi.statusPill(activity, "Operación detenida", NexoUi.Tone.DANGER))
+        body.addView(NexoUi.note(activity, message))
+        body.addView(NexoUi.button(activity, "Entendido", primary = true) {
+            sheet.dismiss()
+        }, NexoUi.buttonParams(activity, 10f))
+        sheet = NexoSheets.show(
+            activity,
+            NexoSheets.column(activity, NexoSheets.header(activity, title, "Nexo Extension Hub"), body)
+        )
     }
 }

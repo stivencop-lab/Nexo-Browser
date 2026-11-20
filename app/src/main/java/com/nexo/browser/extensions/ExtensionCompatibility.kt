@@ -59,13 +59,13 @@ object ExtensionCompatibility {
 
     /** Matriz pública y auditable de las 20 APIs principales de WebExtensions sobre Cefrium 0.21.0. */
     val API_MATRIX: List<ApiMatrixRow> = listOf(
-        ApiMatrixRow("storage", ApiSupport.SUPPORTED, "chrome.storage.local aislado por extensión y particionado por origen (cuota 512 KB)."),
+        ApiMatrixRow("storage", ApiSupport.SUPPORTED, "chrome.storage.local/sync/session aislados por extensión y particionados por origen (cuota 4 MB)."),
         ApiMatrixRow("runtime", ApiSupport.LIMITED, "id, getManifest(), getURL(), onMessage y sendMessage locales; sin service worker persistente."),
-        ApiMatrixRow("i18n", ApiSupport.SUPPORTED, "chrome.i18n.getMessage y getUILanguage usando _locales del paquete."),
+        ApiMatrixRow("i18n", ApiSupport.SUPPORTED, "chrome.i18n.getMessage, getUILanguage y getAcceptLanguages usando _locales del paquete."),
         ApiMatrixRow("content_scripts", ApiSupport.LIMITED, "Inyección JS/CSS en document_start/end/idle con MatchPattern; sin mundos V8 aislados en Cefrium 0.21.0 (cierre NXR protege tokens)."),
         ApiMatrixRow("host_permissions", ApiSupport.SUPPORTED, "Validación de MatchPattern, permisos por sitio, revocación inmediata y bloqueo en pestañas privadas por defecto."),
-        ApiMatrixRow("action", ApiSupport.LIMITED, "Acción desde la ficha NXR con evento NXR_ACTION_CLICKED; los popups HTML privilegiados no se ejecutan como ventana nativa."),
-        ApiMatrixRow("options_ui", ApiSupport.LIMITED, "Ajustes nativos de permisos, sitios y almacenamiento en Nexo; las páginas HTML de opciones no tienen APIs privilegiadas."),
+        ApiMatrixRow("action", ApiSupport.LIMITED, "Interfaz popup HTML en panel NXR aislado y evento NXR_ACTION_CLICKED hacia la pestaña activa."),
+        ApiMatrixRow("options_ui", ApiSupport.LIMITED, "Página HTML de opciones en panel NXR aislado + ajustes nativos de permisos, sitios y almacenamiento en Nexo."),
         ApiMatrixRow("web_accessible_resources", ApiSupport.LIMITED, "Recursos del paquete validados contra Zip Slip; no se montan en chrome-extension:// dentro del renderer."),
         ApiMatrixRow("tabs", ApiSupport.UNSUPPORTED, "Cefrium 0.21.0 no expone chrome.tabs a extensiones de terceros; el shim registra el límite en diagnóstico."),
         ApiMatrixRow("activeTab", ApiSupport.LIMITED, "Acceso manual a la pestaña activa desde la hoja NXR tras gesto del usuario."),
@@ -91,7 +91,7 @@ object ExtensionCompatibility {
         "activeTab" to "Acción manual sobre la pestaña activa desde la ficha NXR tras consentimiento explícito.",
         "clipboardWrite" to "Solo mediante la API web estándar tras un gesto directo del usuario.",
         "clipboardRead" to "Solo tras gesto directo del usuario y permisos web estándar.",
-        "unlimitedStorage" to "NXR mantiene una cuota fija de 512 KB por extensión para proteger el almacenamiento.",
+        "unlimitedStorage" to "NXR mantiene una cuota fija de 4 MB por extensión para proteger el almacenamiento.",
         "userScripts" to "Se ejecutan como content scripts sin mundo V8 aislado del motor."
     )
 
