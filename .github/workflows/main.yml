@@ -274,7 +274,10 @@ jobs:
           fi
 
           # Nunca reemplazar los APK de un release ya publicado.
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+          # Excepción: cuando el propio tag v* es el disparador del run, el tag
+          # ya existe legítimamente (y aún no hay release publicada con él).
+          if [[ "$GITHUB_REF" != "refs/tags/$TAG" ]] &&
+             git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "::error::El tag $TAG ya existe. Sube versionCode/versionName antes de publicar."
             exit 1
           fi
