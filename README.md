@@ -1,12 +1,12 @@
 # Nexo Browser
 
-> **Versión en Gradle:** `0.34.0` · `versionCode 68` · Paquete `com.nexo.browser`
+> **Versión en Gradle:** `0.37.0` · `versionCode 71` · Paquete `com.nexo.browser`
 >
-> **Última release publicada:** [v0.34.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.34.0) · Motor **Chromium 156** embebido mediante [Cefrium](https://cefrium.com) `0.21.0` (LGPL-3.0) · Android 10+ (`minSdk 29`, `targetSdk 35`, `compileSdk 37.2`).
+> **Última release publicada:** [v0.37.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.37.0) · Motor **Chromium 156** embebido mediante [Cefrium](https://cefrium.com) `0.21.0` (LGPL-3.0) · Android 10+ (`minSdk 29`, `targetSdk 35`, `compileSdk 37.2`).
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
-Nexo Browser es un navegador Android nativo en **Kotlin/XML** con Chromium embebido (Cefrium), sistema de diseño unificado **Nexo UI 5.0** (superficies tonales limpias, cápsula unificada de direcciones con botón permanente ✨ de Nexo AI, dock inferior flotante y modo OLED cuidado), buscador universal (**Nexo Command**), organización avanzada de pestañas (**Nexo Tabs Pro**), panel unificado por sitio (**Nexo Site Control**), tienda/gestor de extensiones Chromium (**Nexo Extension Hub** sobre **NXR**), modo lectura con voz alta y guardado offline (**Nexo Reader**), favoritos y espacios de trabajo (**Nexo Workspace**), bloqueo integrado (**PhantomShield**), reproductor multimedia (**Nexo Media Engine**), modo oscuro temprano (**Nexo Dark Engine**), asistente conversacional opcional (**Nexo AI**), subtítulos en vivo y traducción completa en el DOM.
+Nexo Browser es un navegador Android nativo en **Kotlin/XML** con Chromium embebido (Cefrium), sistema de diseño unificado **Nexo UI 5.0** (superficies tonales limpias, cápsula unificada de direcciones con botón permanente ✨ de Nexo AI, dock inferior flotante y modo OLED cuidado), buscador universal (**Nexo Command**), organización avanzada de pestañas (**Nexo Tabs Pro**), panel unificado por sitio (**Nexo Site Control**), tienda/gestor de extensiones Chromium de PC (**Nexo Extension Hub** sobre **NXR** con modo escritorio automático en tiendas, instalación en streaming y visor HTML aislado para popups/opciones), modo lectura con voz alta y guardado offline (**Nexo Reader**), favoritos y espacios de trabajo (**Nexo Workspace**), bloqueo integrado (**PhantomShield**), reproductor multimedia (**Nexo Media Engine**), modo oscuro temprano (**Nexo Dark Engine**), asistente conversacional opcional (**Nexo AI**), subtítulos en vivo con captura universal de audio Android y traducción completa en el DOM.
 
 Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a Chromium nativo](docs/CHROMIUM-NATIVE-MIGRATION.md)). Desde `0.25.0`, el identificador Android es `com.nexo.browser` (ver [cambio de identidad](docs/IDENTIDAD-NEXO.md)).
 
@@ -22,10 +22,10 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 | **Motor Chromium (Cefrium público)** | `app/src/main/java/com/nexo/browser/engine/cefrium/` (`CefriumEngine`, `CefriumEngineSession`, `CefriumPageView`, `EngineDiagnostics`) usando exclusivamente la API pública `com.cefrium.*` |
 | **Puente página ↔ nativo** | `PageChannel` + `PageBridge` + `assets/nexo/cefrium-port.js` (`cefriumQuery` congelado en `document_start`) + `page-bridge.js`; extracción de Nexo AI, Nexo Reader y Traductor vía retorno directo de `evaluateJavaScript` |
 | **Privacidad y bloqueo** | `app/src/main/java/com/nexo/browser/shield/` (`PhantomShield` con caché LRU de red y dedup IA, `ShieldAiHost`, `ShieldPolicy`, `NetworkBlocker`, `BurnerMailbox`) + `assets/extensions/phantomshield/` |
-| **Nexo Extension Hub + NXR** | `app/src/main/java/com/nexo/browser/extensions/hub/` (`ExtensionStoreResolver`, `ExtensionStoreClient`, `ExtensionUpdateManager`, `ExtensionHubSheets`), `app/src/main/java/com/nexo/browser/extensions/nxr/` (`NxrRuntime`, `NxrPackageInstaller`, `NxrPermissions`, `NxrStorage`), `CrxPackage`, `ExtensionCompatibility`, `ExtensionsActivity` |
+| **Nexo Extension Hub + NXR** | `app/src/main/java/com/nexo/browser/extensions/hub/` (`ExtensionStoreResolver`, `ExtensionStoreClient`, `ExtensionUpdateManager`, `ExtensionHubSheets`), `app/src/main/java/com/nexo/browser/extensions/nxr/` (`NxrRuntime`, `NxrExtensionPanel`, `NxrPackageInstaller`, `NxrPermissions`, `NxrStorage`), `CrxPackage`, `ExtensionCompatibility`, `ExtensionsActivity` |
 | **Nexo Reader** | `app/src/main/java/com/nexo/browser/reader/` (`NexoReader`, `OfflineArticleStore`) + `assets/nexo/reader-mode.js` |
 | **Nexo Workspace** | `app/src/main/java/com/nexo/browser/workspace/` (`BookmarkStore`, `WorkspaceStore`) + `BookmarksActivity` + `StartPageView` modular |
-| **Nexo Media Engine** | `app/src/main/java/com/nexo/browser/media/` (`NexoMediaEngine`, `MediaSitePrefs`) + `BrowserMediaController` + `CaptionsUi` + `LiveCaptions` + `page-bridge.js` |
+| **Nexo Media Engine y Subtítulos** | `app/src/main/java/com/nexo/browser/media/` (`NexoMediaEngine`, `MediaSitePrefs`) + `BrowserMediaController` + `CaptionsUi` + `LiveCaptions` + `PlaybackAudioCapture` + `PlaybackPcm` + `SystemCaptions` + `page-bridge.js` |
 | **Nexo Dark Engine** | `app/src/main/java/com/nexo/browser/dark/DarkEngine.kt` + `assets/nexo/dark-engine.js` + `NightMode` |
 | **Nexo AI y Traductor** | `app/src/main/java/com/nexo/browser/ai/` (`NexoAiConfig`, `NexoAiClient`, `NexoAiPageAgent`, `NexoAiSheet`) + `assets/nexo/ai-page-agent.js` + `TranslatorManager` + `assets/nexo/page-translator.js` |
 
@@ -37,6 +37,7 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 - **Sistema visual Nexo Premium:** tokens de contraste WCAG AAA/AA en `BrowserColors`, primitivas tonales unificadas (`NexoUi.Tokens`, `statusPill`, `metricTile`, `emptyState`, `searchBar`, `insetDivider`, `NexoSheets.showFixed`) en `NexoUi`, `NexoSheets` y `ThemeManager`, tipografía Inter + JetBrains Mono, temas **Claro / Midnight / OLED (`#000000`) / Color dinámico**, verificación de escala `200 %`, adaptabilidad `360 dp` / `412 dp` / `600 dp+` / horizontal y respeto a reducción de movimiento (`ANIMATOR_DURATION_SCALE`).
 - **Chrome principal rediseñado (`activity_main.xml`, `MainActivity`):** cápsula unificada de direcciones (seguridad del sitio + omnibox expandida + botón permanente ✨ de Nexo AI integrado), contador de pestañas y menú `⋮` alineados ópticamente, y dock inferior flotante con pista de gestos.
 - **Tres modos de navegación (`NavConfig`, `NavCustomizerSheet`):** **Clásico**, **Compacto** y **Personalizado** (3 a 6 acciones). Incluye ocultación inteligente del dock al desplazarse (nunca durante edición de URL, búsqueda, IME, inicio, pantalla completa o PiP), *edge-to-edge* y **Predictive Back** en Android 13+.
+- **Hojas y tarjetas unificadas:** migración de los diálogos heredados de Extension Hub, NXR y Subtítulos en vivo a `NexoSheets`, con tarjetas modernas, iconos decodificados e interruptores en línea.
 
 ### 2. Nexo Command (`NexoCommandEngine` + `OmniboxSuggestions`)
 - **Buscador universal local + web:** busca simultáneamente en pestañas abiertas, grupos, favoritos, accesos rápidos, historial local, ajustes y comandos del navegador, además de sugerencias web cuando corresponde.
@@ -52,8 +53,11 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 - **Panel contextual de 5 secciones:** *Sitio y conexión* (dominio, estado HTTPS sin prometer seguridad absoluta, permisos), *Privacidad* (PhantomShield, excepciones, cookies, cámara/micrófono/ubicación), *Experiencia* (Nexo Dark Engine por sitio, zoom real vía Cefrium `setZoomLevel`, silenciar audio vía `setAudioMuted`, traducción, Nexo Reader, Media Engine y subtítulos), *Extensiones* (extensiones NXR activas en el sitio y revocación rápida) e *IA* (permiso explícito por dominio para Nexo AI, aplicado también dentro de `NexoAiSheet`).
 
 ### 5. Nexo Extension Hub + NXR (`com.nexo.browser.extensions`)
-- **Fuentes compatibles** ([guía completa](docs/NEXO-EXTENSION-HUB.md)): **Chrome Web Store** (Omaha XML sin cookies), **Microsoft Edge Add-ons** (API JSON oficial + descarga CRX3 verificada), **archivos locales** (`.crx`, `.zip`, `.xpi`) y **paquetes HTTPS directos** de desarrolladores.
-- **Barra contextual sin intrusión:** observador puro de URL en `MainActivity` que muestra «Instalar en Nexo» / «Gestionar en Nexo» al abrir una ficha en CWS o Edge Add-ons, **sin inyección DOM en la tienda ni falsificación de User-Agent**.
+- **Fuentes compatibles y modo escritorio automático** ([guía completa](docs/NEXO-EXTENSION-HUB.md)): **Chrome Web Store** (Omaha `156.0.0.0` con respaldo directo `response=redirect` sin cookies), **Microsoft Edge Add-ons** (API JSON oficial + descarga CRX3 verificada), **archivos locales** (`.crx`, `.zip`, `.xpi`) y **paquetes HTTPS directos** de desarrolladores. Al detectar Chrome Web Store o Edge Add-ons, `TabManager` activa automáticamente el **modo escritorio** para evitar bloqueos móviles de la tienda.
+- **Instalación en streaming para extensiones grandes de PC:** `NxrPackageInstaller` valida y extrae en streaming directo a disco sin los antiguos límites restrictivos de 10 MB / 2 MB / 200 archivos (hasta 512 MB descomprimidos, 256 MB de descarga, 16 MB por script y 20 000 archivos), manteniendo defensa contra *Zip Slip*, duplicados y bombas ZIP.
+- **Visor HTML aislado de Popups y Opciones (`NxrExtensionPanel`):** renderiza `action.default_popup` y `options_page` / `options_ui` reales dentro de una hoja inferior aislada sobre `CefriumProfile.get("nexo_nxr_ext_ui")` y `CefriumContentServer` (`https://nxr-ui.nexo.invalid`), con puente `QueryHandler` autenticado por token efímero hacia `NxrStorage` (**cuota de 4 MB**) y mensajería a la pestaña activa.
+- **Runtime WebExtensions ampliado (`nxr-runtime-shim.js`):** ámbito léxico compartido entre `content_scripts`, inyección automática en navegaciones SPA (`onUrlChanged`), `storage.local`/`sync`/`session`/`onChanged`, `runtime.connect`/`getPlatformInfo`/`getBrowserInfo`/`getURL`, `permissions.contains`/`getAll`, `action`/`browserAction` e `i18n.getAcceptLanguages`.
+- **Tarjetas modernas y barra contextual:** `ExtensionsActivity` muestra los iconos reales del paquete e interruptores `Switch` en 1 toque; `MainActivity` ofrece la barra contextual «Instalar en Nexo» / «Gestionar» con indicador de *Modo escritorio* **sin inyección DOM en la tienda**.
 - **Seguridad y honestidad técnica:** validación CRX3 endurecida contra ZIP EOCD, continuidad obligatoria de clave pública (`publicKeySha256`), instalación segura por defecto (`enabled = false`) en paquetes riesgosos/parciales/no verificados, actualizaciones transaccionales con diff de permisos y consentimiento explícito, ciclo de vida de 4 estados (**Descargada / Instalada / Habilitada / Funcionando**) y **matriz auditable de 20 APIs WebExtension** sobre Cefrium `0.21.0`.
 
 ### 6. Nexo Reader (`com.nexo.browser.reader`)
@@ -66,8 +70,8 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 - **Espacios de trabajo (`WorkspaceStore`):** colecciones con nombre de pestañas y grupos restauradas de forma perezosa (solo despierta la pestaña activa); **excluye estrictamente pestañas privadas y Burner**.
 - **Inicio personalizable (`StartPageView`):** bloques activables (*Accesos rápidos* con reordenamiento, *Favoritos*, *Espacios*, *Grupos activos*, *Lectura sin conexión* y *PhantomShield*).
 
-### 8. Nexo Media Engine, Dark Engine, PhantomShield y Nexo AI
-- **Nexo Media Engine (`com.nexo.browser.media`):** velocidad (`0.25x–3.0x`), salto rápido (`5–30 s`), gestos en pantalla completa, subtítulos nativos/WebVTT/HLS/SRT o Deepgram con desfase en ms, PiP y reproducción en segundo plano con preferencias por sitio.
+### 8. Nexo Media Engine, Subtítulos en vivo, Dark Engine, PhantomShield y Nexo AI
+- **Nexo Media Engine (`com.nexo.browser.media`) y Subtítulos en vivo (`LiveCaptions`, `PlaybackAudioCapture`, `PlaybackPcm`, `CaptionsUi`):** velocidad (`0.25x–3.0x`), salto rápido (`5–30 s`), gestos en pantalla completa, subtítulos nativos/WebVTT/HLS/SRT o transcripción en vivo con Deepgram, PiP y reproducción en segundo plano. Incluye **captura universal de audio en Android 10+** (`allowAudioPlaybackCapture="true"`, `ALLOW_CAPTURE_BY_ALL` en proceso principal y subprocesos Chromium, negociación nativa `48 kHz estéreo → 44.1 kHz estéreo → 48 kHz mono → 16 kHz mono` con remuestreo `PlaybackPcm.to16kMono`, detección de bajo volumen, soporte de `<audio>`, medidor de señal en tiempo real y activación en 1 toque), además de acceso directo a **Subtítulos instantáneos de Android (Offline)** para contenido con DRM hardware.
 - **Nexo Dark Engine (`com.nexo.browser.dark`):** Auto/Claro/Oscuro/OLED, política síncrona por sitio en `document_start`, modo híbrido sin autointerferencia y protección de imágenes/vídeos/canvas/formularios.
 - **PhantomShield:** bloqueo de red EasyList/uBlock con caché LRU, reglas cosméticas, YouTube, popunders (`$popup`), limpieza de parámetros de rastreo (también al compartir enlaces desde `MainActivity`) e IA opcional (3 proveedores, soporte NVIDIA/APIs estrictas, timeout 90 s).
 - **Nexo AI y Traductor:** interfaz conversacional nativa (`NexoAiSheet`) con cabecera fija, vista de configuración integrada sin salir del asistente, acciones rápidas en cuadrícula, hilo legible y campo de entrada fijo con envío/cancelación; opt-in con consentimiento, claves en Android Keystore (`SecretStore`), extracción sin token vía `evaluateJavaScript`, defensa `<UNTRUSTED_PAGE_CONTEXT>`, control por dominio, comparación de pestañas y traducción completa restaurable sin recargar.
@@ -79,28 +83,28 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 | Área / Capacidad | Estado real | Notas técnicas |
 | --- | --- | --- |
 | Motor Chromium 156 (Cefrium `0.21.0`), ciclo de vida endurecido (`isClosed`, `docGen`), pestañas, Burner, descargas | **Implementado y verificado en CI** | API pública `com.cefrium.*`; pruebas JVM y política de seguridad en CI |
-| **Nexo UI 5.0**, Navegación adaptable, Predictive Back, Inicio, Selector de pestañas, Nexo AI, Ajustes y pantallas secundarias | **Implementado y verificado (JVM + Robolectric)** | Capturas antes/después (render Robolectric Native Graphics), contraste AAA/AA, `360 dp`/`412 dp`/`680 dp`/horizontal, Claro/Midnight/OLED y escala `200 %` verificados; validación interactiva en dispositivo físico Android pendiente |
+| **Nexo UI 5.0**, Navegación adaptable, Predictive Back, Inicio, Selector de pestañas, Nexo AI, Ajustes y hojas `NexoSheets` | **Implementado y verificado (JVM + Robolectric)** | Capturas antes/después (Robolectric Native Graphics), contraste AAA/AA, `360 dp`/`412 dp`/`680 dp`/horizontal, Claro/Midnight/OLED y escala `200 %` verificados |
 | **Nexo Command** (`@tabs`, `@history`, `@actions`, `@settings`, `@bookmarks`) y **Nexo Tabs Pro** | **Implementado y probado (JVM + Robolectric)** | Privacidad estricta de búsqueda local; pestañas fijadas y detección no destructiva de duplicados |
 | **Nexo Site Control** (5 secciones: sitio, privacidad, experiencia, extensiones, IA) | **Implementado y probado (JVM + Robolectric)** | Conectado a `setZoomLevel`, `setAudioMuted`, `SitePermissionStore`, PhantomShield, Dark Engine, NXR y Nexo AI |
-| **Nexo Extension Hub + NXR** (CWS, Edge Add-ons, local, HTTPS directo, CRX3, actualizaciones, 20 APIs) | **Parcialmente soportado (progresivo y honesto)** | Descarga/verifica/actualiza CRX3 reales y ejecuta `content_scripts`, CSS, `storage` por origen, `i18n` y acciones; **sin** mundos V8 aislados, *service workers* MV3 persistentes, DNR ni `chrome.tabs`/`cookies` de terceros por límites de Cefrium `0.21.0` |
-| **Nexo Reader** (extractor semántico, vista nativa saneada, TTS, offline 50/10 MB) y **Nexo Workspace** | **Implementado y probado (JVM + JS)** | Cero ejecución de HTML/JS de página; TTS y rendimiento de desplazamiento a validar en dispositivo físico |
-| **Nexo Media Engine**, **Nexo Dark Engine**, **Nexo AI** y **Traductor** | **Implementado y probado (JVM + JS)** | Sincronía A/V, ausencia de destello en primer fotograma y TTS real requieren validación en hardware Android |
-| Captura de audio de vídeo protegido con DRM/EME o evasión de *paywalls* | **No soportado por diseño y motor/SO** | Android y Chromium bloquean flujos DRM; Nexo nunca elude DRM ni muros de pago |
+| **Nexo Extension Hub + NXR** (CWS, Edge Add-ons, modo escritorio auto, streaming PC, popups/opciones HTML, CRX3, 20 APIs) | **Parcialmente soportado (progresivo y honesto)** | Descarga/verifica/actualiza CRX3 reales de gran tamaño, renderiza `action.default_popup` y `options_page` en panel Cefrium aislado, y ejecuta `content_scripts`, CSS, `storage` (4 MB) por origen, `i18n` y acciones; **sin** mundos V8 aislados, *service workers* MV3 persistentes, DNR ni `chrome.tabs`/`cookies` de terceros por límites de Cefrium `0.21.0` |
+| **Nexo Reader** (extractor semántico, vista nativa saneada, TTS, offline 50/10 MB) y **Nexo Workspace** | **Implementado y probado (JVM + JS)** | Cero ejecución de HTML/JS de página |
+| **Nexo Media Engine**, **Subtítulos en vivo (captura universal Android)**, **Nexo Dark Engine**, **Nexo AI** y **Traductor** | **Implementado y probado (JVM + JS)** | Negociación nativa `48/44.1 kHz → 16 kHz mono`, medidor en vivo y captura en 1 toque sobre `AudioPlaybackCapture` |
+| Captura de audio de vídeo protegido con DRM/EME hardware (Widevine L1) o evasión de *paywalls* | **No soportado por diseño y SO** | Android bloquea flujos DRM hardware para apps de terceros (se ofrece acceso en 1 toque a Subtítulos instantáneos de Android); Nexo nunca elude DRM ni muros de pago |
 
 ---
 
 ## APK disponible
 
-La última release firmada publicada desde `main` es **Nexo Browser v0.34.0** (`versionCode 68`), paquete `com.nexo.browser`:
+La última release firmada publicada desde `main` es **Nexo Browser v0.37.0** (`versionCode 71`), paquete `com.nexo.browser`:
 
-- [Descargar APK `arm64-v8a` (recomendado)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.34.0/Nexo-v0.34.0-arm64-v8a.apk)
-- [Descargar APK `armeabi-v7a` (32 bits)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.34.0/Nexo-v0.34.0-armeabi-v7a.apk)
-- [Descargar `SHA256SUMS.txt`](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.34.0/SHA256SUMS.txt)
-- [Ver release v0.34.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.34.0)
+- [Descargar APK `arm64-v8a` (recomendado)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.37.0/Nexo-v0.37.0-arm64-v8a.apk)
+- [Descargar APK `armeabi-v7a` (32 bits)](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.37.0/Nexo-v0.37.0-armeabi-v7a.apk)
+- [Descargar `SHA256SUMS.txt`](https://github.com/stivencop414-bot/NavegadorGecko/releases/download/v0.37.0/SHA256SUMS.txt)
+- [Ver release v0.37.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.37.0)
 
-Hashes SHA-256 verificados en la release `v0.34.0`:
-- `Nexo-v0.34.0-arm64-v8a.apk`: `2a3fb15d0d0e7d98089ebe545123e619a2062f1de312164043f1c7284d0385ad`
-- `Nexo-v0.34.0-armeabi-v7a.apk`: `28921cea27f8157b493655ffbcbda170f079f01a0289ca921838ba2b9b1f56a5`
+Hashes SHA-256 verificados en la release `v0.37.0`:
+- `Nexo-v0.37.0-arm64-v8a.apk`: `613ebf80f7ea8a3638ed0ac000b8c09b56b12c472a1770c1c7ba12ae9ba581d9`
+- `Nexo-v0.37.0-armeabi-v7a.apk`: `a695325296b666268488e42e06fe5e72c068e8fbfa6cbf51a66eed0cdcfb26a6`
 
 ---
 
