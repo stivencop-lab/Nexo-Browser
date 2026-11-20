@@ -234,37 +234,39 @@ class StartPageView(
         val shieldPillBg = if (available) p.success.container else p.surfaceContainerHigh
         val shieldPillFg = if (available) p.success.onContainer else p.muted
 
-        val topPillBg = cardSurface(p)
-        val topPillInset = InsetDrawable(
-            ThemeManager.rounded(activity, topPillBg, 18f, if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null),
-            0, dp(5f), 0, dp(5f)
-        )
-        top.addView(LinearLayout(activity).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(48f)
-            setPadding(dp(12f), 0, dp(8f), 0)
-            background = ThemeManager.ripple(activity, topPillInset, 18f)
-            isClickable = true
-            isFocusable = true
-            contentDescription = "Abrir panel de PhantomShield"
-            setOnClickListener { onShield() }
-            addView(View(activity).apply {
-                background = ThemeManager.rounded(activity, shieldColor, 4f)
-            }, params(dp(7f), dp(7f)).apply { marginEnd = dp(8f) })
-            addView(text("PhantomShield", 12f, p.text, semiBold = true))
-            val statusLabel = when (badge) {
-                "OFF", "PAUSE" -> "Pausado"
-                null -> if (available) "Activo" else "Panel"
-                else -> badge
-            }
-            addView(text(statusLabel, 10.5f, shieldPillFg, bold = true).apply {
-                typeface = NexoUi.mono(activity)
-                setPadding(dp(7f), dp(2.5f), dp(7f), dp(2.5f))
-                background = ThemeManager.rounded(activity, shieldPillBg, 10f)
-            }, params(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = dp(8f)
+        if (isPrivate || cfg.showPrivacyCard) {
+            val topPillBg = cardSurface(p)
+            val topPillInset = InsetDrawable(
+                ThemeManager.rounded(activity, topPillBg, 18f, if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null),
+                0, dp(5f), 0, dp(5f)
+            )
+            top.addView(LinearLayout(activity).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(48f)
+                background = ThemeManager.ripple(activity, topPillInset, 18f)
+                setPadding(dp(12f), dp(5f), dp(8f), dp(5f))
+                isClickable = true
+                isFocusable = true
+                contentDescription = "Abrir panel de PhantomShield"
+                setOnClickListener { onShield() }
+                addView(View(activity).apply {
+                    background = ThemeManager.rounded(activity, shieldColor, 4f)
+                }, params(dp(7f), dp(7f)).apply { marginEnd = dp(8f) })
+                addView(text("PhantomShield", 12f, p.text, semiBold = true))
+                val statusLabel = when (badge) {
+                    "OFF", "PAUSE" -> "Pausado"
+                    null -> if (available) "Activo" else "Panel"
+                    else -> badge
+                }
+                addView(text(statusLabel, 10.5f, shieldPillFg, bold = true).apply {
+                    typeface = NexoUi.mono(activity)
+                    background = ThemeManager.rounded(activity, shieldPillBg, 10f)
+                    setPadding(dp(7f), dp(2.5f), dp(7f), dp(2.5f))
+                }, params(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginStart = dp(8f)
+                })
             })
-        })
+        }
         top.addView(View(activity), params(0, dp(1f)).apply { weight = 1f })
 
         fun topCircleAction(iconRes: Int, desc: String, active: Boolean = false, onClick: () -> Unit): ImageView {
@@ -276,8 +278,8 @@ class StartPageView(
                 setImageResource(iconRes)
                 imageTintList = ColorStateList.valueOf(tint)
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(dp(14f), dp(14f), dp(14f), dp(14f))
                 background = ThemeManager.ripple(activity, inset, 22f)
+                setPadding(dp(14f), dp(14f), dp(14f), dp(14f))
                 contentDescription = desc
                 isClickable = true
                 isFocusable = true
@@ -343,7 +345,7 @@ class StartPageView(
         }
 
         content.addView(View(activity), params(1, 0).apply { weight = 1f })
-        if (isPrivate || cfg.showPrivacyCard) {
+        if (isPrivate) {
             content.addView(privacyStrip(p, badge, available), params().apply { topMargin = dp(20f) })
         }
     }
@@ -412,7 +414,7 @@ class StartPageView(
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(text("Pregúntale a Nexo AI", 15f, p.text, semiBold = true))
-                addView(text("Resume páginas, traduce o compara tus pestañas", 12f, p.muted).apply {
+                addView(text("Resume, traduce o compara pestañas", 12f, p.muted).apply {
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
                     setPadding(0, dp(2f), 0, 0)

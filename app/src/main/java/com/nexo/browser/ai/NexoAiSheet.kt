@@ -553,7 +553,7 @@ object NexoAiSheet {
 
         lateinit var runTask: (String, String, String?) -> Unit
 
-        fun appendAssistantBubble(res: NexoAiClient.Response, promptUsed: String, labelUsed: String) {
+        fun appendAssistantBubble(res: NexoAiClient.AiResponse, promptUsed: String, labelUsed: String) {
             val card = NexoUi.card(activity, paddingDp = 15f)
             val answerView = TextView(activity).apply {
                 text = res.text

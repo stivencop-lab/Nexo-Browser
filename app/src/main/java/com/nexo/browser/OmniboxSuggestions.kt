@@ -335,7 +335,7 @@ class OmniboxSuggestions(
                         ellipsize = TextUtils.TruncateAt.MIDDLE
                     })
                 }
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(NexoUi.statusPill(activity, visual.badge, visual.tone), LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { marginStart = NexoUi.dp(activity, 8f) })

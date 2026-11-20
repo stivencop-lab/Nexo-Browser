@@ -176,7 +176,7 @@ class ExtensionsActivity : Activity() {
         storesRow.addView(storeSourceCard("Chrome Store", "Catálogo .crx oficial", p.primary.container, p.primary.onContainer) {
             openInBrowser(ExtensionStoreResolver.CWS_HOME_URL)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
-        storesRow.addView(storeSourceCard("Edge Add-ons", "Tienda Microsoft Edge", p.info.container, p.info.onContainer) {
+        storesRow.addView(storeSourceCard("Edge Add-ons", "Catálogo Edge", p.info.container, p.info.onContainer) {
             openInBrowser(ExtensionStoreResolver.EDGE_HOME_URL)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(storesRow)

@@ -121,7 +121,7 @@ object TabSwitcher {
         root.addView(searchBox, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins(dp(activity, 16f), dp(2f), dp(16f), dp(4f))
+            setMargins(dp(activity, 16f), dp(activity, 2f), dp(activity, 16f), dp(activity, 4f))
         })
 
         val groupBar = FrameLayout(activity)
@@ -222,7 +222,7 @@ object TabSwitcher {
             gravity = Gravity.CENTER
             setTextColor(p.accent)
             typeface = NexoUi.bold(activity)
-            setPadding(dp(activity, 14f), dp(8f), dp(14f), dp(8f))
+            setPadding(dp(activity, 14f), dp(activity, 8f), dp(activity, 14f), dp(activity, 8f))
             minWidth = dp(activity, 48f)
             minHeight = dp(activity, 48f)
             background = ThemeManager.ripple(activity, null, 14f)
@@ -232,7 +232,7 @@ object TabSwitcher {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(activity, 48f)
-            setPadding(dp(activity, 16f), dp(2f), dp(4f), dp(2f))
+            setPadding(dp(activity, 16f), dp(activity, 2f), dp(activity, 4f), dp(activity, 2f))
             background = ThemeManager.rounded(activity, p.surfaceContainerHighest, 16f, ThemeManager.hairline(p))
             elevation = dp(activity, 4f).toFloat()
             visibility = View.GONE
@@ -240,7 +240,7 @@ object TabSwitcher {
             addView(undoButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         root.addView(undoBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(dp(activity, 16f), dp(4f), dp(16f), dp(6f))
+            setMargins(dp(activity, 16f), dp(activity, 4f), dp(activity, 16f), dp(activity, 6f))
         })
 
         // ==================== BARRA INFERIOR PARA UNA SOLA MANO ====================
@@ -249,7 +249,7 @@ object TabSwitcher {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(if (p.isAmoled) p.background else p.surfaceContainerLow)
-            setPadding(dp(activity, 14f), dp(10f), dp(14f), dp(12f))
+            setPadding(dp(activity, 14f), dp(activity, 10f), dp(activity, 14f), dp(activity, 12f))
         }
         val closeAll = Button(activity).apply {
             text = "Cerrar todas"
@@ -261,8 +261,9 @@ object TabSwitcher {
             minimumWidth = 0
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            ThemeManager.styleButton(activity, this, danger = true)
-            setPadding(dp(activity, 14f), dp(10f), dp(14f), dp(10f))
+            ThemeManager.styleButton(activity, this, danger = false)
+            setTextColor(p.danger)
+            setPadding(dp(activity, 16f), dp(activity, 10f), dp(activity, 16f), dp(activity, 10f))
         }
         val newTabBtn = Button(activity).apply {
             text = "+ Nueva pestaña"
@@ -275,7 +276,7 @@ object TabSwitcher {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             ThemeManager.styleButton(activity, this, primary = true)
-            setPadding(dp(activity, 18f), dp(10f), dp(18f), dp(10f))
+            setPadding(dp(activity, 18f), dp(activity, 10f), dp(activity, 18f), dp(activity, 10f))
             setOnClickListener {
                 dialog.dismiss()
                 onNewTab(showPrivate)

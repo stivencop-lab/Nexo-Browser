@@ -301,13 +301,16 @@ object NexoUi {
     }
 
     /** Tarjeta tonal limpia: elevación por superficie con hairline sutil (sin borde pesado). */
-    fun card(activity: Activity): LinearLayout {
+    fun card(activity: Activity, paddingDp: Float = 16f): LinearLayout {
         val p = ThemeManager.palette(activity)
         val fill = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
+        val pad = dp(activity, paddingDp)
+        val vPad = dp(activity, if (paddingDp >= 14f) paddingDp - 2f else paddingDp)
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = ThemeManager.rounded(activity, fill, Tokens.RADIUS_CARD, ThemeManager.hairline(p))
-            setPadding(dp(activity, 16f), dp(activity, 14f), dp(activity, 16f), dp(activity, 14f))
+            clipToOutline = true
+            setPadding(pad, vPad, pad, vPad)
         }
     }
 
@@ -338,10 +341,10 @@ object NexoUi {
             minHeight = dp(activity, 48f)
             minWidth = dp(activity, 48f)
             isSelected = selected
-            setPadding(dp(activity, if (dotColor != null) 12f else 15f), 0, dp(activity, 15f), 0)
             typeface = if (selected) semiBold(activity) else medium(activity)
             setTextColor(if (selected) p.onAccentSoft else p.text)
             background = RippleDrawable(ColorStateList.valueOf(rippleColor), pillDrawable, maskDrawable)
+            setPadding(dp(activity, if (dotColor != null) 12f else 15f), vInset, dp(activity, 15f), vInset)
             if (dotColor != null) {
                 setCompoundDrawablesRelativeWithIntrinsicBounds(
                     GradientDrawable().apply {
@@ -430,7 +433,7 @@ object NexoUi {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(activity, 56f)
-            setPadding(0, dp(activity, 6f), 0, dp(activity, 6f))
+            setPadding(dp(activity, 12f), dp(activity, 8f), dp(activity, 12f), dp(activity, 8f))
             // The Switch is the single accessibility/checkable node for this row.
             setOnClickListener { toggle.toggle() }
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO

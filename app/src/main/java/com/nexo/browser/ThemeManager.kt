@@ -650,20 +650,11 @@ object ThemeManager {
     /** Botón menú ⋮ centrado con precisión óptica junto al contador de pestañas. */
     fun styleMenuIconButton(activity: Activity, button: Button) {
         val p = palette(activity)
-        val icon = activity.getDrawable(R.drawable.ic_nav_menu)?.mutate()?.apply {
-            setTint(p.text)
-        }
-        val centered = if (icon != null) {
-            LayerDrawable(arrayOf(icon)).apply {
-                val size = dp(activity, 22f)
-                setLayerSize(0, size, size)
-                setLayerGravity(0, Gravity.CENTER)
-            }
-        } else null
-        button.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, null, null)
-        button.background = ripple(activity, centered, 24f)
-        button.setTextColor(tint(p.text))
+        val dots = MenuDotsDrawable(p.text, dp(activity, 2f).toFloat())
         button.backgroundTintList = null
+        button.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, null, null)
+        button.background = ripple(activity, dots, 24f)
+        button.setTextColor(tint(p.text))
         button.stateListAnimator = null
         button.elevation = 0f
         button.minHeight = dp(activity, 48f)
@@ -718,6 +709,28 @@ private class ChevronDrawable(color: Int, strokeWidth: Float) : Drawable() {
         path.lineTo(b.left + w * 0.5f, b.top + h * 0.72f)
         path.lineTo(b.left + w * 0.9f, b.top + h * 0.32f)
         canvas.drawPath(path, paint)
+    }
+
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter }
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+}
+
+/** Icono "⋮" dibujado directamente con el color exacto de la paleta (siempre visible en claro, oscuro y OLED). */
+private class MenuDotsDrawable(color: Int, private val radius: Float) : Drawable() {
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = android.graphics.Paint.Style.FILL
+    }
+
+    override fun draw(canvas: android.graphics.Canvas) {
+        val cx = bounds.exactCenterX()
+        val cy = bounds.exactCenterY()
+        val step = radius * 3.1f
+        canvas.drawCircle(cx, cy - step, radius, paint)
+        canvas.drawCircle(cx, cy, radius, paint)
+        canvas.drawCircle(cx, cy + step, radius, paint)
     }
 
     override fun setAlpha(alpha: Int) { paint.alpha = alpha }
