@@ -98,18 +98,21 @@ class ScreenshotTest {
         val p = ThemeManager.palette(activity)
         val root = activity.layoutInflater.inflate(R.layout.activity_main, null)
         root.setBackgroundColor(p.background)
-        root.findViewById<View>(R.id.browserDock).apply {
-            background = ThemeManager.rounded(activity, p.surface, 28f, p.outline)
-            elevation = 8f * activity.resources.displayMetrics.density
-        }
-        ThemeManager.styleEdit(activity, root.findViewById(R.id.omnibox))
-        root.findViewById<android.widget.EditText>(R.id.omnibox).setText("es.wikipedia.org/wiki/Navegador_web")
-        ThemeManager.styleIconButton(activity, root.findViewById(R.id.tabToolsButton))
+        ThemeManager.styleFloatingDock(activity, root.findViewById(R.id.browserDock), root.findViewById(R.id.dockGesturePill))
+        ThemeManager.styleOmniboxCapsule(activity, root.findViewById(R.id.omniboxCapsule), focused = false)
+        ThemeManager.styleOmniboxInput(activity, root.findViewById(R.id.omnibox))
+        root.findViewById<android.widget.EditText>(R.id.omnibox).setText("es.wikipedia.org")
+        val toolsBtn = root.findViewById<android.widget.ImageButton>(R.id.tabToolsButton)
+        toolsBtn.setImageResource(R.drawable.ic_lock)
+        ThemeManager.styleIconButton(activity, toolsBtn)
+        toolsBtn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+        ThemeManager.styleAiSparkButton(activity, root.findViewById(R.id.aiButton))
         ThemeManager.styleTabCounter(activity, root.findViewById(R.id.tabButton))
-        ThemeManager.styleFlatButton(activity, root.findViewById(R.id.menuButton))
-        listOf(R.id.backButton, R.id.forwardButton, R.id.homeButton, R.id.reloadButton, R.id.newTabButton)
+        ThemeManager.styleMenuIconButton(activity, root.findViewById(R.id.menuButton))
+        listOf(R.id.backButton, R.id.forwardButton, R.id.homeButton, R.id.reloadButton)
             .forEach { ThemeManager.styleIconButton(activity, root.findViewById(it)) }
-        root.findViewById<View>(R.id.pageView).setBackgroundColor(p.surface)
+        ThemeManager.styleDockPrimaryIcon(activity, root.findViewById(R.id.newTabButton))
+        root.findViewById<View>(R.id.pageView).setBackgroundColor(p.surfaceContainerLowest)
         activity.setContentView(root)
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         save(activity.window.decorView, name)
@@ -225,5 +228,146 @@ class ScreenshotTest {
         activity.setContentView(FrameLayout(activity))
         NavCustomizerSheet.show(activity) {}
         dialogShot(null, "nav-customizer-dark")
+    }
+
+    @Test fun chromeOled() = chrome(BrowserPrefs.THEME_OLED, "chrome-oled")
+
+    @Test fun startPageDark() {
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        val page = StartPageView(activity, onOpen = {}, onPrivate = {}, onShield = {}, onExtensions = {})
+        val frame = FrameLayout(activity).apply { setBackgroundColor(ThemeManager.palette(activity).background); addView(page) }
+        activity.setContentView(frame)
+        page.visibility = View.VISIBLE
+        page.render(false)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "start-page-dark")
+    }
+
+    @Test fun startPageOled() {
+        val activity = themed(BrowserPrefs.THEME_OLED)
+        val page = StartPageView(activity, onOpen = {}, onPrivate = {}, onShield = {}, onExtensions = {})
+        val frame = FrameLayout(activity).apply { setBackgroundColor(ThemeManager.palette(activity).background); addView(page) }
+        activity.setContentView(frame)
+        page.visibility = View.VISIBLE
+        page.render(false)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "start-page-oled")
+    }
+
+    @Test fun nexoAiDark() {
+        seedTabs(*sampleTabs())
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        com.nexo.browser.ai.NexoAiSheet.show(activity)
+        dialogShot(null, "nexo-ai-dark")
+    }
+
+    @Test fun mainMenuDark() {
+        seedTabs(*sampleTabs())
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        var sheet: android.app.Dialog? = null
+        val dismiss = { sheet?.dismiss(); Unit }
+        val primaryActions = listOf(
+            SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") {},
+            SheetAction(R.drawable.ic_menu_private, "Privada") {},
+            SheetAction(R.drawable.ic_menu_burner, "Burner", subtitle = "Aislada + correo") {}
+        )
+        val actions = listOf(
+            SheetAction(R.drawable.ic_menu_bookmark, "Favoritos") {},
+            SheetAction(R.drawable.ic_menu_workspace, "Espacios") {},
+            SheetAction(R.drawable.ic_menu_history, "Historial") {},
+            SheetAction(R.drawable.ic_menu_download, "Descargas") {},
+            SheetAction(R.drawable.ic_menu_translate, "Traducir") {},
+            SheetAction(R.drawable.ic_menu_reader, "Modo lectura") {},
+            SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = true, checked = true) {},
+            SheetAction(R.drawable.ic_menu_copy, "Copiar URL") {},
+            SheetAction(R.drawable.ic_menu_share, "Compartir") {},
+            SheetAction(R.drawable.ic_menu_find, "Buscar") {},
+            SheetAction(R.drawable.ic_nexo_ai_spark, "Nexo AI", subtitle = "Asistente de página, selección y pestañas") {},
+            SheetAction(R.drawable.ic_menu_settings, "Ajustes") {},
+            SheetAction(R.drawable.ic_menu_update, "Buscar actualizaciones") {}
+        )
+        val menu = MenuSections.arrange(actions)
+        val content = NexoSheets.column(
+            activity,
+            NexoSheets.header(activity, "Menú de Nexo", "youtube.com"),
+            NexoSheets.primaryActions(activity, primaryActions, dismiss)
+        )
+        if (menu.quick.isNotEmpty()) content.addView(NexoSheets.grid(activity, menu.quick, dismiss = dismiss))
+        content.addView(NexoSheets.actionGroups(activity, menu.groups, dismiss))
+        sheet = NexoSheets.show(activity, content)
+        dialogShot(sheet, "main-menu-dark")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h740dp-xhdpi")
+    fun compact360dpScreens() {
+        chrome(BrowserPrefs.THEME_MIDNIGHT, "chrome-360dp")
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        val page = StartPageView(activity, onOpen = {}, onPrivate = {}, onShield = {}, onExtensions = {})
+        val frame = FrameLayout(activity).apply { setBackgroundColor(ThemeManager.palette(activity).background); addView(page) }
+        activity.setContentView(frame)
+        page.visibility = View.VISIBLE
+        page.render(false)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "start-page-360dp")
+    }
+
+    @Test
+    @Config(qualifiers = "w680dp-h900dp-xhdpi")
+    fun tablet600dpScreens() {
+        seedTabs(*sampleTabs())
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        val page = StartPageView(activity, onOpen = {}, onPrivate = {}, onShield = {}, onExtensions = {})
+        val frame = FrameLayout(activity).apply { setBackgroundColor(ThemeManager.palette(activity).background); addView(page) }
+        activity.setContentView(frame)
+        page.visibility = View.VISIBLE
+        page.render(false)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "start-page-tablet")
+        TabSwitcher.show(activity) {}
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(org.robolectric.shadows.ShadowDialog.getLatestDialog().window!!.decorView, "tab-switcher-tablet")
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h412dp-land-xhdpi")
+    fun landscapeChrome() {
+        chrome(BrowserPrefs.THEME_MIDNIGHT, "chrome-landscape")
+    }
+
+    @Test
+    fun nexoAiOled() {
+        seedTabs(*sampleTabs())
+        val activity = themed(BrowserPrefs.THEME_OLED)
+        activity.setContentView(FrameLayout(activity))
+        com.nexo.browser.ai.NexoAiSheet.show(activity)
+        dialogShot(null, "nexo-ai-oled")
+    }
+
+    @Test
+    fun tabSwitcherListManyTabs() {
+        val many = (1..12).map { i ->
+            BrowserTab(
+                id = "t$i",
+                session = com.nexo.browser.engine.FakeEngineSession(),
+                url = "https://site$i.example.org/article/$i",
+                title = "Artículo técnico #$i sobre rendimiento Android",
+                groupName = if (i <= 4) "Trabajo" else if (i <= 7) "Lectura" else null,
+                pinned = i == 1
+            )
+        }.toTypedArray()
+        seedTabs(*many)
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        BrowserPrefs.setTabViewMode(app, TabProModel.ViewMode.LIST.id)
+        try {
+            val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+            activity.setContentView(FrameLayout(activity))
+            TabSwitcher.show(activity) {}
+            dialogShot(null, "tab-switcher-list-dark")
+        } finally {
+            BrowserPrefs.setTabViewMode(app, TabProModel.ViewMode.GRID.id)
+        }
     }
 }

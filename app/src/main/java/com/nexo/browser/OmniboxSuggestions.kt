@@ -150,13 +150,15 @@ class OmniboxSuggestions(
         val rows = if (query.startsWith("@")) localRows else (localRows + remoteRows)
         if (rows.isEmpty()) { panel.visibility = View.GONE; return }
         val palette = ThemeManager.palette(activity)
-        panel.background = ThemeManager.rounded(activity, palette.elevated, 18f, palette.outline)
+        val panelBg = if (palette.isDark) palette.surfaceContainerHigh else palette.surfaceContainerLowest
+        panel.background = ThemeManager.rounded(activity, panelBg, 22f, ThemeManager.hairline(palette))
+        panel.elevation = if (palette.isDark) 0f else NexoUi.dp(activity, 6f).toFloat()
 
         val listContainer = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
         }
         rows.forEachIndexed { index, item ->
-            if (index > 0) listContainer.addView(NexoUi.divider(activity, horizontalMarginDp = 12f))
+            if (index > 0) listContainer.addView(NexoUi.divider(activity, horizontalMarginDp = 16f))
             listContainer.addView(row(item))
         }
         if (rows.size > 5) {
@@ -164,7 +166,7 @@ class OmniboxSuggestions(
                 isVerticalScrollBarEnabled = false
                 addView(listContainer)
             }
-            panel.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, NexoUi.dp(activity, 272f)))
+            panel.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, NexoUi.dp(activity, 280f)))
         } else {
             panel.addView(listContainer, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
@@ -196,7 +198,7 @@ class OmniboxSuggestions(
         "history" -> R.drawable.ic_menu_history
         "settings" -> R.drawable.ic_menu_settings
         "phantom_shield" -> R.drawable.ic_menu_shield
-        "nexo_ai" -> R.drawable.ic_menu_ai
+        "nexo_ai" -> R.drawable.ic_nexo_ai_spark
         "extensions" -> R.drawable.ic_menu_extensions
         "reader_mode", "offline_articles" -> R.drawable.ic_menu_reader
         "bookmarks", "bookmark_page" -> R.drawable.ic_menu_bookmark
@@ -288,12 +290,16 @@ class OmniboxSuggestions(
     private fun row(item: OmniboxSuggestion): View {
         val p = ThemeManager.palette(activity)
         val visual = describe(item)
-        val (_, iconFg) = NexoUi.toneColors(p, visual.tone)
+        val (iconBg, iconFg) = if (visual.tone == NexoUi.Tone.NEUTRAL) {
+            p.surfaceContainerHighest to p.muted
+        } else {
+            NexoUi.toneColors(p, visual.tone)
+        }
         return LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = NexoUi.dp(activity, 50f)
-            setPadding(NexoUi.dp(activity, 12f), NexoUi.dp(activity, 6f), NexoUi.dp(activity, 12f), NexoUi.dp(activity, 6f))
+            minimumHeight = NexoUi.dp(activity, 52f)
+            setPadding(NexoUi.dp(activity, 14f), NexoUi.dp(activity, 7f), NexoUi.dp(activity, 14f), NexoUi.dp(activity, 7f))
             background = ThemeManager.ripple(activity, null, 14f)
             isClickable = true
             isFocusable = true
@@ -301,19 +307,32 @@ class OmniboxSuggestions(
             setOnClickListener { onPick(item) }
             addView(ImageView(activity).apply {
                 setImageResource(visual.icon)
-                imageTintList = ColorStateList.valueOf(if (visual.tone == NexoUi.Tone.NEUTRAL) p.muted else iconFg)
+                imageTintList = ColorStateList.valueOf(iconFg)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(NexoUi.dp(activity, 7f), NexoUi.dp(activity, 7f), NexoUi.dp(activity, 7f), NexoUi.dp(activity, 7f))
+                background = ThemeManager.rounded(activity, iconBg, 10f)
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, LinearLayout.LayoutParams(NexoUi.dp(activity, 20f), NexoUi.dp(activity, 20f)).apply {
+            }, LinearLayout.LayoutParams(NexoUi.dp(activity, 32f), NexoUi.dp(activity, 32f)).apply {
                 marginEnd = NexoUi.dp(activity, 12f)
             })
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(TextView(activity).apply {
-                    text = visual.title; textSize = 14.5f; setTextColor(p.text); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+                    text = visual.title
+                    textSize = 14.5f
+                    typeface = NexoUi.medium(activity)
+                    setTextColor(p.text)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
                 })
                 visual.subtitle?.let {
                     addView(TextView(activity).apply {
-                        text = it; textSize = 11.5f; setTextColor(p.muted); maxLines = 1; ellipsize = TextUtils.TruncateAt.MIDDLE
+                        text = it
+                        textSize = 11.5f
+                        typeface = NexoUi.regular(activity)
+                        setTextColor(p.muted)
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.MIDDLE
                     })
                 }
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))

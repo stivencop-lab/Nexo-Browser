@@ -145,16 +145,38 @@ object ThemeManager {
     }
 
     // ---------------------------------------------------------------
-    // Primitivas
+    // Primitivas y tokens UI 5.0
     // ---------------------------------------------------------------
 
     private fun dp(activity: Activity, value: Float): Int =
         (value * activity.resources.displayMetrics.density).toInt()
 
+    /** Contorno hairline sutil: evita bordes pesados y mantiene definición limpia en OLED. */
+    fun hairline(p: BrowserPalette): Int = when {
+        p.isAmoled -> ColorUtils.setAlphaComponent(p.outlineVariant, 165)
+        p.isDark -> ColorUtils.setAlphaComponent(p.outlineVariant, 110)
+        else -> ColorUtils.setAlphaComponent(p.outlineVariant, 115)
+    }
+
+    fun fontRegular(activity: Activity): Typeface =
+        runCatching { activity.resources.getFont(R.font.inter_variable) }.getOrDefault(Typeface.SANS_SERIF)
+
+    fun fontMedium(activity: Activity): Typeface =
+        Typeface.create(fontRegular(activity), 500, false)
+
+    fun fontSemiBold(activity: Activity): Typeface =
+        Typeface.create(fontRegular(activity), 600, false)
+
+    fun fontBold(activity: Activity): Typeface =
+        Typeface.create(fontRegular(activity), Typeface.BOLD)
+
+    fun fontMono(activity: Activity): Typeface =
+        runCatching { activity.resources.getFont(R.font.jetbrains_mono) }.getOrDefault(Typeface.MONOSPACE)
+
     fun rounded(
         activity: Activity,
         color: Int,
-        radiusDp: Float = 14f,
+        radiusDp: Float = 16f,
         strokeColor: Int? = null,
         strokeWidthDp: Float = 1f
     ): GradientDrawable {
@@ -173,7 +195,7 @@ object ThemeManager {
         activity: Activity,
         content: Drawable?,
         radiusDp: Float,
-        rippleColor: Int = ColorUtils.setAlphaComponent(palette(activity).text, 30)
+        rippleColor: Int = ColorUtils.setAlphaComponent(palette(activity).text, 28)
     ): RippleDrawable =
         RippleDrawable(
             ColorStateList.valueOf(rippleColor),
@@ -184,7 +206,7 @@ object ThemeManager {
     private fun tint(color: Int): ColorStateList =
         ColorStateList(
             arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-            intArrayOf(ColorUtils.setAlphaComponent(color, 90), color)
+            intArrayOf(ColorUtils.setAlphaComponent(color, 95), color)
         )
 
     // ---------------------------------------------------------------
@@ -192,8 +214,8 @@ object ThemeManager {
     // ---------------------------------------------------------------
 
     /**
-     * Botón de texto. [primary] = relleno con el acento; si no, botón tonal.
-     * [danger] = acción destructiva (texto en rojo).
+     * Botón de texto. [primary] = relleno con el acento; [danger] = tono suave de peligro;
+     * en otro caso, botón tonal limpio sin bordes pesados.
      */
     fun styleButton(
         activity: Activity,
@@ -204,13 +226,18 @@ object ThemeManager {
         val p = palette(activity)
         val foreground = when {
             primary -> p.onAccent
-            danger -> p.danger
+            danger -> p.error.onContainer
             else -> p.text
         }
-        val bgColor = if (primary) p.accent else p.elevated
-        val rippleColor = ColorUtils.setAlphaComponent(foreground, 40)
+        val bgColor = when {
+            primary -> p.accent
+            danger -> p.error.container
+            else -> p.surfaceContainerHigh
+        }
+        val stroke = if (!primary && p.isAmoled) hairline(p) else null
+        val rippleColor = ColorUtils.setAlphaComponent(foreground, 36)
 
-        button.background = ripple(activity, rounded(activity, bgColor, 26f), 26f, rippleColor)
+        button.background = ripple(activity, rounded(activity, bgColor, 24f, stroke), 24f, rippleColor)
         button.setTextColor(tint(foreground))
         button.compoundDrawableTintList = tint(foreground)
         button.backgroundTintList = null
@@ -218,18 +245,20 @@ object ThemeManager {
         button.elevation = 0f
         button.minHeight = dp(activity, 48f)
         button.isAllCaps = false
-        button.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        button.letterSpacing = 0.005f
+        button.typeface = fontSemiBold(activity)
     }
 
-    /** Icono plano con ripple circular; [active] lo muestra resaltado con el acento. */
+    /** Icono plano con ripple circular; [active] lo muestra en cápsula tonal suave. */
     fun styleIconButton(activity: Activity, button: ImageButton, active: Boolean = false) {
         val p = palette(activity)
-        val content = if (active) rounded(activity, p.accentSoft, 24f) else null
+        val inset = dp(activity, 4f)
+        val content = if (active) InsetDrawable(rounded(activity, p.accentSoft, 20f), inset) else null
         button.background = ripple(activity, content, 24f)
-        button.imageTintList = tint(if (active) p.accent else p.text)
+        button.imageTintList = tint(if (active) p.onAccentSoft else p.text)
         button.backgroundTintList = null
         button.stateListAnimator = null
-        button.alpha = if (button.isEnabled) 1f else 0.45f
+        button.alpha = if (button.isEnabled) 1f else 0.42f
         button.elevation = 0f
     }
 
@@ -244,6 +273,7 @@ object ThemeManager {
         button.elevation = 0f
         button.minHeight = dp(activity, 48f)
         button.isAllCaps = false
+        button.typeface = fontMedium(activity)
     }
 
     fun styleText(activity: Activity, text: TextView, muted: Boolean = false) {
@@ -251,43 +281,46 @@ object ThemeManager {
         text.setTextColor(if (muted) p.muted else p.text)
     }
 
-    /** Título de sección (pequeño, en el color de acento). */
+    /** Título de sección (pequeño, en el color de acento con tracking editorial). */
     fun styleSectionLabel(activity: Activity, text: TextView) {
         val p = palette(activity)
         text.setTextColor(p.accent)
         text.textSize = 11.5f
         text.isAllCaps = true
-        text.letterSpacing = 0.07f
-        text.typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
+        text.letterSpacing = 0.08f
+        text.typeface = fontBold(activity)
     }
 
-    /** Contenedor tipo tarjeta: superficie redondeada con borde fino. */
-    fun styleCard(activity: Activity, view: View, radiusDp: Float = 16f) {
+    /** Contenedor tipo tarjeta: superficie tonal redondeada con hairline discreto. */
+    fun styleCard(activity: Activity, view: View, radiusDp: Float = 20f) {
         val p = palette(activity)
-        view.background = rounded(activity, p.surface, radiusDp, p.outlineVariant)
+        val bg = if (p.isDark) p.surfaceContainerLow else p.surfaceContainerLowest
+        view.background = rounded(activity, bg, radiusDp, hairline(p))
         view.clipToOutline = true
     }
 
-    /** Fondo de barra (superficie) con una línea fina en el borde indicado. */
+    /** Fondo de barra (superficie) con una línea hairline en el borde indicado. */
     fun barBackground(activity: Activity, lineOnTop: Boolean): Drawable {
         val p = palette(activity)
         return LayerDrawable(
-            arrayOf(ColorDrawable(p.surface), ColorDrawable(p.outlineVariant))
+            arrayOf(ColorDrawable(p.surfaceContainerLow), ColorDrawable(hairline(p)))
         ).apply {
             setLayerHeight(1, dp(activity, 1f).coerceAtLeast(1))
             setLayerGravity(1, if (lineOnTop) Gravity.TOP else Gravity.BOTTOM)
         }
     }
 
-    /** Contador de pestañas: cuadro con contorno, como en los navegadores actuales. */
+    /** Contador de pestañas: cuadro redondeado limpio y proporcionado (24dp ópticos en 48dp). */
     fun styleTabCounter(activity: Activity, button: Button) {
         val p = palette(activity)
-        val inset = dp(activity, 11f)
+        val inset = dp(activity, 12f)
         val box = InsetDrawable(
-            rounded(activity, Color.TRANSPARENT, 7f, p.text, 1.8f),
+            rounded(activity, Color.TRANSPARENT, 7f, p.text, 1.75f),
             inset
         )
         button.fontFeatureSettings = "tnum"
+        button.typeface = fontBold(activity)
+        button.textSize = 11.5f
         button.background = ripple(activity, box, 24f)
         button.setTextColor(p.text)
         button.backgroundTintList = null
@@ -296,7 +329,7 @@ object ThemeManager {
     }
 
     fun styleDivider(activity: Activity, view: View) {
-        view.setBackgroundColor(palette(activity).outlineVariant)
+        view.setBackgroundColor(hairline(palette(activity)))
     }
 
     /** Barra superior de pantallas secundarias: botón volver + título. */
@@ -328,18 +361,16 @@ object ThemeManager {
                 val p = palette(activity)
                 (view as? TextView)?.apply {
                     setTextColor(p.text)
-                    textSize = 14f
+                    textSize = 14.5f
+                    typeface = if (dropdown) fontRegular(activity) else fontMedium(activity)
                     maxLines = if (dropdown) 3 else 2
                     minHeight = dp(activity, 48f)
                     ellipsize = TextUtils.TruncateAt.END
                     val d = resources.displayMetrics.density
                     if (dropdown) {
-                        setPadding((16 * d).toInt(), (11 * d).toInt(), (16 * d).toInt(), (11 * d).toInt())
-                        // Sin fondo cuadrado propio: antes tapaba las esquinas
-                        // redondeadas de la lista desplegable.
+                        setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
                         background = ripple(activity, null, 12f)
                     } else {
-                        // El fondo y la flecha los pone styleSpinner.
                         setPadding((14 * d).toInt(), (6 * d).toInt(), (36 * d).toInt(), (6 * d).toInt())
                         background = null
                         gravity = Gravity.CENTER_VERTICAL
@@ -363,7 +394,7 @@ object ThemeManager {
             }
         )
 
-    /** Lista en tarjetas con insignia circular, título, subtítulo y dato extra. */
+    /** Lista en tarjetas tonales con insignia redondeada, título, subtítulo y píldora de estado. */
     fun rowsAdapter(activity: Activity, rows: List<ListRow>): BaseAdapter =
         object : BaseAdapter() {
             override fun getCount(): Int = rows.size
@@ -386,6 +417,7 @@ object ThemeManager {
         val statusPill: TextView
     ) {
         fun bind(activity: Activity, row: ListRow) {
+            val p = palette(activity)
             title.text = row.title
             subtitle.text = row.subtitle
             subtitle.visibility = if (row.subtitle.isBlank()) View.GONE else View.VISIBLE
@@ -395,15 +427,21 @@ object ThemeManager {
             val label = row.badge.ifBlank { row.title.trim().take(1).uppercase() }.take(4)
             badge.text = label
             badge.textSize = if (label.length > 2) 10.5f else 15f
+            val (badgeBg, badgeFg) = if (row.statusTone != null) {
+                NexoUi.toneColors(p, row.statusTone)
+            } else {
+                p.accentSoft to p.onAccentSoft
+            }
+            badge.setTextColor(badgeFg)
+            badge.background = rounded(activity, badgeBg, 14f)
 
             if (row.status.isBlank()) {
                 statusPill.visibility = View.GONE
             } else {
-                val p = palette(activity)
                 val (bg, fg) = NexoUi.toneColors(p, row.statusTone ?: NexoUi.Tone.NEUTRAL)
                 statusPill.text = row.status
                 statusPill.setTextColor(fg)
-                statusPill.background = rounded(activity, bg, 10f)
+                statusPill.background = rounded(activity, bg, 12f)
                 statusPill.visibility = View.VISIBLE
             }
         }
@@ -412,16 +450,17 @@ object ThemeManager {
     private fun createRow(activity: Activity): RowHolder {
         val p = palette(activity)
         val d = activity.resources.displayMetrics.density
+        val cardSurface = if (p.isDark) p.surfaceContainerLow else p.surfaceContainerLowest
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding((14 * d).toInt(), (12 * d).toInt(), (14 * d).toInt(), (12 * d).toInt())
-            minimumHeight = (64 * d).toInt()
+            setPadding((16 * d).toInt(), (13 * d).toInt(), (16 * d).toInt(), (13 * d).toInt())
+            minimumHeight = (68 * d).toInt()
             background = ripple(
                 activity,
-                rounded(activity, p.surface, 18f, p.outlineVariant),
-                18f
+                rounded(activity, cardSurface, 20f, hairline(p)),
+                20f
             )
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -432,9 +471,9 @@ object ThemeManager {
         val badge = TextView(activity).apply {
             gravity = Gravity.CENTER
             setTextColor(p.onAccentSoft)
-            typeface = Typeface.DEFAULT_BOLD
+            typeface = fontBold(activity)
             background = rounded(activity, p.accentSoft, 14f)
-            layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt()).apply {
+            layoutParams = LinearLayout.LayoutParams((42 * d).toInt(), (42 * d).toInt()).apply {
                 marginEnd = (14 * d).toInt()
             }
         }
@@ -444,18 +483,27 @@ object ThemeManager {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        fun line(size: Float, color: Int, bold: Boolean) = TextView(activity).apply {
-            textSize = size
-            setTextColor(color)
+        val title = TextView(activity).apply {
+            textSize = 15f
+            setTextColor(p.text)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            typeface = fontSemiBold(activity)
         }
-
-        val title = line(15f, p.text, true)
-        val subtitle = line(13f, p.muted, false).apply { setPadding(0, (2 * d).toInt(), 0, 0) }
-        val meta = line(12f, p.muted, false).apply {
+        val subtitle = TextView(activity).apply {
+            textSize = 13f
+            setTextColor(p.muted)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setLineSpacing(0f, 1.15f)
             setPadding(0, (2 * d).toInt(), 0, 0)
+        }
+        val meta = TextView(activity).apply {
+            textSize = 11.5f
+            setTextColor(p.muted)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, (3 * d).toInt(), 0, 0)
             alpha = 0.85f
         }
 
@@ -463,9 +511,9 @@ object ThemeManager {
             textSize = 11f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            typeface = Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
+            typeface = fontBold(activity)
             gravity = Gravity.CENTER
-            setPadding((8 * d).toInt(), (3 * d).toInt(), (8 * d).toInt(), (3 * d).toInt())
+            setPadding((9 * d).toInt(), (4 * d).toInt(), (9 * d).toInt(), (4 * d).toInt())
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -483,23 +531,22 @@ object ThemeManager {
         return RowHolder(root, badge, title, subtitle, meta, statusPill).also { root.tag = it }
     }
 
-    /** Selector con forma de campo redondeado y flecha a la derecha. */
+    /** Selector tonal limpio con flecha discreta a la derecha (sin doble borde pesado). */
     fun styleSpinner(activity: Activity, spinner: Spinner) {
         val p = palette(activity)
-        val field = rounded(activity, p.elevated, 12f, p.outlineVariant)
+        val fill = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
+        val field = rounded(activity, fill, 14f, if (p.isAmoled) hairline(p) else null)
         val chevron = ChevronDrawable(p.muted, dp(activity, 1.8f).toFloat())
 
         spinner.background = LayerDrawable(arrayOf(field, chevron)).apply {
             val size = dp(activity, 11f)
             setLayerSize(1, size, size)
             setLayerGravity(1, Gravity.END or Gravity.CENTER_VERTICAL)
-            setLayerInsetEnd(1, dp(activity, 15f))
+            setLayerInsetEnd(1, dp(activity, 14f))
         }
         spinner.backgroundTintList = null
-        // Margen interior: la selección de la primera y la última opción no
-        // llega a las esquinas redondeadas de la lista.
         spinner.setPopupBackgroundDrawable(
-            LayerDrawable(arrayOf(rounded(activity, p.surface, 16f, p.outline))).apply {
+            LayerDrawable(arrayOf(rounded(activity, p.surfaceContainerHigh, 18f, hairline(p)))).apply {
                 setPadding(dp(activity, 6f), dp(activity, 8f), dp(activity, 6f), dp(activity, 8f))
             }
         )
@@ -508,27 +555,30 @@ object ThemeManager {
     fun styleSwitch(activity: Activity, toggle: Switch) {
         val p = palette(activity)
         toggle.setTextColor(p.text)
+        toggle.typeface = fontMedium(activity)
         toggle.thumbTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-            intArrayOf(p.accent, p.outline)
+            intArrayOf(p.accent, p.muted)
         )
         toggle.trackTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(
-                ColorUtils.setAlphaComponent(p.accent, 120),
-                ColorUtils.setAlphaComponent(p.muted, if (p.isDark) 110 else 100)
+                ColorUtils.setAlphaComponent(p.accent, 115),
+                ColorUtils.setAlphaComponent(p.outline, if (p.isDark) 115 else 95)
             )
         )
     }
 
     /**
-     * Campo de texto tipo píldora; al enfocarlo muestra un borde con el
-     * acento. El cursor y la selección usan el acento.
+     * Campo de texto tipo píldora con contraste garantizado tanto sobre el lienzo
+     * principal como dentro de hojas inferiores elevadas.
      */
     fun styleEdit(activity: Activity, edit: EditText) {
         val p = palette(activity)
-        val normal = rounded(activity, p.elevated, 24f)
-        val focused = rounded(activity, p.surfaceContainerHighest, 24f, p.accent, 1.5f)
+        val normalBg = if (p.isDark) p.surfaceContainerLow else p.surfaceContainer
+        val focusedBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
+        val normal = rounded(activity, normalBg, 24f, hairline(p))
+        val focused = rounded(activity, focusedBg, 24f, p.accent, 1.6f)
 
         edit.background = StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused), focused)
@@ -536,7 +586,8 @@ object ThemeManager {
         }
         edit.setTextColor(p.text)
         edit.setHintTextColor(p.muted)
-        edit.highlightColor = ColorUtils.setAlphaComponent(p.accent, 80)
+        edit.typeface = fontRegular(activity)
+        edit.highlightColor = ColorUtils.setAlphaComponent(p.accent, 75)
         edit.backgroundTintList = null
         edit.gravity = Gravity.CENTER_VERTICAL
         edit.compoundDrawableTintList = ColorStateList.valueOf(p.muted)
@@ -547,6 +598,94 @@ object ThemeManager {
                 setSize(dp(activity, 2f), dp(activity, 20f))
             }
         }
+    }
+
+    /** Cápsula unificada de dirección + estado del sitio + Nexo AI (UI 5.0). */
+    fun styleOmniboxCapsule(activity: Activity, capsule: View, focused: Boolean = false) {
+        val p = palette(activity)
+        val fill = when {
+            focused && p.isDark -> p.surfaceContainerHighest
+            p.isAmoled -> 0xFF13161E.toInt()
+            p.isDark -> p.surfaceContainerHigh
+            else -> p.surfaceContainerLowest
+        }
+        val stroke = if (focused) p.accent else hairline(p)
+        val strokeWidth = if (focused) 1.75f else 1f
+        capsule.background = rounded(activity, fill, 24f, stroke, strokeWidth)
+        capsule.elevation = if (p.isDark) 0f else dp(activity, 2f).toFloat()
+    }
+
+    /** Estiliza el campo de texto dentro de la cápsula unificada (sin fondo propio). */
+    fun styleOmniboxInput(activity: Activity, edit: EditText) {
+        val p = palette(activity)
+        edit.background = null
+        edit.backgroundTintList = null
+        edit.setTextColor(p.text)
+        edit.setHintTextColor(p.muted)
+        edit.typeface = fontMedium(activity)
+        edit.highlightColor = ColorUtils.setAlphaComponent(p.accent, 75)
+        edit.gravity = Gravity.CENTER_VERTICAL
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            edit.textCursorDrawable = GradientDrawable().apply {
+                setColor(p.accent)
+                setSize(dp(activity, 2f), dp(activity, 20f))
+            }
+        }
+    }
+
+    /** Botón permanente ✨ de Nexo AI integrado en el borde derecho de la cápsula de direcciones. */
+    fun styleAiSparkButton(activity: Activity, button: ImageButton) {
+        val p = palette(activity)
+        val hInset = dp(activity, 3f)
+        val vInset = dp(activity, 6f)
+        val pill = InsetDrawable(rounded(activity, p.accentSoft, 18f), hInset, vInset, hInset, vInset)
+        val rippleColor = ColorUtils.setAlphaComponent(p.onAccentSoft, 40)
+        button.background = ripple(activity, pill, 20f, rippleColor)
+        button.imageTintList = ColorStateList.valueOf(if (p.isDark) p.onAccentSoft else p.accent)
+        button.backgroundTintList = null
+        button.stateListAnimator = null
+        button.elevation = 0f
+    }
+
+    /** Botón menú ⋮ centrado con precisión óptica junto al contador de pestañas. */
+    fun styleMenuIconButton(activity: Activity, button: Button) {
+        val p = palette(activity)
+        val dots = MenuDotsDrawable(p.text, dp(activity, 2f).toFloat())
+        button.backgroundTintList = null
+        button.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, null, null)
+        button.background = ripple(activity, dots, 24f)
+        button.setTextColor(tint(p.text))
+        button.stateListAnimator = null
+        button.elevation = 0f
+        button.minHeight = dp(activity, 48f)
+        button.isAllCaps = false
+    }
+
+    /** Dock inferior flotante con pista discreta de gestos (UI 5.0). */
+    fun styleFloatingDock(activity: Activity, dock: View, gesturePill: View? = null) {
+        val p = palette(activity)
+        val fill = when {
+            p.isAmoled -> 0xFF0E1118.toInt()
+            p.isDark -> p.surfaceContainer
+            else -> p.surfaceContainerLowest
+        }
+        dock.background = rounded(activity, fill, 26f, hairline(p))
+        dock.elevation = if (p.isDark) 0f else dp(activity, 4f).toFloat()
+        gesturePill?.background = rounded(activity, ColorUtils.setAlphaComponent(p.muted, 90), 2f)
+    }
+
+    /** Acento tonal suave para la acción principal (+) del dock inferior. */
+    fun styleDockPrimaryIcon(activity: Activity, button: ImageButton) {
+        val p = palette(activity)
+        val hInset = dp(activity, 10f)
+        val vInset = dp(activity, 6f)
+        val well = InsetDrawable(rounded(activity, p.surfaceContainerHighest, 18f), hInset, vInset, hInset, vInset)
+        button.background = ripple(activity, well, 22f)
+        button.imageTintList = tint(p.text)
+        button.backgroundTintList = null
+        button.stateListAnimator = null
+        button.alpha = if (button.isEnabled) 1f else 0.42f
+        button.elevation = 0f
     }
 }
 
@@ -570,6 +709,28 @@ private class ChevronDrawable(color: Int, strokeWidth: Float) : Drawable() {
         path.lineTo(b.left + w * 0.5f, b.top + h * 0.72f)
         path.lineTo(b.left + w * 0.9f, b.top + h * 0.32f)
         canvas.drawPath(path, paint)
+    }
+
+    override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter }
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+}
+
+/** Icono "⋮" dibujado directamente con el color exacto de la paleta (siempre visible en claro, oscuro y OLED). */
+private class MenuDotsDrawable(color: Int, private val radius: Float) : Drawable() {
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = android.graphics.Paint.Style.FILL
+    }
+
+    override fun draw(canvas: android.graphics.Canvas) {
+        val cx = bounds.exactCenterX()
+        val cy = bounds.exactCenterY()
+        val step = radius * 3.1f
+        canvas.drawCircle(cx, cy - step, radius, paint)
+        canvas.drawCircle(cx, cy, radius, paint)
+        canvas.drawCircle(cx, cy + step, radius, paint)
     }
 
     override fun setAlpha(alpha: Int) { paint.alpha = alpha }
