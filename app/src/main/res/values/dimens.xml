@@ -7,6 +7,8 @@
     <dimen name="space_lg">16dp</dimen>
     <dimen name="space_xl">24dp</dimen>
     <dimen name="space_xxl">32dp</dimen>
-    <dimen name="shape_card">16dp</dimen>
+    <dimen name="shape_sm">12dp</dimen>
+    <dimen name="shape_card">20dp</dimen>
+    <dimen name="shape_dock">26dp</dimen>
     <dimen name="shape_sheet">28dp</dimen>
 </resources>

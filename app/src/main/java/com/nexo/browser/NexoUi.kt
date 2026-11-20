@@ -3,7 +3,11 @@ package com.nexo.browser
 import android.app.Activity
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.RippleDrawable
 import android.provider.Settings
 import android.text.Editable
 import android.text.InputType
@@ -23,11 +27,31 @@ import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 
 /**
- * Piezas comunes de Nexo Flow 3.0 (hojas inferiores, tarjetas, píldoras de estado,
- * estados vacíos, barras de búsqueda y controles): todas usan dp, la paleta del tema
- * y radios coherentes.
+ * Sistema de componentes y tokens Nexo UI 5.0:
+ * tipografía unificada (Inter + JetBrains Mono), elevación tonal sin exceso de bordes,
+ * píldoras estilizadas con objetivo táctil accesible de 48dp, tarjetas, métricas y controles.
  */
 object NexoUi {
+    /** Tokens unificados de Nexo UI 5.0. */
+    object Tokens {
+        const val RADIUS_SM = 12f
+        const val RADIUS_MD = 16f
+        const val RADIUS_CARD = 20f
+        const val RADIUS_PILL = 24f
+        const val RADIUS_SHEET = 28f
+
+        const val TEXT_DISPLAY = 24f
+        const val TEXT_TITLE_LG = 19f
+        const val TEXT_TITLE = 16.5f
+        const val TEXT_BODY = 14.5f
+        const val TEXT_SECONDARY = 12.5f
+        const val TEXT_LABEL = 11.5f
+        const val TEXT_MICRO = 10.5f
+
+        const val ANIM_FAST_MS = 120L
+        const val ANIM_STD_MS = 180L
+    }
+
     /** Tono semántico unificado para insignias, estados y métricas. */
     enum class Tone { NEUTRAL, ACCENT, SUCCESS, WARNING, DANGER, INFO }
 
@@ -53,26 +77,29 @@ object NexoUi {
         Tone.INFO -> p.info.container to p.info.onContainer
     }
 
-    fun bold(activity: Activity): Typeface =
-        Typeface.create(activity.resources.getFont(R.font.inter_variable), Typeface.BOLD)
+    fun regular(activity: Activity): Typeface = ThemeManager.fontRegular(activity)
+    fun medium(activity: Activity): Typeface = ThemeManager.fontMedium(activity)
+    fun semiBold(activity: Activity): Typeface = ThemeManager.fontSemiBold(activity)
+    fun bold(activity: Activity): Typeface = ThemeManager.fontBold(activity)
+    fun mono(activity: Activity): Typeface = ThemeManager.fontMono(activity)
 
     /** Contenedor vertical con los márgenes laterales de las hojas. */
-    fun column(activity: Activity, horizontalDp: Float = 20f): LinearLayout =
+    fun column(activity: Activity, horizontalDp: Float = 18f): LinearLayout =
         LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(activity, horizontalDp), 0, dp(activity, horizontalDp), dp(activity, 4f))
+            setPadding(dp(activity, horizontalDp), 0, dp(activity, horizontalDp), dp(activity, 6f))
         }
 
-    /** Título de sección pequeño, en mayúsculas y color secundario. */
+    /** Título de sección pequeño, en mayúsculas con tracking limpio. */
     fun section(activity: Activity, label: String): TextView {
         val p = ThemeManager.palette(activity)
         return TextView(activity).apply {
             text = label.uppercase()
-            textSize = 11.5f
-            letterSpacing = 0.08f
+            textSize = 11f
+            letterSpacing = 0.085f
             typeface = bold(activity)
             setTextColor(p.muted)
-            setPadding(dp(activity, 4f), dp(activity, 18f), 0, dp(activity, 8f))
+            setPadding(dp(activity, 4f), dp(activity, 16f), 0, dp(activity, 8f))
         }
     }
 
@@ -81,17 +108,18 @@ object NexoUi {
         val p = ThemeManager.palette(activity)
         return TextView(activity).apply {
             text = value
-            textSize = 12.5f
-            setLineSpacing(0f, 1.15f)
+            textSize = Tokens.TEXT_SECONDARY
+            typeface = regular(activity)
+            setLineSpacing(0f, 1.2f)
             setTextColor(p.muted)
             setPadding(dp(activity, 4f), dp(activity, 6f), dp(activity, 4f), dp(activity, 4f))
         }
     }
 
-    /** Separador fino de 1dp respetando el contorno de la paleta. */
+    /** Separador hairline de 1dp respetando el contorno sutil de la paleta. */
     fun divider(activity: Activity, horizontalMarginDp: Float = 16f): View =
         View(activity).apply {
-            setBackgroundColor(ThemeManager.palette(activity).outlineVariant)
+            setBackgroundColor(ThemeManager.hairline(ThemeManager.palette(activity)))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(activity, 1f).coerceAtLeast(1)
@@ -101,35 +129,53 @@ object NexoUi {
             }
         }
 
+    /** Separador inset alineado con el texto de filas con icono (68dp start). */
+    fun insetDivider(activity: Activity): View =
+        View(activity).apply {
+            setBackgroundColor(ThemeManager.hairline(ThemeManager.palette(activity)))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(activity, 1f).coerceAtLeast(1)
+            ).apply {
+                marginStart = dp(activity, 68f)
+                marginEnd = dp(activity, 16f)
+            }
+        }
+
     /** Píldora compacta de estado semántico (p. ej. "HTTPS", "Activa", "Duplicada ×2"). */
     fun statusPill(activity: Activity, label: String, tone: Tone = Tone.NEUTRAL): TextView {
         val p = ThemeManager.palette(activity)
         val (bg, fg) = toneColors(p, tone)
         return TextView(activity).apply {
             text = label
-            textSize = 11.5f
+            textSize = 11f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             typeface = bold(activity)
             setTextColor(fg)
             gravity = Gravity.CENTER
-            setPadding(dp(activity, 9f), dp(activity, 3f), dp(activity, 9f), dp(activity, 3f))
-            background = ThemeManager.rounded(activity, bg, 10f)
+            setPadding(dp(activity, 9f), dp(activity, 3.5f), dp(activity, 9f), dp(activity, 3.5f))
+            background = ThemeManager.rounded(activity, bg, 12f)
         }
     }
 
-    /** Tarjeta compacta de métrica (valor destacado + etiqueta). */
+    /** Tarjeta compacta de métrica (valor tabular destacado + etiqueta). */
     fun metricTile(activity: Activity, value: String, label: String, tone: Tone = Tone.NEUTRAL): LinearLayout {
         val p = ThemeManager.palette(activity)
-        val (bg, fg) = toneColors(p, tone)
+        val isNeutral = tone == Tone.NEUTRAL
+        val (bg, fg) = if (isNeutral) {
+            (if (p.isDark) p.surfaceContainerLow else p.surfaceContainerLowest) to p.text
+        } else {
+            toneColors(p, tone)
+        }
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            background = ThemeManager.rounded(activity, bg, 14f, p.outlineVariant)
-            setPadding(dp(activity, 10f), dp(activity, 10f), dp(activity, 10f), dp(activity, 10f))
+            background = ThemeManager.rounded(activity, bg, 18f, ThemeManager.hairline(p))
+            setPadding(dp(activity, 10f), dp(activity, 12f), dp(activity, 10f), dp(activity, 12f))
             addView(TextView(activity).apply {
                 text = value
-                textSize = 17f
+                textSize = 19f
                 typeface = bold(activity)
                 fontFeatureSettings = "tnum"
                 setTextColor(fg)
@@ -137,9 +183,10 @@ object NexoUi {
             })
             addView(TextView(activity).apply {
                 text = label
-                textSize = 11f
-                setTextColor(fg)
-                alpha = 0.85f
+                textSize = 11.5f
+                typeface = medium(activity)
+                setTextColor(if (isNeutral) p.muted else fg)
+                alpha = if (isNeutral) 1f else 0.88f
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setPadding(0, dp(activity, 2f), 0, 0)
@@ -174,15 +221,16 @@ object NexoUi {
             addView(TextView(activity).apply {
                 text = title
                 textSize = 16.5f
-                typeface = bold(activity)
+                typeface = semiBold(activity)
                 gravity = Gravity.CENTER
                 setTextColor(p.text)
             })
             addView(TextView(activity).apply {
                 text = subtitle
                 textSize = 13.5f
+                typeface = regular(activity)
                 gravity = Gravity.CENTER
-                setLineSpacing(0f, 1.22f)
+                setLineSpacing(0f, 1.25f)
                 setTextColor(p.muted)
                 setPadding(0, dp(activity, 6f), 0, 0)
             })
@@ -194,7 +242,7 @@ object NexoUi {
         }
     }
 
-    /** Barra de búsqueda tipo píldora con icono y botón de limpieza instantánea. */
+    /** Barra de búsqueda tipo píldora tonal con icono y botón de limpieza instantánea. */
     fun searchBar(
         activity: Activity,
         hint: String,
@@ -202,11 +250,12 @@ object NexoUi {
         onTextChanged: (String) -> Unit
     ): Pair<LinearLayout, EditText> {
         val p = ThemeManager.palette(activity)
+        val fill = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
         val container = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(activity, 48f)
-            background = ThemeManager.rounded(activity, p.elevated, 24f, p.outlineVariant)
+            background = ThemeManager.rounded(activity, fill, 24f, ThemeManager.hairline(p))
             setPadding(dp(activity, 14f), 0, dp(activity, 6f), 0)
         }
         container.addView(ImageView(activity).apply {
@@ -222,6 +271,7 @@ object NexoUi {
             setText(initial)
             setSingleLine(true)
             textSize = 14.5f
+            typeface = regular(activity)
             background = null
             setTextColor(p.text)
             setHintTextColor(p.muted)
@@ -250,44 +300,57 @@ object NexoUi {
         return container to edit
     }
 
-    /** Tarjeta: superficie elevada redondeada con borde fino. */
+    /** Tarjeta tonal limpia: elevación por superficie con hairline sutil (sin borde pesado). */
     fun card(activity: Activity): LinearLayout {
         val p = ThemeManager.palette(activity)
+        val fill = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ThemeManager.rounded(activity, p.elevated, 16f, p.outlineVariant)
-            setPadding(dp(activity, 14f), dp(activity, 12f), dp(activity, 14f), dp(activity, 12f))
+            background = ThemeManager.rounded(activity, fill, Tokens.RADIUS_CARD, ThemeManager.hairline(p))
+            setPadding(dp(activity, 16f), dp(activity, 14f), dp(activity, 16f), dp(activity, 14f))
         }
     }
 
-    /** Píldora seleccionable. [dotColor] dibuja un punto de color (grupos). */
+    /**
+     * Píldora seleccionable estilizada (36dp visuales dentro de un objetivo táctil de 48dp).
+     * Sin borde pesado en reposo; en estado seleccionado adopta el acento suave del tema.
+     */
     fun chip(activity: Activity, label: String, selected: Boolean, dotColor: Int? = null, onClick: () -> Unit): TextView {
         val p = ThemeManager.palette(activity)
+        val vInset = dp(activity, 6f)
+        val fill = if (selected) p.accentSoft else p.surfaceContainerHigh
+        val stroke = when {
+            selected -> ColorUtils.setAlphaComponent(p.accent, 110)
+            p.isAmoled -> ThemeManager.hairline(p)
+            else -> null
+        }
+        val pillDrawable = InsetDrawable(ThemeManager.rounded(activity, fill, 18f, stroke), 0, vInset, 0, vInset)
+        val maskDrawable = InsetDrawable(ThemeManager.rounded(activity, Color.WHITE, 18f), 0, vInset, 0, vInset)
+        val rippleColor = ColorUtils.setAlphaComponent(if (selected) p.onAccentSoft else p.text, 30)
+
         return TextView(activity).apply {
             text = label
-            textSize = 13.5f
+            textSize = 13f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            maxWidth = dp(activity, 200f)
+            maxWidth = dp(activity, 210f)
             gravity = Gravity.CENTER
             minHeight = dp(activity, 48f)
             minWidth = dp(activity, 48f)
             isSelected = selected
-            setPadding(dp(activity, if (dotColor != null) 12f else 16f), 0, dp(activity, 16f), 0)
-            typeface = if (selected) bold(activity) else Typeface.DEFAULT
+            setPadding(dp(activity, if (dotColor != null) 12f else 15f), 0, dp(activity, 15f), 0)
+            typeface = if (selected) semiBold(activity) else medium(activity)
             setTextColor(if (selected) p.onAccentSoft else p.text)
-            val fill = if (selected) p.accentSoft else p.elevated
-            val stroke = if (selected) ColorUtils.setAlphaComponent(p.accent, 140) else p.outline
-            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, fill, 19f, stroke), 19f)
+            background = RippleDrawable(ColorStateList.valueOf(rippleColor), pillDrawable, maskDrawable)
             if (dotColor != null) {
                 setCompoundDrawablesRelativeWithIntrinsicBounds(
-                    android.graphics.drawable.GradientDrawable().apply {
-                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                    GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
                         setColor(dotColor)
                         setSize(dp(activity, 8f), dp(activity, 8f))
                     }, null, null, null
                 )
-                compoundDrawablePadding = dp(activity, 8f)
+                compoundDrawablePadding = dp(activity, 7f)
             }
             isClickable = true
             isFocusable = true
@@ -323,14 +386,15 @@ object NexoUi {
         box.addView(TextView(activity).apply {
             text = label
             textSize = 12f
+            typeface = medium(activity)
             setTextColor(p.muted)
-            setPadding(dp(activity, 6f), dp(activity, 6f), 0, dp(activity, 4f))
+            setPadding(dp(activity, 6f), dp(activity, 6f), 0, dp(activity, 5f))
         })
         val edit = EditText(activity).apply {
             this.hint = hint
             setText(value)
             setSingleLine(true)
-            textSize = 15f
+            textSize = 14.5f
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
             inputType = if (numeric) InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
                 else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
@@ -365,23 +429,34 @@ object NexoUi {
         return LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(activity, 52f)
+            minimumHeight = dp(activity, 56f)
+            setPadding(0, dp(activity, 6f), 0, dp(activity, 6f))
             // The Switch is the single accessibility/checkable node for this row.
             setOnClickListener { toggle.toggle() }
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             addView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                addView(TextView(activity).apply { text = title; textSize = 14.5f; setTextColor(p.text) })
+                addView(TextView(activity).apply {
+                    text = title
+                    textSize = 14.5f
+                    typeface = medium(activity)
+                    setTextColor(p.text)
+                })
                 if (!subtitle.isNullOrBlank()) addView(TextView(activity).apply {
-                    text = subtitle; textSize = 12f; setTextColor(p.muted); setPadding(0, dp(activity, 2f), 0, 0)
+                    text = subtitle
+                    textSize = 12.5f
+                    typeface = regular(activity)
+                    setLineSpacing(0f, 1.15f)
+                    setTextColor(p.muted)
+                    setPadding(0, dp(activity, 2f), dp(activity, 12f), 0)
                 })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(toggle)
         }
     }
 
-    /** Fila de acción: icono en burbuja, título, descripción opcional y chevron. */
+    /** Fila de acción: icono en burbuja tonal, título, descripción opcional y chevron. */
     fun actionRow(
         activity: Activity,
         icon: Int,
@@ -406,7 +481,7 @@ object NexoUi {
                 imageTintList = ColorStateList.valueOf(if (danger) p.error.onContainer else p.onAccentSoft)
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(dp(activity, 9f), dp(activity, 9f), dp(activity, 9f), dp(activity, 9f))
+                setPadding(dp(activity, 10f), dp(activity, 10f), dp(activity, 10f), dp(activity, 10f))
                 background = ThemeManager.rounded(activity, if (danger) p.error.container else p.accentSoft, 13f)
             }, LinearLayout.LayoutParams(dp(activity, 40f), dp(activity, 40f)).apply { marginEnd = dp(activity, 12f) })
             addView(LinearLayout(activity).apply {
@@ -415,10 +490,11 @@ object NexoUi {
                 addView(TextView(activity).apply {
                     text = title; textSize = 14.5f; maxLines = 2
                     setTextColor(if (danger) p.danger else p.text)
-                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    typeface = semiBold(activity)
                 })
                 if (!subtitle.isNullOrBlank()) addView(TextView(activity).apply {
-                    text = subtitle; textSize = 12f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+                    text = subtitle; textSize = 12.5f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+                    typeface = regular(activity)
                     setTextColor(p.muted); setPadding(0, dp(activity, 2f), 0, 0)
                 })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
