@@ -756,7 +756,9 @@ class SettingsActivity : Activity() {
         )
 
         com.nexo.browser.engine.Engines.current.applySettings(this)
-        TabManager.reapplySettings()
+        // El guardado automático también corre en onPause: si el proceso se restauró directamente
+        // en Configuración, las pestañas aún no existen y MainActivity aplicará los ajustes al iniciar.
+        if (TabManager.isInitialized) TabManager.reapplySettings()
         ExtensionManager.sendBrowserState(this)
         MediaPlaybackService.sync(this)
         lastSnapshot = now

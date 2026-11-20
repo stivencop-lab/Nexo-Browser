@@ -1449,6 +1449,9 @@ object TabManager {
         listener?.onTabChanged(tab)
     }
 
+    /** true si MainActivity ya inicializó el gestor (Configuración puede abrirse antes al restaurar). */
+    val isInitialized: Boolean get() = appContext != null
+
     private fun requireContext(): Context =
         requireNotNull(appContext) {
             "TabManager.initialize debe ejecutarse primero"

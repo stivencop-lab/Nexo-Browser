@@ -75,9 +75,12 @@ class SkillPracticeRegressionTest {
         row.measure(View.MeasureSpec.makeMeasureSpec((360 * d).toInt(), View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec((800 * d).toInt(), View.MeasureSpec.AT_MOST))
         row.layout(0, 0, row.measuredWidth, row.measuredHeight)
+        // UI 7.0: icono lineal desnudo de 20dp; el texto queda en la línea guía de 52dp,
+        // la misma que usan los divisores inset de las listas agrupadas.
         assertEquals((16 * d).toInt(), row.getChildAt(0).left)
-        assertEquals((68 * d).toInt(), row.getChildAt(1).left)
-        assertTrue(row.height >= 64 * d)
+        assertEquals((52 * d).toInt(), row.getChildAt(1).left)
+        assertEquals((52 * d).toInt(), (NexoUi.insetDivider(activity).layoutParams as ViewGroup.MarginLayoutParams).marginStart)
+        assertTrue(row.height >= 48 * d)
         assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO, row.getChildAt(0).importantForAccessibility)
         row.performClick(); assertEquals(1, clicks)
         val grid = NexoSheets.grid(activity, listOf(SheetAction(R.drawable.ic_menu_desktop, "Escritorio", checked = true) {})) {} as ViewGroup
