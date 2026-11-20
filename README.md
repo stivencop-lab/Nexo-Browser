@@ -104,7 +104,8 @@ La última release firmada publicada desde `main` es **Nexo Browser v0.37.5** (`
 - [Ver release v0.37.5](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.37.5)
 
 Hashes SHA-256 verificados en la release `v0.37.5`:
-- Consulta [`SHA256SUMS.txt`](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.37.5/SHA256SUMS.txt) (se sincronizan en este bloque al terminar la firma en CI).
+- `Nexo-v0.37.5-arm64-v8a.apk`: `d2f0da3c552b9005fde46b9ed7560db46b4a3eed6ee93fa04c273dcbc77f8aa9`
+- `Nexo-v0.37.5-armeabi-v7a.apk`: `4ecc335a51902491dc5d6d198fac0879f1cda6d4598ba4b6aada027eb53b2e79`
 
 ---
 
