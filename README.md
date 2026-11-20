@@ -103,8 +103,8 @@ La última release firmada publicada desde `main` es **Nexo Browser v0.37.0** (`
 - [Ver release v0.37.0](https://github.com/stivencop414-bot/NavegadorGecko/releases/tag/v0.37.0)
 
 Hashes SHA-256 verificados en la release `v0.37.0`:
-- `Nexo-v0.37.0-arm64-v8a.apk`: `613ebf80f7ea8a3638ed0ac000b8c09b56b12c472a1770c1c7ba12ae9ba581d9`
-- `Nexo-v0.37.0-armeabi-v7a.apk`: `a695325296b666268488e42e06fe5e72c068e8fbfa6cbf51a66eed0cdcfb26a6`
+- `Nexo-v0.37.0-arm64-v8a.apk`: `cc646019b6109c778e1c451de5ba3fbb4f6b897cde70181623728be4bf7747b5`
+- `Nexo-v0.37.0-armeabi-v7a.apk`: `b20bdc5889c081dc1d3c8ebf491897cd9a86df14f5cfa6e547243f665e1dc630`
 
 ---
 
