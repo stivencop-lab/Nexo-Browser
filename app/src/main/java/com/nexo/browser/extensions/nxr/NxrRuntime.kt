@@ -299,7 +299,7 @@ object NxrRuntime {
         val meta = NxrPackageInstaller.listInstalled(dir).firstOrNull { it.id == extId } ?: return null
         val path = meta.iconPath ?: return null
         val file = File(NxrPackageInstaller.filesDir(dir, extId), path)
-        if (!file.isFile || file.length() > 512 * 1024) return null
+        if (!file.isFile || file.length() > 4 * 1024 * 1024) return null
         return runCatching {
             val decoded = BitmapFactory.decodeFile(file.absolutePath) ?: return null
             if (maxSizePx > 0 && (decoded.width > maxSizePx || decoded.height > maxSizePx)) {
@@ -341,7 +341,35 @@ object NxrRuntime {
 
     fun onDocumentIdle(session: CefriumEngineSession, url: String?) {
         if (url.isNullOrBlank()) return
+        // Cubrir también document_start/end si la página llegó desde caché sin disparar onDocumentAvailable.
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START)
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END)
         injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_IDLE)
+    }
+
+    /**
+     * Navegación SPA (`history.pushState` / cambios de ruta sin recarga completa, p. ej. YouTube `/watch`):
+     * inyecta scripts cuyos patrones ahora coinciden con [url] sin duplicar los ya ejecutados.
+     */
+    fun onUrlChanged(session: CefriumEngineSession, url: String?) {
+        if (url.isNullOrBlank()) return
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START)
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END)
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_IDLE)
+    }
+
+    /**
+     * Inyecta inmediatamente [extId] en la pestaña activa si la página actual coincide y está autorizada
+     * (tras instalar o activar la extensión sin obligar al usuario a recargar manualmente).
+     */
+    fun injectActiveTabIfMatching(extId: String) {
+        val tab = TabManager.activeTab() ?: return
+        val session = tab.session as? CefriumEngineSession ?: return
+        val url = session.currentLocationUrl() ?: tab.url
+        if (url.isBlank() || !NxrPermissions.isWebHttpUrl(url)) return
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START, onlyExtId = extId)
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END, onlyExtId = extId)
+        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_IDLE, onlyExtId = extId)
     }
 
     /** Marca `(sessionKey, docGen, marker)` como inyectado; devuelve false si ya se ejecutó en este documento. */
@@ -357,7 +385,8 @@ object NxrRuntime {
     private fun injectForStage(
         session: CefriumEngineSession,
         url: String,
-        stage: ExtensionManifest.RunAt
+        stage: ExtensionManifest.RunAt,
+        onlyExtId: String? = null
     ) {
         val dir = rootDir ?: return
         val shim = shimSource ?: return
@@ -368,6 +397,7 @@ object NxrRuntime {
         val docGen = session.documentGeneration()
 
         for (ext in installed) {
+            if (onlyExtId != null && ext.id != onlyExtId) continue
             val extDir = NxrPackageInstaller.extensionDir(dir, ext.id)
             val policy = NxrPermissions.readPolicy(extDir)
             if (!NxrPermissions.isAuthorizedForUrl(policy, url, session.isPrivate)) continue
@@ -383,7 +413,7 @@ object NxrRuntime {
                 .put("name", ext.name)
                 .put("version", manifest.version)
                 .put("description", ext.description)
-            val hasStoragePerm = "storage" in manifest.permissions
+            val hasStoragePerm = "storage" in manifest.permissions || "unlimitedStorage" in manifest.permissions
 
             val host = NxrPermissions.extractHost(url)
             for ((idx, cs) in matching) {
@@ -448,8 +478,12 @@ object NxrRuntime {
     }
 
     /**
-     * Envuelve los content scripts de una extensión en un cierre estricto con `chrome`/`browser`
+     * Envuelve los content scripts de una extensión en un cierre con `chrome`/`browser`
      * acotado al token efímero de capacidad. Nunca escribe tokens ni tablas en `window`.
+     *
+     * Todos los archivos `js` de una misma entrada `content_scripts` comparten el mismo ámbito
+     * léxico (igual que Chromium), y no se fuerza `'use strict'` sobre código de terceros
+     * para evitar fallos en bundles MV2/MV3 minificados.
      * Las acciones del usuario se despachan mediante un `CustomEvent` con [actionNonce] independiente
      * del token de capacidad.
      */
@@ -463,28 +497,29 @@ object NxrRuntime {
         scripts: List<Pair<String, String>>
     ): String {
         val sb = StringBuilder()
-        sb.append("(function(){\n'use strict';\n")
+        sb.append("(function(){\n")
+        sb.append("var __scope = (function(){\n'use strict';\n")
         sb.append(shim).append("\n")
-        sb.append("var __scope = createNxrScope({")
+        sb.append("return createNxrScope({")
             .append("extId:").append(JSONObject.quote(extId))
             .append(",token:").append(JSONObject.quote(token))
             .append(",manifest:").append(manifestSummary.toString())
             .append(",messages:").append(localeMap.toString())
-            .append("});\n")
-        sb.append("var chrome = __scope.chrome; var browser = __scope.browser;\n")
+            .append("});\n})();\n")
         // Canal de acciones independiente del token de capacidad (cero propiedades en window).
         sb.append("if(typeof window!=='undefined'&&typeof window.addEventListener==='function'){")
             .append("window.addEventListener(").append(JSONObject.quote("nxr-act:$actionNonce"))
             .append(",function(ev){try{if(ev&&ev.detail)__scope.dispatchIncoming(ev.detail);}catch(_){}});}\n")
-        for ((path, code) in scripts) {
-            sb.append("try{\n")
-                .append("(function(chrome,browser){\n")
-                .append(code)
-                .append("\n})(chrome,browser);\n")
-                .append("}catch(__nxrErr){__scope.reportError(")
-                .append(JSONObject.quote(path))
-                .append(",__nxrErr);}\n")
+        val bundleLabel = scripts.joinToString(",") { it.first }.take(120).ifBlank { "content_scripts" }
+        sb.append("(function(chrome,browser){\ntry{\n")
+        for ((index, pair) in scripts.withIndex()) {
+            if (index > 0) sb.append("\n;\n")
+            sb.append(pair.second).append("\n")
         }
+        sb.append("}catch(__nxrErr){__scope.reportError(")
+            .append(JSONObject.quote(bundleLabel))
+            .append(",__nxrErr);}\n")
+            .append("})(__scope.chrome,__scope.browser);\n")
         sb.append("})();")
         return sb.toString()
     }
@@ -717,6 +752,7 @@ object NxrRuntime {
             policy.enabled
         ) { enabled ->
             setEnabled(activity, ext.id, enabled)
+            if (enabled) injectActiveTabIfMatching(ext.id)
             onChanged()
         })
 

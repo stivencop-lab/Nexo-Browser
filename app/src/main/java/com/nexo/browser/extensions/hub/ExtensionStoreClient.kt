@@ -25,9 +25,11 @@ import java.util.concurrent.TimeUnit
  *   mediante [CrxPackage.verify] y coincidencia de versión con los metadatos HTTPS.
  */
 object ExtensionStoreClient {
-    const val MAX_DOWNLOAD_BYTES = 25L * 1024L * 1024L
+    const val MAX_DOWNLOAD_BYTES = 256L * 1024L * 1024L
     private const val MAX_REDIRECTS = 5
-    private const val CHROME_PROD_VERSION = "131.0.0.0"
+    private const val CHROME_PROD_VERSION = "156.0.0.0"
+    private const val STORE_USER_AGENT =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$CHROME_PROD_VERSION Safari/537.36"
 
     class StoreException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
@@ -56,15 +58,25 @@ object ExtensionStoreClient {
             .followRedirects(false)
             .followSslRedirects(false)
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .build()
     }
 
     fun cwsOmahaUrl(extensionId: String): String {
         val id = extensionId.lowercase()
-        return "https://clients2.google.com/service/update2/crx?prodversion=$CHROME_PROD_VERSION" +
-            "&acceptformat=crx2,crx3&x=id%3D$id%26uc"
+        return "https://clients2.google.com/service/update2/crx" +
+            "?os=linux&arch=x64&nacl_arch=x86-64&prod=chromecrx&prodchannel=stable" +
+            "&prodversion=$CHROME_PROD_VERSION&acceptformat=crx2,crx3" +
+            "&x=id%3D$id%26installsource%3Dondemand%26uc"
+    }
+
+    fun cwsDirectRedirectUrl(extensionId: String): String {
+        val id = extensionId.lowercase()
+        return "https://clients2.google.com/service/update2/crx?response=redirect" +
+            "&os=linux&arch=x64&nacl_arch=x86-64&prod=chromecrx&prodchannel=stable" +
+            "&prodversion=$CHROME_PROD_VERSION&acceptformat=crx2,crx3" +
+            "&x=id%3D$id%26installsource%3Dondemand%26uc"
     }
 
     fun edgeMetadataUrl(extensionId: String): String =
@@ -183,8 +195,23 @@ object ExtensionStoreClient {
 
     fun fetchCwsListing(extensionId: String): StoreListing {
         val cleanId = extensionId.lowercase()
-        val body = fetchTextHttps(cwsOmahaUrl(cleanId), "application/xml, text/xml, */*")
-        return parseCwsOmahaXml(cleanId, body)
+        val xmlListing = runCatching {
+            val body = fetchTextHttps(cwsOmahaUrl(cleanId), "application/xml, text/xml, */*")
+            parseCwsOmahaXml(cleanId, body)
+        }.getOrNull()
+        if (xmlListing != null) return xmlListing
+        // Respaldo oficial response=redirect cuando Omaha XML omite codebase o devuelve noupdate:
+        // la descarga sigue validando hosts permitidos y firma criptográfica CRX3 con expectedId.
+        return StoreListing(
+            store = ExtensionStoreResolver.StoreKind.CHROME_WEB_STORE,
+            extensionId = cleanId,
+            name = cleanId,
+            developer = "Chrome Web Store",
+            version = "",
+            shortDescription = "",
+            detailUrl = ExtensionStoreResolver.cwsDetailUrl(cleanId),
+            downloadUrl = cwsDirectRedirectUrl(cleanId)
+        )
     }
 
     fun fetchEdgeListing(extensionId: String): StoreListing {
@@ -195,7 +222,7 @@ object ExtensionStoreClient {
 
     /**
      * Descarga y verifica criptográficamente el paquete de [listing] en [destFile].
-     * Comprueba lista de hosts en cada redirección, límite de 25 MB, SHA-256 (CWS),
+     * Comprueba lista de hosts en cada redirección, límite amplio de descarga, SHA-256 (CWS),
      * firma CRX2/CRX3 con [CrxPackage.verify] y coincidencia de versión (Edge).
      */
     fun downloadAndVerifyPackage(listing: StoreListing, destFile: File): File {
@@ -255,7 +282,7 @@ object ExtensionStoreClient {
         return destFile
     }
 
-    /** Descarga un paquete directo de desarrollador estrictamente sobre HTTPS público (máx. 25 MB). */
+    /** Descarga un paquete directo de desarrollador estrictamente sobre HTTPS público. */
     fun downloadDirectHttpsPackage(url: String, destFile: File): File {
         if (!ExtensionStoreResolver.isPublicHttpsUrl(url)) {
             throw StoreException("Solo se permiten descargas directas mediante HTTPS hacia servidores públicos.")
@@ -275,6 +302,7 @@ object ExtensionStoreClient {
         }
         val req = Request.Builder()
             .url(url)
+            .header("User-Agent", STORE_USER_AGENT)
             .header("Accept", accept)
             .header("Accept-Language", "es,en;q=0.8")
             .get()
@@ -329,7 +357,12 @@ object ExtensionStoreClient {
                 throw StoreException("Esquema no permitido para $host ($scheme).")
             }
 
-            val req = Request.Builder().url(currentUrl).get().build()
+            val req = Request.Builder()
+                .url(currentUrl)
+                .header("User-Agent", STORE_USER_AGENT)
+                .header("Accept", "*/*")
+                .get()
+                .build()
             client.newCall(req).execute().use { res ->
                 if (res.code in 300..399) {
                     val location = res.header("Location")?.trim()
@@ -341,12 +374,15 @@ object ExtensionStoreClient {
                         .getOrElse { throw StoreException("Redirección inválida.") }
                     continue
                 }
+                if (res.code == 204) {
+                    throw StoreException("La tienda no devolvió un paquete CRX descargable para esta extensión (HTTP 204).")
+                }
                 if (!res.isSuccessful) {
                     throw StoreException("Descarga fallida (HTTP ${res.code}).")
                 }
                 val contentLength = res.body?.contentLength() ?: -1L
                 if (contentLength > MAX_DOWNLOAD_BYTES) {
-                    throw StoreException("El paquete supera el límite de ${MAX_DOWNLOAD_BYTES / (1024 * 1024)} MB.")
+                    throw StoreException("El paquete supera el límite de seguridad de ${MAX_DOWNLOAD_BYTES / (1024 * 1024)} MB.")
                 }
                 val stream = res.body?.byteStream() ?: throw StoreException("Paquete vacío.")
                 destFile.outputStream().use { out ->
@@ -359,7 +395,7 @@ object ExtensionStoreClient {
                         if (total > MAX_DOWNLOAD_BYTES) {
                             out.close()
                             destFile.delete()
-                            throw StoreException("La descarga superó el límite de ${MAX_DOWNLOAD_BYTES / (1024 * 1024)} MB.")
+                            throw StoreException("La descarga superó el límite de seguridad de ${MAX_DOWNLOAD_BYTES / (1024 * 1024)} MB.")
                         }
                         out.write(buf, 0, read)
                     }

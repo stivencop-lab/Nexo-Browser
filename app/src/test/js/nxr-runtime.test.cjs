@@ -152,3 +152,48 @@ test('nxr-runtime-shim protects getManifest from JSON monkey-patching and expose
   await assert.rejects(() => scope.chrome.declarativeNetRequest.updateDynamicRules(), /no soportada/i);
 });
 
+test('nxr-runtime-shim provides storage.sync/session/onChanged, runtime.connect, chrome.extension and i18n substitutions', async () => {
+  const mock = makeMockQuery();
+  const scope = createNxrScope({
+    extId: 'pc-ext@nxr.test',
+    token: 'tok-pc',
+    manifest: { name: 'PC Ext', version: '3.0' },
+    messages: { greet: 'Hola $1, tienes $2 avisos' },
+    query: mock.query
+  });
+
+  const events = [];
+  scope.chrome.storage.onChanged.addListener((changes, area) => events.push({ changes, area }));
+
+  await scope.chrome.storage.sync.set({ dark: true });
+  const syncVal = await scope.chrome.storage.sync.get('dark');
+  assert.equal(syncVal.dark, true);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].area, 'sync');
+  assert.equal(events[0].changes.dark.newValue, true);
+
+  await scope.chrome.storage.session.set({ tabFlag: 'on' });
+  const sessVal = await scope.chrome.storage.session.get({ tabFlag: 'off', fallback: 7 });
+  assert.equal(sessVal.tabFlag, 'on');
+  assert.equal(sessVal.fallback, 7);
+
+  // runtime.connect returns a safe Port instead of crashing PC extensions
+  const port = scope.chrome.runtime.connect({ name: 'content-bridge' });
+  assert.equal(port.name, 'content-bridge');
+  let disconnected = false;
+  port.onDisconnect.addListener(() => { disconnected = true; });
+  port.postMessage({ ping: 1 });
+  port.disconnect();
+  assert.equal(disconnected, true);
+
+  // runtime.sendMessage overloads (extId, message, callback)
+  const reply = await new Promise(resolve => scope.chrome.runtime.sendMessage('pc-ext@nxr.test', { hello: true }, resolve));
+  assert.equal(reply.ok, true);
+
+  // chrome.extension.getURL & i18n substitutions
+  assert.equal(scope.chrome.extension.getURL('/icon.png'), 'nxr://pc-ext@nxr.test/icon.png');
+  assert.equal(scope.chrome.i18n.getMessage('greet', ['Nexo', 3]), 'Hola Nexo, tienes 3 avisos');
+  assert.equal(scope.chrome.i18n.getMessage('@@extension_id'), 'pc-ext@nxr.test');
+});
+
+

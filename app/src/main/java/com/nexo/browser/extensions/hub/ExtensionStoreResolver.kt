@@ -62,6 +62,36 @@ object ExtensionStoreResolver {
     private fun encodeSegment(query: String): String =
         URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
 
+    private val LOCALE_SEGMENT_REGEX = Regex("^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,4})?$")
+
+    /**
+     * Detecta cualquier página de tienda oficial de extensiones Chromium
+     * (Chrome Web Store o Microsoft Edge Add-ons: inicio, búsqueda, categorías o ficha)
+     * para activar automáticamente el modo escritorio en la pestaña.
+     */
+    fun isExtensionStoreUrl(url: String?): Boolean {
+        val raw = url?.trim().orEmpty()
+        if (raw.isEmpty()) return false
+        val scheme = UrlSafety.scheme(raw)
+        if (scheme != "https" && scheme != "http") return false
+        val uri = runCatching { URI(raw) }.getOrNull() ?: return false
+        if (uri.rawUserInfo != null) return false
+        val host = uri.host?.lowercase()?.trimEnd('.') ?: return false
+        val segments = (uri.path ?: "").split('/').filter { it.isNotBlank() }
+
+        if (host == "chromewebstore.google.com") return true
+        if (host == "chrome.google.com") {
+            return segments.firstOrNull()?.equals("webstore", ignoreCase = true) == true
+        }
+        if (host == "microsoftedge.microsoft.com") {
+            val first = segments.getOrNull(0)
+            val second = segments.getOrNull(1)
+            return first?.equals("addons", ignoreCase = true) == true ||
+                (first != null && LOCALE_SEGMENT_REGEX.matches(first) && second?.equals("addons", ignoreCase = true) == true)
+        }
+        return false
+    }
+
     /**
      * Detecta si [url] corresponde a la ficha oficial de una extensión en Chrome Web Store
      * o Microsoft Edge Add-ons (usado por la barra contextual «Instalar en Nexo»).
@@ -100,11 +130,13 @@ object ExtensionStoreResolver {
 
         // Microsoft Edge Add-ons:
         // - https://microsoftedge.microsoft.com/addons/detail/<slug>/<32id>
+        // - https://microsoftedge.microsoft.com/es-es/addons/detail/<slug>/<32id>
         // - https://microsoftedge.microsoft.com/addons/detail/<32id>
         if (host == "microsoftedge.microsoft.com") {
             val addonsIdx = segments.indexOfFirst { it.equals("addons", ignoreCase = true) }
             val detIdx = segments.indexOfFirst { it.equals("detail", ignoreCase = true) }
-            if (addonsIdx >= 0 && detIdx == addonsIdx + 1) {
+            val validPrefix = addonsIdx == 0 || (addonsIdx == 1 && LOCALE_SEGMENT_REGEX.matches(segments[0]))
+            if (validPrefix && detIdx == addonsIdx + 1) {
                 val id = segments.drop(detIdx + 1).lastOrNull { isValidExtensionId(it) }?.lowercase()
                 if (id != null) {
                     return ResolvedTarget.StoreExtension(StoreKind.EDGE_ADDONS, id, edgeDetailUrl(id))
@@ -159,7 +191,7 @@ object ExtensionStoreResolver {
         if (!text.contains(' ') && (
                 text.startsWith("chromewebstore.google.com/", ignoreCase = true) ||
                     text.startsWith("chrome.google.com/webstore/", ignoreCase = true) ||
-                    text.startsWith("microsoftedge.microsoft.com/addons/", ignoreCase = true)
+                    text.startsWith("microsoftedge.microsoft.com/", ignoreCase = true)
                 )
         ) {
             detectStorePage("https://$text")?.let { return it }
@@ -175,6 +207,7 @@ object ExtensionStoreResolver {
             h == "dl.google.com" ||
             h.endsWith(".googleusercontent.com") ||
             h.endsWith(".gvt1.com") ||
+            h.endsWith(".gvt2.com") ||
             h.endsWith(".dl.google.com")
     }
 

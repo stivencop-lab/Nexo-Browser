@@ -585,4 +585,73 @@ class NxrRuntimeTest {
         assertEquals(1L, NxrRuntime.runtimeStats(inst.id)?.injectionCount)
         assertEquals("example.com", NxrRuntime.runtimeStats(inst.id)?.lastHost)
     }
+
+    @Test
+    fun streamsLargeMultiFileDesktopExtensionWithoutSizeRejections() {
+        val root = temp.newFolder("nxr_desktop_large")
+        val bigBundle = "/* bundle */" + "a".repeat(3 * 1024 * 1024) // > 3 MB (antes bloqueado en 2 MB)
+        val pkg = temp.newFile("desktop_large.zip")
+        // Datos pseudo-aleatorios no compresibles para no activar la detección de zip bomb.
+        val rnd = java.util.Random(42L)
+        val assetChunk = ByteArray(1024 * 1024).also { rnd.nextBytes(it) }
+        ZipOutputStream(pkg.outputStream()).use { zos ->
+            zos.putNextEntry(ZipEntry("manifest.json"))
+            zos.write(sampleManifest(name = "Desktop PC Ext", geckoId = "desktop@pc.test").toByteArray())
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry("content.js"))
+            zos.write(bigBundle.toByteArray())
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry("style.css"))
+            zos.write("body { color: inherit; }".toByteArray())
+            zos.closeEntry()
+            // > 300 archivos (antes bloqueado en 200)
+            for (i in 1..320) {
+                zos.putNextEntry(ZipEntry("_locales/l$i/messages.json"))
+                zos.write("""{"title":{"message":"Locale $i"}}""".toByteArray())
+                zos.closeEntry()
+            }
+            // > 12 MB descomprimidos en total (antes bloqueado en 10 MB)
+            for (i in 1..10) {
+                zos.putNextEntry(ZipEntry("assets/pack_$i.bin"))
+                zos.write(assetChunk)
+                zos.closeEntry()
+            }
+        }
+
+        val inspection = NxrPackageInstaller.inspect(pkg)
+        assertTrue("Debe aceptar paquetes con >300 archivos", inspection.fileCount > 320)
+        assertTrue("Debe aceptar paquetes >12 MB descomprimidos", inspection.totalUncompressedBytes > 12L * 1024L * 1024L)
+        assertTrue(inspection.missingFiles.isEmpty())
+
+        val installed = NxrPackageInstaller.install(root, pkg, inspection.requestedHosts, enableAfterInstall = true)
+        assertEquals("desktop@pc.test", installed.id)
+        val readScript = NxrPackageInstaller.readPackagedText(root, installed.id, "content.js")
+        assertNotNull("Debe leer content scripts >2 MB sin truncar ni descartar", readScript)
+        assertEquals(bigBundle.length, readScript!!.length)
+    }
+
+    @Test
+    fun bundleSharesLexicalScopeAcrossContentScriptsWithoutForcingStrictModeOnExtensionCode() {
+        val bundle = NxrRuntime.buildJsBundleScript(
+            shim = "function createNxrScope(){ return { chrome:{}, browser:{}, reportError:function(){}, dispatchIncoming:function(){} }; }",
+            extId = "multi@ext.test",
+            token = "tok-shared",
+            actionNonce = "nonce-shared",
+            manifestSummary = JSONObject().put("name", "Multi"),
+            localeMap = JSONObject(),
+            scripts = listOf(
+                "lib.js" to "var sharedHelper = function() { return 42; };",
+                "main.js" to "var answer = sharedHelper();"
+            )
+        )
+        // Los dos scripts comparten un único cierre (function(chrome,browser){ ... }) en lugar de aislarse entre sí.
+        val closureCount = Regex("""\(function\(chrome,browser\)\{""").findAll(bundle).count()
+        assertEquals(1, closureCount)
+        assertTrue(bundle.contains("sharedHelper"))
+        assertTrue(bundle.contains("var answer = sharedHelper();"))
+        // 'use strict' debe quedar encapsulado dentro del IIFE del shim, nunca forzado sobre el cierre de extensión.
+        val extStart = bundle.indexOf("(function(chrome,browser){")
+        assertTrue(extStart > 0)
+        assertFalse(bundle.substring(extStart).contains("'use strict'"))
+    }
 }

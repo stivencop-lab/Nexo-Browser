@@ -204,7 +204,9 @@ object ExtensionHubSheets {
         val p = ThemeManager.palette(activity)
         val body = NexoUi.column(activity)
         var consumed = false
-        var enableAfterInstall = inspection.recommendedEnabled
+        val defaultEnable = inspection.recommendedEnabled ||
+            (inspection.signatureVerified && inspection.capabilities.runnableContentScripts > 0)
+        var enableAfterInstall = defaultEnable
         lateinit var sheet: Dialog
 
         val existing = NxrRuntime.installed(activity).firstOrNull { it.id == inspection.id }
@@ -247,7 +249,12 @@ object ExtensionHubSheets {
         // Resumen técnico verificado
         val summary = buildString {
             appendLine("Fuente: ${sourceInfo.originLabel()} · Formato: ${inspection.sourceType} · Manifest V${inspection.manifest.manifestVersion}")
-            appendLine("Versión: ${inspection.manifest.version} · Archivos: ${inspection.fileCount} (${(inspection.totalUncompressedBytes / 1024L).coerceAtLeast(1L)} KB)")
+            val sizeLabel = if (inspection.totalUncompressedBytes >= 1024L * 1024L) {
+                String.format(java.util.Locale.US, "%.1f MB", inspection.totalUncompressedBytes / (1024.0 * 1024.0))
+            } else {
+                "${(inspection.totalUncompressedBytes / 1024L).coerceAtLeast(1L)} KB"
+            }
+            appendLine("Versión: ${inspection.manifest.version} · Archivos: ${inspection.fileCount} ($sizeLabel)")
             if (!listing?.developer.isNullOrBlank()) appendLine("Desarrollador: ${listing.developer}")
             if (listing?.rating != null && listing.ratingCount != null) {
                 appendLine("Valoración oficial en tienda: %.1f/5 (%d reseñas)".format(listing.rating, listing.ratingCount))
@@ -291,21 +298,29 @@ object ExtensionHubSheets {
             body.addView(NexoUi.note(activity, apiText))
         }
 
+        fun resolveActionLabel(enabled: Boolean): String = when {
+            existing != null -> "Actualizar a v${inspection.manifest.version}"
+            enabled -> "Instalar y activar"
+            else -> "Instalar desactivada"
+        }
+
+        lateinit var installBtn: android.widget.Button
+
         body.addView(NexoUi.switchRow(
             activity,
             "Habilitar inmediatamente al instalar",
-            if (inspection.recommendedEnabled) {
-                "Paquete firmado, acotado y compatible: listo para activar."
-            } else {
-                "Desactivado por seguridad por defecto. Actívalo solo si confías en esta extensión."
+            when {
+                inspection.recommendedEnabled -> "Paquete firmado, acotado y compatible: listo para activar."
+                defaultEnable -> "Firma CRX verificada con content scripts ejecutables. Puedes desactivarlo antes de instalar."
+                else -> "Desactivado por seguridad por defecto. Actívalo solo si confías en esta extensión."
             },
             enableAfterInstall
         ) { checked ->
             enableAfterInstall = checked
+            installBtn.text = resolveActionLabel(checked)
         })
 
-        val actionLabel = if (existing != null) "Actualizar a v${inspection.manifest.version}" else "Instalar en Nexo"
-        body.addView(NexoUi.button(activity, actionLabel, primary = true) {
+        installBtn = NexoUi.button(activity, resolveActionLabel(enableAfterInstall), primary = true) {
             consumed = true
             sheet.dismiss()
             io.execute {
@@ -323,7 +338,10 @@ object ExtensionHubSheets {
                 main.post {
                     if (activity.isFinishing || activity.isDestroyed) return@post
                     res.onSuccess { installed ->
-                        val stateLabel = if (enableAfterInstall) "instalada y habilitada" else "instalada (desactivada por seguridad)"
+                        if (enableAfterInstall) {
+                            NxrRuntime.injectActiveTabIfMatching(installed.id)
+                        }
+                        val stateLabel = if (enableAfterInstall) "instalada y activa" else "instalada (desactivada)"
                         Toastish.show(activity, "${installed.name} v${installed.version} $stateLabel.")
                         onInstalled()
                     }.onFailure { err ->
@@ -335,7 +353,8 @@ object ExtensionHubSheets {
                     }
                 }
             }
-        }, NexoUi.buttonParams(activity, 10f))
+        }
+        body.addView(installBtn, NexoUi.buttonParams(activity, 10f))
 
         body.addView(NexoUi.button(activity, "Cancelar", primary = false) {
             sheet.dismiss()

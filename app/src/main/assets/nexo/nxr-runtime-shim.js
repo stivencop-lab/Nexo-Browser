@@ -24,6 +24,10 @@ function createNxrScope(config) {
 
   let nextCallId = 1;
   const messageListeners = [];
+  const connectListeners = [];
+  const installedListeners = [];
+  const storageChangedListeners = [];
+  const sessionStore = Object.create(null);
 
   function callNative(kind, payload) {
     return new Promise(function(resolve, reject) {
@@ -97,6 +101,35 @@ function createNxrScope(config) {
     return promise;
   }
 
+  function makeEventTarget(list) {
+    return Object.freeze({
+      addListener: function(fn) {
+        if (typeof fn === 'function' && !list.includes(fn)) list.push(fn);
+      },
+      removeListener: function(fn) {
+        const idx = list.indexOf(fn);
+        if (idx >= 0) list.splice(idx, 1);
+      },
+      hasListener: function(fn) {
+        return list.includes(fn);
+      },
+      hasListeners: function() {
+        return list.length > 0;
+      }
+    });
+  }
+
+  function emitStorageChanges(changes, areaName) {
+    if (!changes || Object.keys(changes).length === 0) return;
+    for (const fn of storageChangedListeners.slice()) {
+      try {
+        fn(changes, areaName);
+      } catch (err) {
+        reportError('storage.onChanged', err);
+      }
+    }
+  }
+
   function unsupportedStub(apiName) {
     return function() {
       const msg = 'API no soportada por NXR sobre Cefrium: ' + apiName;
@@ -105,7 +138,67 @@ function createNxrScope(config) {
     };
   }
 
-  const storageLocal = Object.freeze({
+  function createPersistentStorageArea(areaName) {
+    return Object.freeze({
+      get: function(keys, callback) {
+        let actualKeys = keys;
+        let cb = callback;
+        if (typeof keys === 'function') {
+          cb = keys;
+          actualKeys = null;
+        }
+        return withOptionalCallback(
+          callNative('nxr_storage', { op: 'get', keys: actualKeys == null ? null : actualKeys }).then(function(r) {
+            return (r && typeof r === 'object') ? r : {};
+          }),
+          cb
+        );
+      },
+      set: function(items, callback) {
+        if (!items || typeof items !== 'object') {
+          return withOptionalCallback(Promise.resolve(), callback);
+        }
+        return withOptionalCallback(
+          callNative('nxr_storage', { op: 'set', values: items }).then(function() {
+            const changes = {};
+            for (const k of Object.keys(items)) {
+              changes[k] = { newValue: items[k] };
+            }
+            emitStorageChanges(changes, areaName);
+            return undefined;
+          }),
+          callback
+        );
+      },
+      remove: function(keys, callback) {
+        return withOptionalCallback(
+          callNative('nxr_storage', { op: 'remove', keys: keys }).then(function() {
+            const keyList = Array.isArray(keys) ? keys : (typeof keys === 'string' ? [keys] : []);
+            const changes = {};
+            for (const k of keyList) changes[k] = {};
+            emitStorageChanges(changes, areaName);
+            return undefined;
+          }),
+          callback
+        );
+      },
+      clear: function(callback) {
+        return withOptionalCallback(
+          callNative('nxr_storage', { op: 'clear' }).then(function() { return undefined; }),
+          callback
+        );
+      },
+      getBytesInUse: function(keys, callback) {
+        const cb = typeof keys === 'function' ? keys : callback;
+        return withOptionalCallback(Promise.resolve(0), cb);
+      }
+    });
+  }
+
+  const storageLocal = createPersistentStorageArea('local');
+  const storageSync = createPersistentStorageArea('sync');
+
+  const storageSession = Object.freeze({
     get: function(keys, callback) {
       let actualKeys = keys;
       let cb = callback;
@@ -113,35 +206,79 @@ function createNxrScope(config) {
         cb = keys;
         actualKeys = null;
       }
-      return withOptionalCallback(
-        callNative('nxr_storage', { op: 'get', keys: actualKeys == null ? null : actualKeys }).then(function(r) {
-          return (r && typeof r === 'object') ? r : {};
-        }),
-        cb
-      );
+      const out = {};
+      if (actualKeys == null) {
+        Object.assign(out, sessionStore);
+      } else if (typeof actualKeys === 'string') {
+        if (Object.prototype.hasOwnProperty.call(sessionStore, actualKeys)) out[actualKeys] = sessionStore[actualKeys];
+      } else if (Array.isArray(actualKeys)) {
+        for (const k of actualKeys) {
+          if (Object.prototype.hasOwnProperty.call(sessionStore, k)) out[k] = sessionStore[k];
+        }
+      } else if (typeof actualKeys === 'object') {
+        for (const k of Object.keys(actualKeys)) {
+          out[k] = Object.prototype.hasOwnProperty.call(sessionStore, k) ? sessionStore[k] : actualKeys[k];
+        }
+      }
+      return withOptionalCallback(Promise.resolve(out), cb);
     },
     set: function(items, callback) {
-      if (!items || typeof items !== 'object') {
-        return withOptionalCallback(Promise.resolve(), callback);
+      if (items && typeof items === 'object') {
+        const changes = {};
+        for (const k of Object.keys(items)) {
+          const oldValue = sessionStore[k];
+          sessionStore[k] = items[k];
+          changes[k] = { oldValue: oldValue, newValue: items[k] };
+        }
+        emitStorageChanges(changes, 'session');
       }
-      return withOptionalCallback(
-        callNative('nxr_storage', { op: 'set', values: items }).then(function() { return undefined; }),
-        callback
-      );
+      return withOptionalCallback(Promise.resolve(undefined), callback);
     },
     remove: function(keys, callback) {
-      return withOptionalCallback(
-        callNative('nxr_storage', { op: 'remove', keys: keys }).then(function() { return undefined; }),
-        callback
-      );
+      const keyList = Array.isArray(keys) ? keys : (typeof keys === 'string' ? [keys] : []);
+      const changes = {};
+      for (const k of keyList) {
+        if (Object.prototype.hasOwnProperty.call(sessionStore, k)) {
+          changes[k] = { oldValue: sessionStore[k] };
+          delete sessionStore[k];
+        }
+      }
+      emitStorageChanges(changes, 'session');
+      return withOptionalCallback(Promise.resolve(undefined), callback);
     },
     clear: function(callback) {
-      return withOptionalCallback(
-        callNative('nxr_storage', { op: 'clear' }).then(function() { return undefined; }),
-        callback
-      );
+      for (const k of Object.keys(sessionStore)) delete sessionStore[k];
+      return withOptionalCallback(Promise.resolve(undefined), callback);
     }
   });
+
+  function resolveUrl(path) {
+    return 'nxr://' + extId + '/' + String(path || '').replace(/^\/+/, '');
+  }
+
+  function createSafePort(name) {
+    const portMessageListeners = [];
+    const portDisconnectListeners = [];
+    let disconnected = false;
+    const port = {
+      name: String(name || ''),
+      sender: { id: extId },
+      onMessage: makeEventTarget(portMessageListeners),
+      onDisconnect: makeEventTarget(portDisconnectListeners),
+      postMessage: function(msg) {
+        if (disconnected) return;
+        callNative('nxr_message', { message: msg == null ? null : msg }).catch(function() {});
+      },
+      disconnect: function() {
+        if (disconnected) return;
+        disconnected = true;
+        for (const fn of portDisconnectListeners.slice()) {
+          try { fn(port); } catch (err) { reportError('port.onDisconnect', err); }
+        }
+      }
+    };
+    return port;
+  }
 
   const runtime = {
     id: extId,
@@ -149,33 +286,47 @@ function createNxrScope(config) {
     getManifest: function() {
       return jsonParse(jsonStringify(manifest));
     },
-    getURL: function(path) {
-      return 'nxr://' + extId + '/' + String(path || '').replace(/^\/+/, '');
-    },
-    sendMessage: function(message, callback) {
+    getURL: resolveUrl,
+    sendMessage: function() {
+      const args = Array.prototype.slice.call(arguments);
+      let callback;
+      if (args.length > 0 && typeof args[args.length - 1] === 'function') {
+        callback = args.pop();
+      }
+      // Soporta (message), (message, options) y (extensionId, message, options).
+      const message = (args.length >= 2 && typeof args[0] === 'string') ? args[1] : args[0];
       return withOptionalCallback(
         callNative('nxr_message', { message: message == null ? null : message }),
         callback
       );
     },
-    onMessage: Object.freeze({
-      addListener: function(fn) {
-        if (typeof fn === 'function' && !messageListeners.includes(fn)) messageListeners.push(fn);
-      },
-      removeListener: function(fn) {
-        const idx = messageListeners.indexOf(fn);
-        if (idx >= 0) messageListeners.splice(idx, 1);
-      },
-      hasListener: function(fn) {
-        return messageListeners.includes(fn);
-      }
-    })
+    connect: function(extIdOrInfo, connectInfo) {
+      const info = (typeof extIdOrInfo === 'object' && extIdOrInfo) ? extIdOrInfo : (connectInfo || {});
+      return createSafePort(info.name || '');
+    },
+    onMessage: makeEventTarget(messageListeners),
+    onConnect: makeEventTarget(connectListeners),
+    onInstalled: makeEventTarget(installedListeners)
   };
 
+  const extensionLegacy = Object.freeze({
+    getURL: resolveUrl,
+    inIncognitoContext: false
+  });
+
   const i18n = Object.freeze({
-    getMessage: function(key) {
-      const entry = messages[String(key || '')];
-      return typeof entry === 'string' ? entry : '';
+    getMessage: function(key, substitutions) {
+      const k = String(key || '');
+      if (k === '@@extension_id') return extId;
+      if (k === '@@ui_locale') return i18n.getUILanguage().replace('-', '_');
+      const entry = messages[k];
+      if (typeof entry !== 'string') return '';
+      if (substitutions == null) return entry;
+      const list = Array.isArray(substitutions) ? substitutions : [substitutions];
+      return entry.replace(/\$([1-9])/g, function(match, idx) {
+        const i = Number(idx) - 1;
+        return i < list.length && list[i] != null ? String(list[i]) : match;
+      });
     },
     getUILanguage: function() {
       return (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'es';
@@ -184,7 +335,13 @@ function createNxrScope(config) {
 
   const api = Object.freeze({
     runtime: runtime,
-    storage: Object.freeze({ local: storageLocal }),
+    extension: extensionLegacy,
+    storage: Object.freeze({
+      local: storageLocal,
+      sync: storageSync,
+      session: storageSession,
+      onChanged: makeEventTarget(storageChangedListeners)
+    }),
     i18n: i18n,
     tabs: Object.freeze({
       query: unsupportedStub('tabs.query'),

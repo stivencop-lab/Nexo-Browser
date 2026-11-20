@@ -43,6 +43,11 @@ object TabManager {
     private var activeId: String? = null
     private val activationHistory = java.util.ArrayDeque<String>()
     private val crashTimes = mutableMapOf<String, java.util.ArrayDeque<Long>>()
+    /** Pestañas donde el usuario desactivó manualmente el modo escritorio estando en una tienda. */
+    private val manualMobileStoreTabs = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    internal fun isExtensionStoreUrl(url: String?): Boolean =
+        com.nexo.browser.extensions.hub.ExtensionStoreResolver.isExtensionStoreUrl(url)
 
     fun initialize(context: Context) {
         appContext = context.applicationContext
@@ -165,11 +170,12 @@ object TabManager {
                 BrowserPrefs.homePage(requireContext())
             }
 
+        val storeDesktop = isExtensionStoreUrl(initialUrl)
         val tab = BrowserTab(
             url = initialUrl,
             title = if (isPrivate) "Pestaña privada" else "Nueva pestaña",
             isPrivate = isPrivate || burnerId != null,
-            desktopMode = appContext?.let { BrowserPrefs.desktopDefault(it) } == true,
+            desktopMode = storeDesktop || (appContext?.let { BrowserPrefs.desktopDefault(it) } == true),
             groupName = TabGroupRules.name(groupName),
             burnerId = burnerId,
             networkProfile = networkProfile
@@ -251,7 +257,17 @@ object TabManager {
     fun openOrSelectTab(url: String) {
         val privateMode = activeTab()?.isPrivate == true
         val existing = tabs.firstOrNull { it.url == url && it.isPrivate == privateMode }
-        if (existing != null) switchTo(existing.id) else createTab(url, privateMode, true)
+        if (existing != null) {
+            if (isExtensionStoreUrl(url) && !existing.desktopMode && !manualMobileStoreTabs.contains(existing.id)) {
+                existing.desktopMode = true
+                existing.session?.setDesktopMode(true)
+                existing.session?.loadUrl(url)
+                persist()
+            }
+            switchTo(existing.id)
+        } else {
+            createTab(url, privateMode, true)
+        }
     }
 
     fun createSessionForExtension(
@@ -433,6 +449,7 @@ object TabManager {
         }
         activationHistory.remove(id)
         crashTimes.remove(id)
+        manualMobileStoreTabs.remove(id)
 
         removed.session?.let { session ->
             runCatching {
@@ -484,6 +501,15 @@ object TabManager {
         if (!isSafeAppNavigationUrl(url)) {
             listener?.onMessage("Nexo bloqueó un esquema de URL no permitido.")
             return
+        }
+
+        val enteringStore = isExtensionStoreUrl(url)
+        if (!enteringStore) {
+            manualMobileStoreTabs.remove(tab.id)
+        } else if (!tab.desktopMode && !manualMobileStoreTabs.contains(tab.id)) {
+            tab.desktopMode = true
+            tab.session?.setDesktopMode(true)
+            listener?.onMessage("Modo escritorio activado para la tienda de extensiones.")
         }
 
         val target =
@@ -589,6 +615,11 @@ object TabManager {
     fun setDesktopMode(enabled: Boolean) {
         val tab = activeTab() ?: return
         if (tab.desktopMode == enabled) return
+        if (!enabled && isExtensionStoreUrl(tab.url)) {
+            manualMobileStoreTabs.add(tab.id)
+        } else {
+            manualMobileStoreTabs.remove(tab.id)
+        }
         tab.desktopMode = enabled
 
         tab.session?.setDesktopMode(enabled)
@@ -793,7 +824,7 @@ object TabManager {
             burnerId = opener.burnerId,
             burnerSeed = opener.burnerSeed,
             networkProfile = opener.networkProfile,
-            desktopMode = opener.desktopMode,
+            desktopMode = opener.desktopMode || isExtensionStoreUrl(uri),
             isLoading = true
         )
         // Insertarla junto a la pestaña que la abrió.
@@ -917,6 +948,23 @@ object TabManager {
 
         override fun onLocationChange(session: EngineSession, url: String?, hasUserGesture: Boolean) {
             if (tab.session !== session || TabRouting.synthetic(session) || url == null || !isSafeAppNavigationUrl(url)) return
+            val inStore = isExtensionStoreUrl(url)
+            if (!inStore) {
+                manualMobileStoreTabs.remove(tab.id)
+            } else if (!tab.desktopMode && !manualMobileStoreTabs.contains(tab.id)) {
+                // Redirección directa hacia Chrome Web Store o Edge Add-ons: cambiar una sola vez a modo escritorio.
+                tab.desktopMode = true
+                session.setDesktopMode(true)
+                tab.url = url
+                tab.sessionState = null
+                persist()
+                listener?.onTabChanged(tab)
+                listener?.onMessage("Modo escritorio activado para la tienda de extensiones.")
+                mainHandler.post {
+                    if (tab.session === session) session.loadUrl(url)
+                }
+                return
+            }
             if (tab.url != url) {
                 // Un cambio solo de "#…" (reproductores, pestañas internas) no es otra página:
                 // los subtítulos y la captura de Android siguen.
@@ -1001,6 +1049,23 @@ object TabManager {
                     return LoadDecision.PENDING
                 }
                 return LoadDecision.ALLOW
+            }
+
+            // Al entrar a Chrome Web Store o Edge Add-ons desde un enlace: activar modo escritorio
+            // antes de enviar la petición HTTP para que la tienda cargue su versión de escritorio.
+            if (isExtensionStoreUrl(request.uri) && !tab.desktopMode && !manualMobileStoreTabs.contains(tab.id)) {
+                tab.desktopMode = true
+                session.setDesktopMode(true)
+                tab.url = request.uri
+                tab.sessionState = null
+                persist()
+                listener?.onTabChanged(tab)
+                listener?.onMessage("Modo escritorio activado para la tienda de extensiones.")
+                val storeUrl = request.uri
+                mainHandler.post {
+                    if (tab.session === session) session.loadUrl(storeUrl)
+                }
+                return LoadDecision.DENY
             }
 
             val target =
