@@ -12,11 +12,11 @@ object MenuSections {
             R.drawable.ic_menu_screenshot, R.drawable.ic_menu_pdf)
         val libraryIds = setOf(R.drawable.ic_menu_bookmark, R.drawable.ic_menu_workspace, R.drawable.ic_menu_history, R.drawable.ic_menu_reopen, R.drawable.ic_tab_tools)
         val prefIds = setOf(R.drawable.ic_menu_settings, R.drawable.ic_menu_update)
-        val aiIds = setOf(R.drawable.ic_nexo_ai_spark)
+        val aiIds = setOf(R.drawable.ic_nexo_aperture)
         val quick = actions.filter { it.icon in quickIds }
         val remainder = actions.filterNot { it.icon in quickIds }
         val groups = listOf(
-            Group("Nexo AI ✨", remainder.filter { it.icon in aiIds }),
+            Group("Nexo AI", remainder.filter { it.icon in aiIds }),
             Group("Esta página", remainder.filter { it.icon in pageIds }),
             Group("Pestañas e historial", remainder.filter { it.icon in libraryIds }),
             Group("Preferencias", remainder.filter { it.icon in prefIds }),

@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Nexo UI 7.0: icono lineal (trazo 1.6dp, extremos redondos). Generado por tools/generate_line_icons.py. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
+    android:width="20dp"
+    android:height="20dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M17,3H7c-1.1,0 -2,0.9 -2,2v16l7,-3 7,3V5c0,-1.1 -0.9,-2 -2,-2zM17,18l-5,-2.18L7,18V5h10v13z" />
+        android:pathData="M7,4h10a1,1 0 0,1 1,1v15l-6,-4 -6,4V5a1,1 0 0,1 1,-1z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.92"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>

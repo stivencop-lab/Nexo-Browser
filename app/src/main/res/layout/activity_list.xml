@@ -33,7 +33,7 @@
             android:maxLines="1"
             android:text="Lista"
             android:textSize="20sp"
-            android:textStyle="bold" />
+            android:textFontWeight="600" />
 
         <Button
             android:id="@+id/listAction"

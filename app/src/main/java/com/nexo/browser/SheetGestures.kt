@@ -54,24 +54,20 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
 
     private fun contentAtTop(): Boolean = scrollable?.canScrollVertically(-1) != true
 
-    /** Animación breve y natural de entrada desde abajo (respeta reducción de movimiento). */
+    /** Apertura física: muelle Liquid Craft (rigidez 380, amortiguación 0.82) desde abajo. */
     fun animateEnter() {
         if (!ValueAnimator.areAnimatorsEnabled()) {
             translationY = 0f
             alpha = 1f
             return
         }
-        val travel = (56f * resources.displayMetrics.density)
+        val travel = (96f * resources.displayMetrics.density)
         translationY = travel
         alpha = 0.01f
         post {
             if (dismissed) return@post
-            animate()
-                .translationY(0f)
-                .alpha(1f)
-                .setDuration(220L)
-                .setInterpolator(DecelerateInterpolator(1.6f))
-                .start()
+            animate().alpha(1f).setDuration(140L).setInterpolator(DecelerateInterpolator()).start()
+            animateTo(0f) {}
         }
     }
 
@@ -186,8 +182,8 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
             return
         }
         settle = SpringAnimation(this, DynamicAnimation.TRANSLATION_Y, target).apply {
-            spring = SpringForce(target).setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY)
-                .setStiffness(SpringForce.STIFFNESS_MEDIUM)
+            spring = SpringForce(target).setDampingRatio(NexoMotion.DAMPING)
+                .setStiffness(NexoMotion.STIFFNESS)
             addUpdateListener { _, _, _ -> updateDim() }
             addEndListener { _, cancelled, _, _ -> if (!cancelled) end() }
             start()

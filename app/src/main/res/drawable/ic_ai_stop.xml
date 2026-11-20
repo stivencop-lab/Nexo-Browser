@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Nexo UI 7.0. Generado por tools/generate_line_icons.py. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="20dp"
     android:height="20dp"
@@ -6,5 +7,5 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M7,7h10c0.55,0 1,0.45 1,1v8c0,0.55 -0.45,1 -1,1H7c-0.55,0 -1,-0.45 -1,-1V8c0,-0.55 0.45,-1 1,-1z" />
+        android:pathData="M9.2,7h5.6a2.2,2.2 0 0,1 2.2,2.2v5.6a2.2,2.2 0 0,1 -2.2,2.2h-5.6a2.2,2.2 0 0,1 -2.2,-2.2v-5.6a2.2,2.2 0 0,1 2.2,-2.2z" />
 </vector>

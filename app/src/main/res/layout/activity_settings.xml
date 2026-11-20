@@ -34,7 +34,7 @@
             android:maxLines="1"
             android:text="Configuración"
             android:textSize="20sp"
-            android:textStyle="bold" />
+            android:textFontWeight="600" />
     </LinearLayout>
 
     <ScrollView
@@ -118,7 +118,7 @@
                 android:tag="section"
                 android:text="Apariencia"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -217,7 +217,7 @@
                 android:tag="section"
                 android:text="Búsqueda e inicio"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -288,7 +288,7 @@
                 android:tag="section"
                 android:text="Navegación"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -454,7 +454,7 @@
                 android:tag="section"
                 android:text="Multimedia"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -512,7 +512,7 @@
                 android:tag="section"
                 android:text="Subtítulos en vivo"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -562,7 +562,7 @@
                 android:tag="section"
                 android:text="Traducción"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -601,7 +601,7 @@
                 android:tag="section"
                 android:text="Privacidad y seguridad"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -820,7 +820,7 @@
                 android:tag="section"
                 android:text="Pestañas"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -875,7 +875,7 @@
                 android:tag="section"
                 android:text="Datos de navegación"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -918,7 +918,7 @@
                 android:tag="section"
                 android:text="Actualizaciones"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -968,7 +968,7 @@
                 android:tag="section"
                 android:text="Avanzado"
                 android:textSize="11.5sp"
-                android:textStyle="bold" />
+                android:textFontWeight="600" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -1045,24 +1045,4 @@
         </com.nexo.browser.ContentColumn>
     </ScrollView>
 
-    <LinearLayout
-        android:id="@+id/settingsFooter"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingStart="14dp"
-        android:paddingTop="8dp"
-        android:paddingEnd="14dp"
-        android:paddingBottom="10dp">
-
-        <Button
-            android:id="@+id/saveSettingsButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="@dimen/touch_target"
-            android:text="Guardar cambios"
-            android:textAllCaps="false"
-            android:textSize="14.5sp"
-            android:textStyle="bold" />
-    </LinearLayout>
 </LinearLayout>

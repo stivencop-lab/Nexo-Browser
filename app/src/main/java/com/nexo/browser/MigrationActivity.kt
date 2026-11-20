@@ -84,7 +84,7 @@ class MigrationActivity : Activity() {
         val titleView = TextView(this).apply {
             text = "Transferencia cifrada del perfil"
             textSize = 19f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            typeface = NexoUi.semiBold(this@MigrationActivity)
             setTextColor(p.text)
             setPadding(dp(4f), 0, dp(4f), dp(10f))
         }

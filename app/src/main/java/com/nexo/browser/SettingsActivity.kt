@@ -19,6 +19,7 @@ import android.widget.AdapterView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
@@ -76,23 +77,11 @@ class SettingsActivity : Activity() {
 
     private val themes = listOf(
         "Seguir sistema" to BrowserPrefs.THEME_SYSTEM,
-        "Midnight" to BrowserPrefs.THEME_MIDNIGHT,
-        "OLED negro" to BrowserPrefs.THEME_OLED,
-        "Claro" to BrowserPrefs.THEME_LIGHT
+        "Obsidian" to BrowserPrefs.THEME_MIDNIGHT,
+        "OLED" to BrowserPrefs.THEME_OLED,
+        "Paper" to BrowserPrefs.THEME_LIGHT
     )
-    private val accents by lazy {
-        listOf(
-            "Cobalto" to BrowserPrefs.ACCENT_COBALT,
-            "Violeta" to BrowserPrefs.ACCENT_VIOLET,
-            "Cian" to BrowserPrefs.ACCENT_CYAN,
-            "Lima" to BrowserPrefs.ACCENT_LIME,
-            "Naranja" to BrowserPrefs.ACCENT_ORANGE,
-            "Rosa" to BrowserPrefs.ACCENT_PINK,
-            "Rojo" to BrowserPrefs.ACCENT_RED
-        ) + if (Build.VERSION.SDK_INT >= 31 || BrowserPrefs.accent(this) == BrowserPrefs.ACCENT_DYNAMIC) {
-            listOf(getString(R.string.dynamic_color) to BrowserPrefs.ACCENT_DYNAMIC)
-        } else emptyList()
-    }
+    private val accents = BrowserPrefs.ACCENTS.map { ThemeManager.accentLabel(it) to it }
     private val engines = listOf(
         "Google" to BrowserPrefs.ENGINE_GOOGLE,
         "DuckDuckGo" to BrowserPrefs.ENGINE_DDG,
@@ -211,6 +200,7 @@ class SettingsActivity : Activity() {
         navMode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 updateDependencies()
+                scheduleSave()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {
                 updateDependencies()
@@ -220,6 +210,7 @@ class SettingsActivity : Activity() {
         dns.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
                 updateDnsCustomVisibility()
+                scheduleSave()
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {
                 updateDnsCustomVisibility()
@@ -230,13 +221,15 @@ class SettingsActivity : Activity() {
         populate()
         applyTheme()
         updateDependencies()
-        tracking.setOnCheckedChangeListener { _, _ -> updateDependencies() }
-        captionsEnabled.setOnCheckedChangeListener { _, _ -> updateDependencies() }
+        tracking.setOnCheckedChangeListener { _, _ -> updateDependencies(); scheduleSave() }
+        captionsEnabled.setOnCheckedChangeListener { _, _ -> updateDependencies(); scheduleSave() }
         autoUpdate.setOnCheckedChangeListener { _, enabled ->
             AppUpdater.setAutoCheck(this, enabled)
             updateAboutAndUpdateSummary()
+            scheduleSave()
         }
-        findViewById<Button>(R.id.saveSettingsButton).setOnClickListener { save() }
+        installLiveControls()
+        installAutosave()
         findViewById<Button>(R.id.clearDataButton).setOnClickListener { confirmClear() }
         findViewById<Button>(R.id.defaultBrowserButton).setOnClickListener { requestDefaultBrowser() }
         findViewById<Button>(R.id.configureCaptionsButton).setOnClickListener {
@@ -279,16 +272,191 @@ class SettingsActivity : Activity() {
 
     private fun renderCategoryRail() {
         val holder = findViewById<ViewGroup>(R.id.settingsCategoryHolder) ?: return
-        holder.removeAllViews()
-        holder.addView(NexoUi.chipRow(this, settingsCategories.map { (id, label) ->
-            NexoUi.chip(this, label, selectedCategory == id) {
-                if (selectedCategory != id) {
-                    selectedCategory = id
-                    renderCategoryRail()
-                    filterSettings(settingsSearchInput.text?.toString()?.trim().orEmpty())
-                }
+        if (holder.childCount > 0) return
+        // Pestañas de categoría con línea inferior deslizante (sin cajas segmentadas).
+        val tabs = NexoUi.UnderlineTabs(this, settingsCategories, selectedCategory) { id ->
+            if (selectedCategory != id) {
+                selectedCategory = id
+                filterSettings(settingsSearchInput.text?.toString()?.trim().orEmpty())
             }
-        }, sidePaddingDp = 0f))
+        }
+        holder.addView(android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(tabs.view)
+        })
+        holder.addView(NexoUi.divider(this, 0f).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, NexoUi.dp(this@SettingsActivity, 0.6f).coerceAtLeast(1), android.view.Gravity.BOTTOM)
+        })
+    }
+
+    // -----------------------------------------------------------------
+    // Nexo UI 7.0: selectores en vivo y guardado automático
+    // -----------------------------------------------------------------
+    private val saveHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var lastSnapshot = ""
+    private val saveRunnable = Runnable { persist(fromUser = true) }
+
+    /** Todo cambio se guarda solo (con breve espera) y se confirma con un toast de cristal. */
+    private fun scheduleSave(delayMs: Long = 320L) {
+        if (lastSnapshot.isEmpty()) return
+        saveHandler.removeCallbacks(saveRunnable)
+        saveHandler.postDelayed(saveRunnable, delayMs)
+    }
+
+    private fun installAutosave() {
+        listOf(
+            restore, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
+            forceZoom, pullToRefresh, dockGestures, autoHideBars, parallelDownloads, desktopDefault, javascript,
+            strictTracking, safeBrowsing, fingerprinting, queryStripping, clearOnExit, remoteDebug, dnsStrict
+        ).forEach { it.setOnCheckedChangeListener { _, _ -> scheduleSave() } }
+        val spinnerListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = scheduleSave()
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        listOf(theme, accent, search, liveTabs, cookies, translatorTarget, textSize, autoplay)
+            .forEach { it.onItemSelectedListener = spinnerListener }
+        dnsCustomInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) = scheduleSave(900L)
+        })
+        // Instantánea tras el primer pase de maquetación: los callbacks iniciales de los Spinner no guardan.
+        findViewById<View>(R.id.settingsRoot).post { lastSnapshot = snapshot() }
+    }
+
+    override fun onPause() {
+        if (saveHandler.hasCallbacks(saveRunnable)) {
+            saveHandler.removeCallbacks(saveRunnable)
+            persist(fromUser = false)
+        }
+        super.onPause()
+    }
+
+    /** Tema (Sistema / Obsidian / OLED / Paper) y acento como selectores en vivo. */
+    private fun installLiveControls() {
+        val p = ThemeManager.palette(this)
+        fun replaceSpinner(spinner: Spinner, view: View) {
+            val parent = spinner.parent as ViewGroup
+            parent.addView(view, parent.indexOfChild(spinner), spinner.layoutParams)
+            spinner.visibility = View.GONE
+        }
+        val themeOptions = listOf(
+            BrowserPrefs.THEME_SYSTEM to "Sistema", BrowserPrefs.THEME_MIDNIGHT to "Obsidian",
+            BrowserPrefs.THEME_OLED to "OLED", BrowserPrefs.THEME_LIGHT to "Paper"
+        )
+        val themeHolder = android.widget.FrameLayout(this).apply { id = R.id.themeSegmented }
+        fun renderTheme() {
+            themeHolder.removeAllViews()
+            val current = themes.getOrNull(theme.selectedItemPosition)?.second ?: BrowserPrefs.theme(this)
+            themeHolder.addView(NexoUi.segmented(this, themeOptions, current) { value ->
+                theme.setSelection(themes.indexOfFirst { it.second == value }.coerceAtLeast(0))
+                renderTheme()
+                scheduleSave(60L)
+            })
+        }
+        renderTheme()
+        replaceSpinner(theme, themeHolder)
+
+        // Acento: cinco círculos de 32dp en objetivos de 48dp, con aro en el seleccionado.
+        val accentLabel = TextView(this).apply {
+            textSize = 13f
+            typeface = NexoUi.medium(this@SettingsActivity)
+            setTextColor(p.text)
+        }
+        val swatches = LinearLayout(this).apply { id = R.id.accentSwatches; gravity = android.view.Gravity.CENTER_VERTICAL }
+        fun renderAccents() {
+            swatches.removeAllViews()
+            val current = accents.getOrNull(accent.selectedItemPosition)?.second ?: BrowserPrefs.accent(this)
+            accentLabel.text = ThemeManager.accentLabel(current)
+            BrowserPrefs.ACCENTS.forEach { value ->
+                val seed = ThemeManager.accentSeed(value)
+                val color = if (seed == BrowserColors.MONOCHROME) p.text else seed
+                val selected = value == current
+                swatches.addView(View(this).apply {
+                    val ring = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(color)
+                        if (selected) setStroke(NexoUi.dp(this@SettingsActivity, 2.5f), p.background)
+                    }
+                    val outer = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(android.graphics.Color.TRANSPARENT)
+                        if (selected) setStroke(NexoUi.dp(this@SettingsActivity, 1.5f), p.text)
+                    }
+                    background = android.graphics.drawable.LayerDrawable(arrayOf(outer, ring)).apply {
+                        val i = NexoUi.dp(this@SettingsActivity, 2f)
+                        setLayerInset(1, i, i, i, i)
+                    }
+                    contentDescription = ThemeManager.accentLabel(value) + if (selected) " (seleccionado)" else ""
+                    isSelected = selected
+                    setOnClickListener {
+                        accent.setSelection(accents.indexOfFirst { it.second == value }.coerceAtLeast(0))
+                        renderAccents()
+                        NexoMotion.pulse(this, 0.88f)
+                        scheduleSave(60L)
+                    }
+                }, LinearLayout.LayoutParams(NexoUi.dp(this, 36f), NexoUi.dp(this, 36f)).apply {
+                    // 36dp visibles + 12dp de separación = objetivos de 48dp sin solaparse.
+                    marginEnd = NexoUi.dp(this@SettingsActivity, 12f)
+                    topMargin = NexoUi.dp(this@SettingsActivity, 6f)
+                    bottomMargin = NexoUi.dp(this@SettingsActivity, 6f)
+                })
+            }
+        }
+        renderAccents()
+        val accentBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(swatches)
+        }
+        replaceSpinner(accent, accentBox)
+        // La etiqueta «Color de acento» gana el nombre del acento alineado a la derecha.
+        (accentBox.parent as ViewGroup).let { card ->
+            val idx = card.indexOfChild(accentBox)
+            (card.getChildAt(idx - 1) as? TextView)?.let { title ->
+                card.removeView(title)
+                card.addView(LinearLayout(this).apply {
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    title.text = "Acento"
+                    addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(accentLabel)
+                }, idx - 1)
+            }
+        }
+
+        // Barra inferior: «Isla Liquid» (Liquid Split Chrome) o «Dock Clásico» refinado.
+        val chromeHolder = android.widget.FrameLayout(this).apply { id = R.id.chromeStyleSegmented }
+        fun renderChrome() {
+            chromeHolder.removeAllViews()
+            val current = BrowserPrefs.chromeStyle(this)
+            chromeHolder.addView(NexoUi.segmented(this, listOf(BrowserPrefs.CHROME_LIQUID to "Isla Liquid", BrowserPrefs.CHROME_DOCK to "Dock Clásico"), current) { value ->
+                BrowserPrefs.setChromeStyle(this, value)
+                renderChrome()
+                updateDependencies()
+                NexoUi.glassToast(this, "Guardado")
+            })
+        }
+        renderChrome()
+        val navCard = navMode.parent as ViewGroup
+        val navIdx = navCard.indexOfChild(navMode)
+        val navTitle = navCard.getChildAt(navIdx - 1) as? TextView
+        navCard.addView(TextView(this).apply {
+            text = "Barra inferior"
+            textSize = 14f
+            tag = "muted"
+            setPadding(0, NexoUi.dp(this@SettingsActivity, 6f), 0, NexoUi.dp(this@SettingsActivity, 8f))
+        }, (navIdx - 1).coerceAtLeast(0))
+        navCard.addView(chromeHolder, navIdx, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = NexoUi.dp(this@SettingsActivity, 6f)
+        })
+        navTitle?.text = "Dock clásico"
+        // Inicio minimalista, junto a la barra (sin subtítulo).
+        navCard.addView(NexoUi.switchRow(this, "Inicio minimalista", null, BrowserPrefs.minimalStart(this)) {
+            BrowserPrefs.setMinimalStart(this, it)
+            NexoUi.glassToast(this, "Guardado")
+        }.apply { setPadding(0, paddingTop, 0, paddingBottom) })
+        autoHideBars.text = "Contraer al desplazar"
+        dockGestures.text = "Deslizar la barra para cambiar de pestaña"
     }
 
     private fun updateDefaultBrowserVisibility() {
@@ -502,26 +670,50 @@ class SettingsActivity : Activity() {
     private fun updateDependencies() {
         strictTracking.isEnabled = tracking.isChecked
         strictTracking.alpha = if (tracking.isChecked) 1f else 0.38f
-        val hasDock = navModes.getOrNull(navMode.selectedItemPosition)?.second != NavConfig.Mode.COMPACT
+        val liquid = BrowserPrefs.chromeStyle(this) == BrowserPrefs.CHROME_LIQUID
+        val hasDock = liquid || navModes.getOrNull(navMode.selectedItemPosition)?.second != NavConfig.Mode.COMPACT
         autoHideBars.isEnabled = hasDock
         autoHideBars.alpha = if (hasDock) 1f else 0.38f
+        // Los ajustes del Dock Clásico solo se muestran cuando está elegido.
+        val dockOnly = if (liquid) View.GONE else View.VISIBLE
+        navMode.visibility = dockOnly
+        customizeNavButton.visibility = dockOnly
+        (navMode.parent as? ViewGroup)?.let { card ->
+            (card.getChildAt(card.indexOfChild(navMode) - 1) as? TextView)?.visibility = dockOnly
+        }
         listOf<View>(findViewById(R.id.configureCaptionsButton), findViewById(R.id.captionsSummary)).forEach {
             it.isEnabled = captionsEnabled.isChecked
             it.alpha = if (captionsEnabled.isChecked) 1f else 0.38f
         }
     }
 
-    private fun save() {
-        val selectedDns = dnsOptions[dns.selectedItemPosition].second
+    /** Valores visibles serializados: solo se guarda (y se avisa) si algo cambió de verdad. */
+    private fun snapshot(): String = listOf(
+        theme.selectedItemPosition, accent.selectedItemPosition, search.selectedItemPosition, liveTabs.selectedItemPosition,
+        dns.selectedItemPosition, cookies.selectedItemPosition, translatorTarget.selectedItemPosition,
+        textSize.selectedItemPosition, autoplay.selectedItemPosition, navMode.selectedItemPosition,
+        dnsCustomInput.text?.toString()?.trim().orEmpty()
+    ).joinToString("|") + "|" + listOf(
+        restore, tracking, gpc, httpsOnly, freeSearch, nexoHome, smartPip, backgroundMedia,
+        forceZoom, pullToRefresh, dockGestures, autoHideBars, parallelDownloads, desktopDefault, javascript,
+        strictTracking, safeBrowsing, fingerprinting, queryStripping, clearOnExit, remoteDebug,
+        captionsEnabled, dnsStrict, autoUpdate
+    ).joinToString("") { if (it.isChecked) "1" else "0" }
+
+    private fun persist(fromUser: Boolean) {
+        val now = snapshot()
+        if (now == lastSnapshot) return
+        val previousTheme = BrowserPrefs.theme(this) + BrowserPrefs.accent(this)
+        var selectedDns = dnsOptions[dns.selectedItemPosition].second
         val customDoh = dnsCustomInput.text?.toString()?.trim().orEmpty()
         if (selectedDns == BrowserPrefs.DNS_CUSTOM) {
             if (!DnsProfile.valid(customDoh)) {
+                // Se guarda todo lo demás; el DNS sigue en su valor anterior hasta que la URL sea válida.
                 dnsCustomInput.error = "Introduce una URL DoH HTTPS válida (sin credenciales ni parámetros)."
-                dnsCustomInput.requestFocus()
-                Toast.makeText(this, "Revisa la dirección DoH personalizada (debe usar HTTPS).", Toast.LENGTH_LONG).show()
-                return
+                selectedDns = BrowserPrefs.dnsProvider(this)
+            } else {
+                BrowserPrefs.setDnsCustom(this, customDoh)
             }
-            BrowserPrefs.setDnsCustom(this, customDoh)
         }
         BrowserPrefs.setDnsStrict(this, dnsStrict.isChecked)
         BrowserPrefs.setTheme(this, themes[theme.selectedItemPosition].second)
@@ -567,8 +759,14 @@ class SettingsActivity : Activity() {
         TabManager.reapplySettings()
         ExtensionManager.sendBrowserState(this)
         MediaPlaybackService.sync(this)
-        Toast.makeText(this, "Configuración guardada", Toast.LENGTH_SHORT).show()
-        finish()
+        lastSnapshot = now
+        if (!fromUser || isFinishing) return
+        if (previousTheme != BrowserPrefs.theme(this) + BrowserPrefs.accent(this)) {
+            // Tema y acento en vivo: la pantalla se repinta al instante con los nuevos tokens.
+            recreate()
+            return
+        }
+        NexoUi.glassToast(this, "Guardado")
     }
 
     private fun confirmResetDefaults() {
@@ -695,22 +893,21 @@ class SettingsActivity : Activity() {
         ).forEach {
             ThemeManager.styleSwitch(this, it)
         }
-        val searchBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
-        val searchStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         settingsSearchInput.setTextColor(p.text)
         settingsSearchInput.setHintTextColor(p.muted)
         settingsSearchInput.typeface = NexoUi.regular(this)
-        settingsSearchInput.background = ThemeManager.rounded(this, searchBg, 24f, searchStroke)
+        settingsSearchInput.hint = "Buscar ajustes…"
+        settingsSearchInput.background = ThemeManager.rounded(this, p.surface, NexoUi.Tokens.RADIUS_PILL)
+        NexoGlass.paperShadow(settingsSearchInput, p)
         settingsSearchInput.compoundDrawablesRelative.firstOrNull()?.mutate()?.setTint(p.muted)
         ThemeManager.styleIconButton(this, settingsSearchClear)
         renderCategoryRail()
         ThemeManager.styleEdit(this, dnsCustomInput)
         findViewById<TextView>(R.id.settingsTitle).apply {
             ThemeManager.styleText(this@SettingsActivity, this)
-            typeface = NexoUi.bold(this@SettingsActivity)
-            letterSpacing = -0.015f
+            typeface = NexoUi.semiBold(this@SettingsActivity)
+            letterSpacing = -0.025f
         }
-        ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton), danger = true)
         ThemeManager.styleButton(this, findViewById(R.id.defaultBrowserButton))
         ThemeManager.styleButton(this, customizeNavButton)
@@ -722,8 +919,6 @@ class SettingsActivity : Activity() {
         ThemeManager.styleButton(this, findViewById(R.id.resetSettingsButton))
         findViewById<View>(R.id.aboutText).background = ThemeManager.ripple(this, null, 14f)
         ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
-        findViewById<View>(R.id.settingsFooter).background =
-            ThemeManager.barBackground(this, lineOnTop = true)
         findViewById<View>(R.id.settingsHeader).setBackgroundColor(p.background)
         ThemeManager.takeInitialFocus(settingsRoot)
     }

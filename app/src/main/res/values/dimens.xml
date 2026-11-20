@@ -7,8 +7,13 @@
     <dimen name="space_lg">16dp</dimen>
     <dimen name="space_xl">24dp</dimen>
     <dimen name="space_xxl">32dp</dimen>
-    <dimen name="shape_sm">12dp</dimen>
-    <dimen name="shape_card">20dp</dimen>
-    <dimen name="shape_dock">26dp</dimen>
-    <dimen name="shape_sheet">28dp</dimen>
+    <!-- Radios concéntricos UI 7.0: R_interno = R_externo − padding. -->
+    <dimen name="shape_sm">14dp</dimen>
+    <dimen name="shape_control">14dp</dimen>
+    <dimen name="shape_pinned">20dp</dimen>
+    <dimen name="shape_card">22dp</dimen>
+    <dimen name="shape_dock">28dp</dimen>
+    <dimen name="shape_sheet">34dp</dimen>
+    <dimen name="chrome_pill_height">52dp</dimen>
+    <dimen name="chrome_mini_height">34dp</dimen>
 </resources>

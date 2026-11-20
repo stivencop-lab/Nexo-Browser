@@ -50,7 +50,8 @@ class MainActivity :
     TabManager.Listener,
     BrowserMediaController.Listener,
     LiveCaptions.Listener,
-    BrowserHost {
+    BrowserHost,
+    ThemeManager.InsetsOwner {
     private lateinit var captionsButton: Button
     private lateinit var captionView: TextView
     private var lastCaptionMessage: String? = null
@@ -94,8 +95,22 @@ class MainActivity :
      * y reorganizaba la página al achicarse) y no hace falta modificar su CSS.
      */
     private var pipCrop: Rect? = null
-    private lateinit var topBar: View
+    private lateinit var topBar: GestureDock
     private lateinit var navBar: LinearLayout
+    // Nexo UI 7.0: Liquid Split Chrome.
+    private lateinit var statusScrim: View
+    private lateinit var topOverlay: LinearLayout
+    private lateinit var bottomChrome: LinearLayout
+    private lateinit var chromeCluster: LinearLayout
+    private lateinit var miniPill: LinearLayout
+    private lateinit var miniLock: ImageView
+    private lateinit var miniDomain: TextView
+    private lateinit var pillReloadButton: ImageButton
+    private var safeTop = 0
+    private var safeBottom = 0
+    private var imeBottom = 0
+    /** Scroll Compacto: el cromo se pliega en una mini-píldora centrada. */
+    private var chromeCompact = false
     private lateinit var viewModel: BrowserViewModel
     private var attachedSession: EngineSession? = null
     private var settingsFingerprint = ""
@@ -227,21 +242,74 @@ class MainActivity :
      * contiene controles interactivos, así que no puede quedar debajo de la
      * barra de navegación ni del teclado: se desplaza con el inset inferior.
      */
+    /**
+     * Lienzo edge-to-edge: cada capa toma su inset una sola vez. Los recortes laterales van al
+     * contenido; la barra de estado al velo y a los avisos superiores; la navegación y el
+     * teclado al cromo inferior. La página web empieza bajo la barra de estado (Cefrium no
+     * expone insets de viewport) y fluye por detrás del cromo inferior de cristal.
+     */
     private fun configureSystemInsets() {
-        // The activity content owns safe areas once; ADJUST_RESIZE does not add IME padding.
         val content = findViewById<View>(android.R.id.content)
         ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
             val wasIme = imeVisible
             imeVisible = ime > 0
-            if (imeVisible && !wasIme) setDockScrollHidden(false)
-            view.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, ime))
+            if (imeVisible && !wasIme) { setDockScrollHidden(false); setChromeCompact(false) }
+            view.setPadding(safe.left, 0, safe.right, 0)
+            safeTop = safe.top
+            safeBottom = safe.bottom
+            imeBottom = ime
+            layoutEdgeToEdge()
             WindowInsetsCompat.Builder(insets)
                 .setInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE)
                 .build()
         }
         ViewCompat.requestApplyInsets(content)
+        // Se llama antes de bindViews(): se busca la vista directamente.
+        findViewById<View>(R.id.bottomChrome).addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) layoutEdgeToEdge()
+        }
+    }
+
+    private val liquidChrome: Boolean
+        get() = BrowserPrefs.chromeStyle(this) == BrowserPrefs.CHROME_LIQUID
+
+    /** Reparte insets y huecos entre página, velo y cromo según el modo actual. */
+    private fun layoutEdgeToEdge() {
+        if (!::bottomChrome.isInitialized || !::startPage.isInitialized || !::nexoAiPill.isInitialized || !::browserFrame.isInitialized) return
+        val hideBars = fullScreenActive || isInPictureInPictureMode
+        val top = if (hideBars) 0 else safeTop
+        val bottomInset = maxOf(safeBottom, imeBottom)
+        statusScrim.layoutParams = statusScrim.layoutParams.apply { height = top }
+        topOverlay.setPadding(0, top, 0, 0)
+        bottomChrome.setPadding(0, 0, 0, if (hideBars) 0 else bottomInset + NexoUi.dp(this, 2f))
+        val startVisible = startPage.visibility == View.VISIBLE
+        // Página: bajo la barra de estado; por detrás del cromo Liquid; sobre el teclado.
+        val pageTop = if (hideBars || startVisible) 0 else top
+        val pageBottom = when {
+            hideBars -> 0
+            imeBottom > 0 -> imeBottom
+            !liquidChrome && bottomChrome.visibility == View.VISIBLE -> bottomChrome.height
+            else -> 0
+        }
+        (browserFrame.layoutParams as android.widget.FrameLayout.LayoutParams).let { lp ->
+            if (lp.topMargin != pageTop || lp.bottomMargin != pageBottom) {
+                lp.topMargin = pageTop
+                lp.bottomMargin = pageBottom
+                browserFrame.layoutParams = lp
+            }
+        }
+        // La página de inicio sí llega hasta arriba: reserva su propio aire.
+        startPage.setSafeArea(top, if (hideBars) 0 else bottomChrome.height)
+        // Píldora AI y chips de video siempre por encima del cromo flotante.
+        val lift = if (hideBars) NexoUi.dp(this, 14f) else (bottomChrome.height - pageBottom).coerceAtLeast(0) + NexoUi.dp(this, 10f)
+        (nexoAiPill.layoutParams as? android.widget.FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.bottomMargin != lift) { lp.bottomMargin = lift; nexoAiPill.layoutParams = lp }
+        }
+        (findViewById<View>(R.id.videoChips).layoutParams as? android.widget.FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.bottomMargin != lift) { lp.bottomMargin = lift; findViewById<View>(R.id.videoChips).layoutParams = lp }
+        }
     }
 
     /** Sustituye el hueco del layout por la vista de página del motor, en su mismo sitio. */
@@ -259,6 +327,14 @@ class MainActivity :
     private fun bindViews() {
         root = findViewById(R.id.rootView)
         topBar = findViewById(R.id.topBar)
+        statusScrim = findViewById(R.id.statusScrim)
+        topOverlay = findViewById(R.id.topOverlay)
+        bottomChrome = findViewById(R.id.bottomChrome)
+        chromeCluster = findViewById(R.id.chromeCluster)
+        miniPill = findViewById(R.id.miniPill)
+        miniLock = findViewById(R.id.miniLock)
+        miniDomain = findViewById(R.id.miniDomain)
+        pillReloadButton = findViewById(R.id.pillReloadButton)
         navBar = findViewById(R.id.navBar)
         browserDock = findViewById(R.id.browserDock)
         dockGesturePill = findViewById(R.id.dockGesturePill)
@@ -348,6 +424,15 @@ class MainActivity :
                 true
             }
         }
+        pillReloadButton.apply {
+            setOnClickListener { NexoMotion.pulse(it, 0.88f); TabManager.reload() }
+            setOnLongClickListener {
+                TabManager.reload(bypassCache = true)
+                Toast.makeText(this@MainActivity, "Recarga completa (sin caché)", Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
+        miniPill.setOnClickListener { setChromeCompact(false) }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
         compactBackButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
@@ -359,6 +444,15 @@ class MainActivity :
         }
         tabButton.setOnClickListener { showTabsDialog() }
         tabButton.setOnLongClickListener { showTabQuickMenu(); true }
+        // Liquid Split Chrome: deslizar la píldora cambia de pestaña; hacia arriba abre el deck.
+        topBar.apply {
+            interceptOverChildren = true
+            gesturesEnabled = {
+                liquidChrome && BrowserPrefs.dockGestures(this@MainActivity) && !omnibox.hasFocus() && !fullScreenActive && !isInPictureInPictureMode
+            }
+            onSwipeTab = { offset -> switchAdjacentTab(offset) }
+            onSwipeUp = { showTabsDialog() }
+        }
         // Gestos de la barra: a los lados cambia de pestaña, hacia arriba abre el selector.
         browserDock.apply {
             gesturesEnabled = {
@@ -372,7 +466,7 @@ class MainActivity :
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     val hide = NavConfig.shouldAutoHideDock(
-                        mode = NavConfig.mode(this),
+                        mode = if (liquidChrome) NavConfig.Mode.CLASSIC else NavConfig.mode(this),
                         autoHideEnabled = BrowserPrefs.autoHideBars(this),
                         scrollingDown = scrollingDown,
                         scrollY = scrollY,
@@ -383,13 +477,23 @@ class MainActivity :
                         fullScreen = fullScreenActive,
                         isPip = isInPictureInPictureMode
                     )
-                    setDockScrollHidden(hide)
+                    if (liquidChrome) {
+                        // Al bajar se pliega; al subir (o volver arriba) se despliega.
+                        if (hide) setChromeCompact(true)
+                        else if (!scrollingDown || scrollY < NavConfig.SCROLL_HIDE_THRESHOLD_PX) setChromeCompact(false)
+                    } else setDockScrollHidden(hide)
                 }
             }
         }
         applyNavigationMode()
         findViewById<ImageButton>(R.id.tabToolsButton).apply {
-            setOnClickListener { SiteControlSheet.show(this@MainActivity) }
+            setOnClickListener {
+                // En Inicio la cápsula unificada lleva el emblema Aperture: abre Nexo AI.
+                if (TabManager.activeTab()?.let { BrowserPrefs.isNexoHome(it.url) } != false) {
+                    ThemeManager.animateAiSparkTap(it)
+                    com.nexo.browser.ai.NexoAiSheet.show(this@MainActivity)
+                } else SiteControlSheet.show(this@MainActivity)
+            }
             // Pulsación larga: el buzón de la identidad actual o herramientas de red/Burner.
             setOnLongClickListener {
                 val burner = TabManager.activeTab()?.burnerId
@@ -471,8 +575,10 @@ class MainActivity :
         omnibox.setOnFocusChangeListener { _, focused ->
             val tab = TabManager.activeTab()
             ThemeManager.styleOmniboxCapsule(this, omniboxCapsule, focused)
+            styleChromeGlass()
             if (focused) {
                 setDockScrollHidden(false)
+                setChromeCompact(false)
                 // Al editar se muestra la URL completa, seleccionada.
                 tab?.takeUnless { BrowserPrefs.isNexoHome(it.url) }?.let { omnibox.setText(it.url) }
                 omnibox.selectAll()
@@ -638,9 +744,9 @@ class MainActivity :
         val dismiss = { sheet?.dismiss(); Unit }
 
         val primaryActions = listOf(
-            SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") { viewModel.newTab(false) },
+            SheetAction(R.drawable.ic_nav_add, "Nueva") { viewModel.newTab(false) },
             SheetAction(R.drawable.ic_menu_private, "Privada") { viewModel.newTab(true) },
-            SheetAction(R.drawable.ic_menu_burner, "Burner", subtitle = "Aislada + correo") { BurnerMailbox.open(this) }
+            SheetAction(R.drawable.ic_menu_burner, "Burner") { BurnerMailbox.open(this) }
         )
         val onPage = current != null && !BrowserPrefs.isNexoHome(current.url)
         val reopen = TabManager.lastClosed()
@@ -668,7 +774,7 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = current?.desktopMode == true, checked = current?.desktopMode == true) {
                 TabManager.setDesktopMode(!(current?.desktopMode ?: false))
             },
-            SheetAction(R.drawable.ic_menu_copy, "Copiar URL") { current?.let { copyText("Enlace", it.url) } },
+            SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") { current?.let { copyText("Enlace", it.url) } },
             SheetAction(R.drawable.ic_menu_share, "Compartir") { shareCurrent() },
             SheetAction(R.drawable.ic_menu_find, "Buscar") { showFindBar() },
             SheetAction(R.drawable.ic_menu_pin, "Fijar en inicio") { pinCurrentToHome() },
@@ -677,25 +783,31 @@ class MainActivity :
             if (reopen != null) SheetAction(R.drawable.ic_menu_reopen, "Reabrir cerrada") { TabManager.reopenClosed() }
             else SheetAction(R.drawable.ic_tab_tools, "Herramientas") { TabTools.show(this) },
             SheetAction(
-                R.drawable.ic_nexo_ai_spark,
+                R.drawable.ic_nexo_aperture,
                 "Nexo AI",
-                active = com.nexo.browser.ai.NexoAiConfig.read(this).enabled,
-                subtitle = "Asistente de página, selección y pestañas"
+                active = com.nexo.browser.ai.NexoAiConfig.read(this).enabled
             ) { com.nexo.browser.ai.NexoAiSheet.show(this) },
-            SheetAction(R.drawable.ic_menu_settings, "Ajustes") { openScreen(SettingsActivity::class.java) },
+            SheetAction(R.drawable.ic_menu_settings, "Configuración") { openScreen(SettingsActivity::class.java) },
             SheetAction(
                 R.drawable.ic_menu_update,
                 if (AppUpdater.hasAvailableUpdate(this)) "Actualizar Nexo (v${AppUpdater.knownLatestVersion(this)})" else "Buscar actualizaciones",
-                active = AppUpdater.hasAvailableUpdate(this),
-                subtitle = if (AppUpdater.hasAvailableUpdate(this)) "Nueva versión lista para instalar" else null
+                active = AppUpdater.hasAvailableUpdate(this)
             ) { AppUpdater.checkManual(this) }
         ).filter { onPage || it.icon !in PAGE_ONLY_ACTIONS }
+        // Cabecera mínima: dominio actual y guardar en favoritos (sin título obvio).
         val menuHeader = LinearLayout(this).apply {
             gravity = android.view.Gravity.CENTER_VERTICAL
-            addView(NexoSheets.header(
-                this@MainActivity, "Menú de Nexo",
-                if (BrowserPrefs.isNexoHome(current?.url)) "Página de inicio" else current?.url?.let { displayUrl(it) }
-            ), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            val d = resources.displayMetrics.density
+            setPadding((22 * d).toInt(), 0, (10 * d).toInt(), (6 * d).toInt())
+            addView(TextView(this@MainActivity).apply {
+                text = if (BrowserPrefs.isNexoHome(current?.url)) "Inicio" else current?.url?.let { displayUrl(it) }.orEmpty()
+                textSize = 17f
+                letterSpacing = -0.025f
+                typeface = NexoUi.semiBold(this@MainActivity)
+                setTextColor(ThemeManager.palette(this@MainActivity).text)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             if (onPage && !current.isPrivate && UrlSafety.isWebUrl(current.url)) {
                 val bookmarked = com.nexo.browser.workspace.BookmarkStore.isBookmarked(this@MainActivity, current.url)
                 addView(ImageButton(this@MainActivity).apply {
@@ -706,18 +818,8 @@ class MainActivity :
                         dismiss()
                         toggleCurrentBookmark()
                     }
-                }, LinearLayout.LayoutParams((48 * resources.displayMetrics.density).toInt(), (48 * resources.displayMetrics.density).toInt()).apply {
-                    marginEnd = (4 * resources.displayMetrics.density).toInt()
-                })
+                }, LinearLayout.LayoutParams((48 * d).toInt(), (48 * d).toInt()))
             }
-            addView(ImageButton(this@MainActivity).apply {
-                setImageResource(R.drawable.ic_menu_close)
-                contentDescription = "Cerrar menú"
-                ThemeManager.styleIconButton(this@MainActivity, this)
-                setOnClickListener { dismiss() }
-            }, LinearLayout.LayoutParams((48 * resources.displayMetrics.density).toInt(), (48 * resources.displayMetrics.density).toInt()).apply {
-                marginEnd = (16 * resources.displayMetrics.density).toInt()
-            })
         }
         val content = NexoSheets.column(
             this, menuHeader, NexoSheets.primaryActions(this, primaryActions, dismiss)
@@ -742,39 +844,29 @@ class MainActivity :
         fun dp(value: Float) = (value * d).toInt()
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16f), dp(8f), dp(16f), dp(10f))
-            addView(TextView(this@MainActivity).apply {
-                text = "EXTENSIONES  ›"; textSize = 11f; letterSpacing = 0.085f
-                typeface = NexoUi.bold(this@MainActivity)
-                setTextColor(p.accent)
-                minimumHeight = dp(48f); gravity = android.view.Gravity.CENTER_VERTICAL
-                isClickable = true; contentDescription = "Administrar extensiones"
-                setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
-            })
+            setPadding(dp(NexoUi.Tokens.SHEET_PADDING), dp(10f), dp(NexoUi.Tokens.SHEET_PADDING), dp(10f))
             if (items.isEmpty() && others.isEmpty()) addView(TextView(this@MainActivity).apply {
                 text = "Administrar extensiones"; textSize = 13f; setTextColor(p.muted)
                 typeface = NexoUi.regular(this@MainActivity)
                 minimumHeight = dp(48f); gravity = android.view.Gravity.CENTER_VERTICAL
                 isClickable = true; setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
             })
-            val rowStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
             items.forEach { extension ->
                 val isShield = extension.id == ExtensionManager.PHANTOMSHIELD_ID
                 val badge = if (isShield) ExtensionManager.phantomBadge() else null
+                // Icono lineal desnudo (sin cuadrado de color detrás).
                 val icon = ImageView(this@MainActivity).apply {
-                    setImageResource(if (isShield) R.drawable.ic_quick_shield else R.drawable.ic_extension_placeholder)
-                    if (!isShield) imageTintList = android.content.res.ColorStateList.valueOf(p.accent)
-                    setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
-                    background = ThemeManager.rounded(this@MainActivity, if (isShield) p.success.container else p.primary.container, 12f)
+                    setImageResource(if (isShield) R.drawable.ic_menu_shield else R.drawable.ic_extension_placeholder)
+                    imageTintList = android.content.res.ColorStateList.valueOf(if (isShield && extension.enabled) p.success.color else p.muted)
                 }
                 if (!isShield) ExtensionManager.loadIconFor(extension.id, dp(40f)) { bitmap ->
                     if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
                 }
                 val row = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
-                    minimumHeight = dp(72f); setPadding(dp(14f), dp(12f), dp(12f), dp(12f))
-                    val surface = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-                    background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 18f, rowStroke), 18f)
+                    minimumHeight = dp(64f); setPadding(dp(16f), dp(10f), dp(12f), dp(10f))
+                    background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_CARD), NexoUi.Tokens.RADIUS_CARD)
+                    NexoGlass.paperShadow(this, p)
                     isClickable = true; isFocusable = true
                     contentDescription = "Abrir panel de ${extension.name ?: "extensión"}"
                     setOnClickListener {
@@ -784,12 +876,12 @@ class MainActivity :
                             if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
                         }
                     }
-                    addView(icon, LinearLayout.LayoutParams(dp(38f), dp(38f)).apply { marginEnd = dp(12f) })
+                    addView(icon, LinearLayout.LayoutParams(dp(20f), dp(20f)).apply { marginEnd = dp(16f) })
                     addView(LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         addView(TextView(this@MainActivity).apply {
-                            text = extension.name ?: "Extensión"; textSize = 14f
-                            typeface = NexoUi.semiBold(this@MainActivity)
+                            text = extension.name ?: "Extensión"; textSize = 15f
+                            typeface = NexoUi.medium(this@MainActivity)
                             setTextColor(p.text); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                         })
                         addView(TextView(this@MainActivity).apply {
@@ -798,7 +890,7 @@ class MainActivity :
                                 badge == "OFF" -> "Bloqueo pausado"
                                 badge == "PAUSE" -> "Pausada en esta página"
                                 badge != null -> "$badge bloqueos en esta página"
-                                else -> "Abrir controles y ajustes"
+                                else -> "Activa"
                             }
                             textSize = 12f; setTextColor(p.muted); setPadding(0, dp(2f), 0, 0)
                             typeface = if (badge?.matches(Regex("[0-9]{1,3}\\+?")) == true) NexoUi.mono(this@MainActivity) else NexoUi.regular(this@MainActivity)
@@ -816,7 +908,10 @@ class MainActivity :
                                 }
                             }
                         }
-                    }) else addView(TextView(this@MainActivity).apply { text = "›"; textSize = 22f; setTextColor(p.muted) })
+                    }) else addView(ImageView(this@MainActivity).apply {
+                        setImageResource(R.drawable.ic_nav_chevron)
+                        imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+                    }, LinearLayout.LayoutParams(dp(16f), dp(16f)))
                 }
                 addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8f) })
             }
@@ -839,17 +934,11 @@ class MainActivity :
         fun dp(value: Float) = (value * d).toInt()
         val name = extension?.name ?: "Añadir"
         val badge = extension?.let { ExtensionManager.badgeFor(it.id) }
-        val tileStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         val icon = ImageView(this).apply {
             setImageResource(if (extension == null) R.drawable.ic_nav_add else R.drawable.ic_extension_placeholder)
-            imageTintList = android.content.res.ColorStateList.valueOf(if (extension == null) p.muted else p.primary.onContainer)
-            setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
-            background = ThemeManager.rounded(
-                this@MainActivity,
-                if (extension == null) (if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest) else p.primary.container,
-                16f,
-                tileStroke
-            )
+            imageTintList = android.content.res.ColorStateList.valueOf(if (extension == null) p.muted else p.text)
+            scaleType = ImageView.ScaleType.CENTER
+            background = ThemeManager.rounded(this@MainActivity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_PINNED)
         }
         if (extension != null) ExtensionManager.loadIconFor(extension.id, dp(44f)) { bitmap ->
             if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
@@ -1226,9 +1315,10 @@ class MainActivity :
 
         val iconRes = when {
             tab?.burnerId != null -> R.drawable.ic_menu_burner
+            tab?.isPrivate == true -> R.drawable.ic_menu_private
             muted -> R.drawable.ic_menu_volume_off
             tab?.networkProfile != null -> R.drawable.ic_tab_tools
-            home -> R.drawable.ic_search
+            home -> R.drawable.ic_nexo_aperture
             scheme == "https" && !sslBlocked -> R.drawable.ic_lock
             else -> R.drawable.ic_tab_tools
         }
@@ -1241,7 +1331,8 @@ class MainActivity :
             tab?.burnerId != null -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
             !home && scheme == "http" -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
             !home && scheme == "https" && !highlight -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
-            home -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+            home -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.text)
+            tab?.isPrivate == true -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
         }
         btn.contentDescription = when {
             sslBlocked -> "Control del sitio (certificado TLS bloqueado)"
@@ -1250,6 +1341,7 @@ class MainActivity :
             tab?.networkProfile != null -> "Control del sitio (ruta de red personalizada)"
             !home && scheme == "https" -> "Control del sitio (conexión HTTPS)"
             !home && scheme == "http" -> "Control del sitio (conexión sin cifrar)"
+            home -> "Preguntar a Nexo AI"
             else -> "Control del sitio"
         }
     }
@@ -1258,16 +1350,19 @@ class MainActivity :
         val p = ThemeManager.palette(this)
         root.setBackgroundColor(p.background)
         ThemeManager.styleFloatingDock(this, browserDock, dockGesturePill)
-        topBar.background = null
         navBar.background = null
         browserFrame.applyPalette(p.surfaceContainerHigh, p.accent, ThemeManager.hairline(p))
         pageView.setBackgroundColor(p.background)
-        ThemeManager.styleOmniboxCapsule(this, omniboxCapsule, omnibox.hasFocus())
         ThemeManager.styleOmniboxInput(this, omnibox)
+        omnibox.textSize = 15f
         ThemeManager.styleIconButton(this, compactBackButton)
+        ThemeManager.styleIconButton(this, pillReloadButton)
+        pillReloadButton.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+        pillReloadButton.scaleX = 0.9f; pillReloadButton.scaleY = 0.9f
+        styleChromeGlass()
         styleTabToolsButton(TabManager.activeTab())
         styleMiniPlayerChip()
-        // Botón permanente ✨ de Nexo AI 5.1: integrado dentro de la cápsula con estados visuales y microanimación.
+        // Emblema Nexo Aperture: integrado en el clúster, respira mientras Nexo AI escribe.
         val aiSnap = com.nexo.browser.ai.NexoAiController.snapshot()
         ThemeManager.styleAiSparkButton(this, aiButton, aiSnap.indicatorState)
         nexoAiPill.render(this, aiSnap)
@@ -1278,6 +1373,7 @@ class MainActivity :
         ThemeManager.styleTabCounter(this, tabButton)
         ThemeManager.styleMenuIconButton(this, findViewById(R.id.menuButton))
         ThemeManager.styleFlatButton(this, clearOmniboxButton)
+        clearOmniboxButton.setTextColor(p.muted)
 
         listOf(
             backButton,
@@ -1287,44 +1383,128 @@ class MainActivity :
         ).forEach { ThemeManager.styleIconButton(this, it) }
         ThemeManager.styleDockPrimaryIcon(this, newTabButton)
 
-        val floatingBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-        findBar.background = ThemeManager.rounded(this, floatingBg, 20f, ThemeManager.hairline(p))
-        findBar.elevation = if (p.isDark) 0f else NexoUi.dp(this, 3f).toFloat()
+        // Avisos flotantes: cristal con radio concéntrico, nunca cajas con borde.
+        findBar.background = NexoGlassDrawable(this, p, NexoUi.Tokens.RADIUS_CARD)
+        NexoGlass.float(findBar, p)
         ThemeManager.styleOmniboxInput(this, findInput)
         findCount.setTextColor(p.muted)
         findCount.typeface = ThemeManager.fontMono(this)
+        findCount.fontFeatureSettings = "tnum"
         listOf(R.id.findPrev, R.id.findNext, R.id.findClose).forEach {
             ThemeManager.styleIconButton(this, findViewById(it))
         }
 
         stylePrivateBanner(TabManager.activeTab())
-        extensionInstallBanner.background = ThemeManager.rounded(this, floatingBg, 18f, ThemeManager.hairline(p))
+        extensionInstallBanner.background = NexoGlassDrawable(this, p, NexoUi.Tokens.RADIUS_CARD)
+        NexoGlass.float(extensionInstallBanner, p)
         extensionBannerText.setTextColor(p.text)
-        extensionBannerText.typeface = ThemeManager.fontSemiBold(this)
+        extensionBannerText.typeface = ThemeManager.fontMedium(this)
         ThemeManager.styleButton(this, extensionBannerAction, primary = true)
         ThemeManager.styleIconButton(this, extensionBannerDismiss)
-        progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
+        progress.progressTintList = android.content.res.ColorStateList.valueOf(if (p.isMonochrome) p.text else p.accentSwatch)
         progress.progressBackgroundTintList =
             android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+        // Sugerencias: lámina de cristal sobre el cromo.
+        findViewById<View>(R.id.omniboxSuggestions).let {
+            it.background = NexoGlassDrawable(this, p, NexoUi.Tokens.RADIUS_CARD)
+            NexoGlass.float(it, p)
+        }
+        miniDomain.setTextColor(p.text)
+        miniDomain.typeface = ThemeManager.fontMedium(this)
+        miniLock.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
         applyNavigationMode()
         settingsFingerprint = fingerprint()
         themeKey = ThemeManager.themeKey(this)
     }
 
-    private fun stylePrivateBanner(tab: BrowserTab?) {
+    /**
+     * Cristal Líquido del cromo: píldora de dirección, clúster desacoplado y mini-píldora.
+     * Modo privado = vidrio ahumado discreto (sin banners). Sobre la página de inicio el
+     * cristal desenfoca en tiempo real lo que hay detrás (API 31+).
+     */
+    private fun styleChromeGlass() {
+        if (!::chromeCluster.isInitialized || !::startPage.isInitialized || !::aiButton.isInitialized) return
         val p = ThemeManager.palette(this)
-        val isBurner = tab?.burnerId != null
-        val bg = if (isBurner) p.warning.container else p.accentSoft
-        val fg = if (isBurner) p.warning.onContainer else p.onAccentSoft
-        privateBanner.background = ThemeManager.rounded(this, bg, 16f, ThemeManager.hairline(p))
-        privateBanner.setTextColor(fg)
-        privateBanner.typeface = ThemeManager.fontSemiBold(this)
+        val private = TabManager.activeTab()?.isPrivate == true
+        val focused = omnibox.hasFocus()
+        val backdrop = startPage.takeIf { it.visibility == View.VISIBLE }
+        fun glass(radius: Float) = NexoGlassDrawable(this, p, radius, smoked = private).also { it.setBackdrop(backdrop) }
+        omniboxCapsule.background = if (focused) ThemeManager.rounded(this, p.surfaceContainerHigh, NexoUi.Tokens.RADIUS_PILL)
+            else glass(NexoUi.Tokens.RADIUS_PILL)
+        NexoGlass.float(omniboxCapsule, p)
+        chromeCluster.background = glass(NexoUi.Tokens.RADIUS_PILL)
+        NexoGlass.float(chromeCluster, p)
+        miniPill.background = android.graphics.drawable.InsetDrawable(glass(NexoUi.Tokens.RADIUS_PILL), 0, NexoUi.dp(this, 7f), 0, NexoUi.dp(this, 7f))
+        NexoGlass.float(miniPill, p, if (p.isDark) 3f else 6f)
+        // Enfoque: la píldora ocupa todo el ancho; el clúster se retira.
+        val home = TabManager.activeTab()?.let { BrowserPrefs.isNexoHome(it.url) } != false
+        val showCluster = !focused || !liquidChrome
+        chromeCluster.visibility = if (showCluster) View.VISIBLE else View.GONE
+        // En Inicio el emblema vive dentro de la cápsula unificada de búsqueda y consulta.
+        aiButton.visibility = if (home && liquidChrome) View.GONE else View.VISIBLE
+        pillReloadButton.visibility = if (liquidChrome && !focused && TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true) View.VISIBLE else View.GONE
+        statusScrim.setBackgroundColor(androidx.core.graphics.ColorUtils.setAlphaComponent(p.background, if (startPage.visibility == View.VISIBLE) 0 else 235))
+    }
+
+    /** Scroll Compacto: pliega el cromo en una mini-píldora de 34dp con candado y dominio. */
+    private fun setChromeCompact(compact: Boolean) {
+        if (!::miniPill.isInitialized) return
+        val allowed = compact && liquidChrome && !omnibox.hasFocus() && !immersive &&
+            startPage.visibility != View.VISIBLE && findBar.visibility != View.VISIBLE && !imeVisible
+        if (chromeCompact == allowed) return
+        chromeCompact = allowed
+        val travel = NexoUi.dp(this, 18f).toFloat()
+        if (allowed) {
+            miniPill.visibility = View.VISIBLE
+            miniPill.alpha = 0f
+            miniPill.scaleX = 0.86f; miniPill.scaleY = 0.86f
+            NexoMotion.spring(miniPill, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 1f)
+            NexoMotion.spring(miniPill, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_X, 1f)
+            NexoMotion.spring(miniPill, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_Y, 1f)
+            NexoMotion.spring(topBar, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 0f)
+            NexoMotion.spring(topBar, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, travel) {
+                if (chromeCompact) topBar.visibility = View.INVISIBLE
+            }
+        } else {
+            topBar.visibility = View.VISIBLE
+            NexoMotion.spring(topBar, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 1f)
+            NexoMotion.spring(topBar, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, 0f)
+            NexoMotion.spring(miniPill, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 0f) {
+                if (!chromeCompact) miniPill.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun stylePrivateBanner(tab: BrowserTab?) {
+        // Solo la identidad Burner usa un chip (abre su buzón); el modo privado vive en el cristal ahumado.
+        val p = ThemeManager.palette(this)
+        privateBanner.background = NexoGlassDrawable(this, p, NexoUi.Tokens.RADIUS_PILL, smoked = true)
+        NexoGlass.float(privateBanner, p)
+        privateBanner.setTextColor(p.text)
+        privateBanner.typeface = ThemeManager.fontMedium(this)
+        privateBanner.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            getDrawable(R.drawable.ic_menu_burner)?.mutate()?.apply {
+                setTint(p.warning.color)
+                setBounds(0, 0, NexoUi.dp(this@MainActivity, 16f), NexoUi.dp(this@MainActivity, 16f))
+            }, null, null, null)
+        privateBanner.compoundDrawablePadding = NexoUi.dp(this, 8f)
     }
 
     /** Aplica el modo de navegación elegido (Clásico, Compacto o Personalizado) sin perder los controles esenciales. */
     private fun applyNavigationMode() {
         val mode = NavConfig.mode(this)
         val hideChrome = immersive
+        if (liquidChrome) {
+            // Liquid Split Chrome: sin dock; atrás/adelante viven en gestos y en el menú.
+            compactBackButton.visibility = View.GONE
+            dockScrollHidden = false
+            browserDock.animate().cancel()
+            browserDock.visibility = View.GONE
+            styleChromeGlass()
+            layoutEdgeToEdge()
+            return
+        }
+        setChromeCompact(false)
         compactBackButton.visibility = if (mode == NavConfig.Mode.COMPACT && !hideChrome) View.VISIBLE else View.GONE
         compactBackButton.isEnabled = TabManager.canGoBackOrPrevious()
         compactBackButton.alpha = if (compactBackButton.isEnabled) 1f else 0.36f
@@ -1377,6 +1557,8 @@ class MainActivity :
             browserDock.alpha = 1f
             browserDock.translationY = 0f
         }
+        styleChromeGlass()
+        layoutEdgeToEdge()
     }
 
     private fun executeNavAction(action: NavConfig.Action) {
@@ -1398,7 +1580,7 @@ class MainActivity :
 
     /** Ocultación inteligente y suave del dock inferior al desplazarse (respeta reducción de movimiento). */
     private fun setDockScrollHidden(hide: Boolean) {
-        if (NavConfig.mode(this) == NavConfig.Mode.COMPACT || immersive) return
+        if (liquidChrome || NavConfig.mode(this) == NavConfig.Mode.COMPACT || immersive) return
         if (dockScrollHidden == hide) return
         val now = android.os.SystemClock.uptimeMillis()
         // Al ocultar aplica histéresis breve para evitar parpadeos; al mostrar responde al instante.
@@ -1406,42 +1588,26 @@ class MainActivity :
         lastDockToggleMs = now
         dockScrollHidden = hide
 
-        val duration = NexoUi.animDuration(this, 160L)
+        // Muelles Liquid Craft (380 / 0.82) en lugar de curvas accelerate-decelerate.
         browserDock.animate().cancel()
         if (hide) {
-            if (duration == 0L) {
-                browserDock.visibility = View.GONE
-                browserDock.translationY = 0f
-                browserDock.alpha = 1f
-            } else {
-                val shift = NexoUi.dp(this, 24f).toFloat()
-                browserDock.animate()
-                    .translationY(shift)
-                    .alpha(0f)
-                    .setDuration(duration)
-                    .withEndAction {
-                        if (dockScrollHidden) {
-                            browserDock.visibility = View.GONE
-                            browserDock.translationY = 0f
-                            browserDock.alpha = 1f
-                        }
-                    }
-                    .start()
+            val shift = NexoUi.dp(this, 24f).toFloat()
+            NexoMotion.spring(browserDock, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 0f)
+            NexoMotion.spring(browserDock, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, shift) {
+                if (dockScrollHidden) {
+                    browserDock.visibility = View.GONE
+                    browserDock.translationY = 0f
+                    browserDock.alpha = 1f
+                }
             }
         } else {
-            browserDock.visibility = View.VISIBLE
-            if (duration == 0L) {
-                browserDock.translationY = 0f
-                browserDock.alpha = 1f
-            } else {
+            if (browserDock.visibility != View.VISIBLE) {
                 browserDock.translationY = NexoUi.dp(this, 20f).toFloat()
                 browserDock.alpha = 0f
-                browserDock.animate()
-                    .translationY(0f)
-                    .alpha(1f)
-                    .setDuration(duration)
-                    .start()
             }
+            browserDock.visibility = View.VISIBLE
+            NexoMotion.spring(browserDock, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 1f)
+            NexoMotion.spring(browserDock, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, 0f)
         }
     }
 
@@ -1568,14 +1734,18 @@ class MainActivity :
             browserDock.animate().cancel()
             browserDock.visibility = View.GONE
             navBar.visibility = View.GONE
+            setChromeCompact(false)
         } else {
             navBar.visibility = View.VISIBLE
-            browserDock.visibility = if (compact || dockScrollHidden) View.GONE else View.VISIBLE
+            browserDock.visibility = if (liquidChrome || compact || dockScrollHidden) View.GONE else View.VISIBLE
         }
-        compactBackButton.visibility = if (!hideChrome && compact) View.VISIBLE else View.GONE
-        topBar.visibility = if (hideChrome) View.GONE else View.VISIBLE
+        compactBackButton.visibility = if (!hideChrome && compact && !liquidChrome) View.VISIBLE else View.GONE
+        bottomChrome.visibility = if (hideChrome) View.GONE else View.VISIBLE
+        topBar.visibility = if (hideChrome || chromeCompact) View.INVISIBLE else View.VISIBLE
+        if (hideChrome) topBar.visibility = View.GONE
         privateBanner.visibility =
-            if (!hideChrome && tab?.isPrivate == true) View.VISIBLE else View.GONE
+            if (!hideChrome && tab?.burnerId != null) View.VISIBLE else View.GONE
+        statusScrim.visibility = if (hideChrome) View.GONE else View.VISIBLE
         if (hideChrome) extensionInstallBanner.visibility = View.GONE else tab?.let { updateExtensionInstallBanner(it) }
         progress.visibility =
             if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
@@ -1584,6 +1754,7 @@ class MainActivity :
         fullscreenMediaOverlay?.setActive(fullScreenActive && !pip)
         if (hideChrome) startPage.visibility = View.GONE else tab?.let { updateStartPage(it) }
         updateMiniPlayerChip()
+        layoutEdgeToEdge()
         root.requestLayout()
     }
 
@@ -1670,6 +1841,7 @@ class MainActivity :
         val show = BrowserPrefs.isNexoHome(tab.url) && !immersive
         if (show) {
             setDockScrollHidden(false)
+            setChromeCompact(false)
             // Re-dibujar solo si cambió la pestaña, el tema o la privacidad.
             val key = tab.id + "|" + tab.isPrivate + "|" + ThemeManager.themeKey(this)
             if (key != startPageKey || startPage.visibility != View.VISIBLE) {
@@ -1677,7 +1849,9 @@ class MainActivity :
                 startPageKey = key
             }
         }
+        val changed = startPage.visibility != (if (show) View.VISIBLE else View.GONE)
         startPage.visibility = if (show) View.VISIBLE else View.GONE
+        if (changed) { styleChromeGlass(); layoutEdgeToEdge() }
     }
 
     /** Muestra el dominio limpio dentro de la cápsula (el icono de estado vive en tabToolsButton). */
@@ -1685,9 +1859,14 @@ class MainActivity :
         setOmniboxIcon(null)
         if (BrowserPrefs.isNexoHome(tab.url)) {
             omnibox.setText("")
+            miniDomain.text = ""
             return
         }
-        omnibox.setText(displayUrl(tab.url))
+        val shown = displayUrl(tab.url)
+        omnibox.setText(shown)
+        miniDomain.text = shown
+        miniLock.setImageResource(if (tab.isPrivate) R.drawable.ic_menu_private else R.drawable.ic_lock)
+        miniPill.contentDescription = "$shown. Mostrar barra de navegación"
     }
 
     private fun setOmniboxIcon(icon: Int?) {
@@ -1721,7 +1900,8 @@ class MainActivity :
         forwardButton.isEnabled = tab.canGoForward
         forwardButton.alpha = if (tab.canGoForward) 1f else 0.36f
         privateBanner.visibility =
-            if (!immersive && tab.isPrivate) View.VISIBLE else View.GONE
+            if (!immersive && tab.burnerId != null) View.VISIBLE else View.GONE
+        styleChromeGlass()
         updateExtensionInstallBanner(tab)
         title = if (tab.isPrivate) "Navegación privada" else tab.title
         updateMiniPlayerChip()

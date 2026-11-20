@@ -28,7 +28,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.floor
 
-/** Native rendering of Nexo UI 5.0 Start Page with customizable Nexo Workspace blocks; never fabricates protection counters. */
+/** Inicio de Nexo UI 7.0 «Liquid Craft»: lienzo sereno, sitios fijados y Espacios; nunca inventa contadores de protección. */
 @SuppressLint("ViewConstructor")
 class StartPageView(
     private val activity: Activity,
@@ -203,16 +203,45 @@ class StartPageView(
             }
         }
 
-    private fun cardSurface(p: BrowserPalette): Int =
-        if (p.isDark) p.surfaceContainerLow else p.surfaceContainerLowest
-
-    private fun elevatedSurface(p: BrowserPalette): Int =
-        if (p.isDark) p.surfaceContainer else p.surfaceContainerLowest
-
     init {
         isFillViewport = true
         isVerticalScrollBarEnabled = false
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
+    }
+
+    private var safeTopPx = 0
+    private var safeBottomPx = 0
+
+    /** Aire superior (barra de estado) e inferior (cromo flotante) que la página reserva. */
+    fun setSafeArea(top: Int, bottom: Int) {
+        if (top == safeTopPx && bottom == safeBottomPx) return
+        safeTopPx = top
+        safeBottomPx = bottom
+        applyContentPadding()
+    }
+
+    private fun applyContentPadding() {
+        content.setPadding(dp(20f), safeTopPx + dp(8f), dp(20f), safeBottomPx + dp(12f))
+    }
+
+    /** Lienzo sereno: color del tema + lavado radial ultrafino arriba (5 %, jamás neón). */
+    private class AmbientWash(private val canvasColor: Int, private val tint: Int) : android.graphics.drawable.Drawable() {
+        private val fill = android.graphics.Paint()
+        private val wash = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        override fun onBoundsChange(bounds: android.graphics.Rect) {
+            val r = bounds.width() * 0.95f
+            wash.shader = android.graphics.RadialGradient(bounds.exactCenterX(), bounds.top - r * 0.18f, r,
+                intArrayOf(tint, ColorUtils.setAlphaComponent(tint, 0)), floatArrayOf(0f, 1f), android.graphics.Shader.TileMode.CLAMP)
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            fill.color = canvasColor
+            canvas.drawRect(bounds, fill)
+            canvas.drawRect(bounds.left.toFloat(), bounds.top.toFloat(), bounds.right.toFloat(), bounds.top + bounds.width() * 1.1f, wash)
+        }
+        override fun setAlpha(alpha: Int) = Unit
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) = Unit
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.OPAQUE
     }
 
     fun render(isPrivate: Boolean) {
@@ -220,85 +249,25 @@ class StartPageView(
         renderedShieldToken = shieldToken()
         val p = ThemeManager.palette(activity)
         val cfg = readConfig(activity)
-        setBackgroundColor(p.background)
+        val washTint = ColorUtils.setAlphaComponent(if (p.isMonochrome) p.text else p.accentSwatch, if (p.isDark) 13 else 10)
+        background = AmbientWash(p.background, washTint)
         content.removeAllViews()
-        content.setPadding(dp(18f), dp(12f), dp(18f), dp(20f))
+        applyContentPadding()
 
-        // -----------------------------------------------------------------
-        // 1. Franja superior mínima: estado discreto de PhantomShield + utilidades
-        // -----------------------------------------------------------------
+        // 1. Cabecera mínima: PhantomShield con contador a la izquierda; iconos fantasma a la derecha.
         val top = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
         val badge = ExtensionManager.phantomBadge(global = true)
         val available = ExtensionManager.phantomEntry()?.enabled == true && badge != "OFF" && badge != "PAUSE"
-        val shieldColor = if (available) p.success.color else p.muted
-        val shieldPillBg = if (available) p.success.container else p.surfaceContainerHigh
-        val shieldPillFg = if (available) p.success.onContainer else p.muted
-
-        if (isPrivate || cfg.showPrivacyCard) {
-            val topPillBg = cardSurface(p)
-            val topPillInset = InsetDrawable(
-                ThemeManager.rounded(activity, topPillBg, 18f, if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null),
-                0, dp(5f), 0, dp(5f)
-            )
-            top.addView(LinearLayout(activity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = dp(48f)
-                background = ThemeManager.ripple(activity, topPillInset, 18f)
-                setPadding(dp(12f), dp(5f), dp(8f), dp(5f))
-                isClickable = true
-                isFocusable = true
-                contentDescription = "Abrir panel de PhantomShield"
-                setOnClickListener { onShield() }
-                addView(View(activity).apply {
-                    background = ThemeManager.rounded(activity, shieldColor, 4f)
-                }, params(dp(7f), dp(7f)).apply { marginEnd = dp(8f) })
-                addView(text("PhantomShield", 12f, p.text, semiBold = true))
-                val statusLabel = when (badge) {
-                    "OFF", "PAUSE" -> "Pausado"
-                    null -> if (available) "Activo" else "Panel"
-                    else -> badge
-                }
-                addView(text(statusLabel, 10.5f, shieldPillFg, bold = true).apply {
-                    typeface = NexoUi.mono(activity)
-                    background = ThemeManager.rounded(activity, shieldPillBg, 10f)
-                    setPadding(dp(7f), dp(2.5f), dp(7f), dp(2.5f))
-                }, params(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    marginStart = dp(8f)
-                })
-            })
-        }
+        if (cfg.showPrivacyCard || isPrivate) top.addView(shieldPill(p, badge, available))
         top.addView(View(activity), params(0, dp(1f)).apply { weight = 1f })
-
-        fun topCircleAction(iconRes: Int, desc: String, active: Boolean = false, onClick: () -> Unit): ImageView {
-            val circleBg = if (active) p.accentSoft else cardSurface(p)
-            val tint = if (active) p.onAccentSoft else p.muted
-            val stroke = if (!active && (p.isAmoled || !p.isDark)) ThemeManager.hairline(p) else null
-            val inset = InsetDrawable(ThemeManager.rounded(activity, circleBg, 20f, stroke), dp(4f))
-            return ImageView(activity).apply {
-                setImageResource(iconRes)
-                imageTintList = ColorStateList.valueOf(tint)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                background = ThemeManager.ripple(activity, inset, 22f)
-                setPadding(dp(14f), dp(14f), dp(14f), dp(14f))
-                contentDescription = desc
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { onClick() }
-            }
-        }
-        if (!isPrivate) {
-            top.addView(topCircleAction(R.drawable.ic_menu_settings, "Personalizar página de inicio") {
-                openCustomizer()
-            }, params(dp(48f), dp(48f)).apply { marginEnd = dp(4f) })
-        }
-        top.addView(topCircleAction(R.drawable.ic_menu_private, "Abrir pestaña privada", active = isPrivate) {
-            onPrivate()
-        }, params(dp(48f), dp(48f)))
+        top.addView(ghostAction(if (isPrivate) R.drawable.ic_nav_add else R.drawable.ic_menu_private,
+            if (isPrivate) "Abrir pestaña normal" else "Abrir pestaña privada") {
+            if (isPrivate) TabManager.createTab(BrowserPrefs.NEXO_HOME) else onPrivate()
+        })
+        if (!isPrivate) top.addView(ghostAction(R.drawable.ic_menu_settings, "Personalizar página de inicio") { openCustomizer() })
         content.addView(top, params())
 
-        // -----------------------------------------------------------------
-        // 2. Identidad Nexo: cabecera editorial compacta y equilibrada
-        // -----------------------------------------------------------------
+        // 2. Monograma N + saludo sereno con aire generoso.
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val greeting = when {
             hour < 6 -> "Buenas noches"
@@ -306,322 +275,193 @@ class StartPageView(
             hour < 20 -> "Buenas tardes"
             else -> "Buenas noches"
         }
-        val heroRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
+        content.addView(View(activity).apply {
+            background = if (isPrivate) android.graphics.drawable.LayerDrawable(arrayOf(
+                ThemeManager.rounded(activity, p.surfaceContainerHigh, 10f),
+                activity.getDrawable(R.drawable.ic_menu_private)!!.mutate().apply { setTint(p.text) }
+            )).apply { setLayerInset(1, dp(8f), dp(8f), dp(8f), dp(8f)) }
+            else NexoMonogramDrawable(activity, p.text, p.background)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, params(dp(36f), dp(36f)).apply { topMargin = dp(44f) })
+        content.addView(text(if (isPrivate) "Navegación privada" else greeting, 30f, p.text, semiBold = true).apply {
+            letterSpacing = -0.025f
+            isAccessibilityHeading = true
+            setPadding(0, dp(14f), 0, 0)
+        }, params())
+
+        if (isPrivate) renderPrivateBody(p) else renderStandardBody(p, cfg)
+    }
+
+    private fun shieldPill(p: BrowserPalette, badge: String?, available: Boolean): View {
+        val count = badge?.takeIf { it.matches(Regex("[0-9]{1,5}\\+?")) }
+        val label = when {
+            count != null -> count
+            badge == "OFF" || badge == "PAUSE" -> "Pausado"
+            available -> "Activo"
+            else -> "Shield"
+        }
+        val pill = InsetDrawable(ThemeManager.rounded(activity, p.surface, NexoUi.Tokens.RADIUS_PILL), 0, dp(6f), 0, dp(6f))
+        return LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2f), dp(16f), dp(2f), dp(14f))
-        }
-        heroRow.addView(ImageView(activity).apply {
-            setImageResource(if (isPrivate) R.drawable.ic_menu_private else R.drawable.ic_nexo_logo)
-            if (isPrivate) {
-                val inset = dp(10f)
-                setPadding(inset, inset, inset, inset)
-                imageTintList = ColorStateList.valueOf(p.onAccentSoft)
-                background = ThemeManager.rounded(activity, p.accentSoft, 14f)
-            }
-        }, params(dp(44f), dp(44f)).apply { marginEnd = dp(14f) })
-        heroRow.addView(LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(text(if (isPrivate) "Navegación privada" else greeting, 24f, p.text, bold = true).apply {
-                letterSpacing = -0.02f
-                maxLines = 2
-            })
-            addView(text(
-                if (isPrivate) "Espacio aislado · sin historial ni cookies persistentes"
-                else "Nexo Browser · navegación limpia y privada",
-                12.5f, p.muted
-            ).apply {
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(2f), 0, 0)
-            })
-        }, params(0).apply { weight = 1f })
-        content.addView(heroRow, params())
-
-        if (isPrivate) {
-            renderPrivateBody(p)
-        } else {
-            renderStandardBody(p, cfg, badge, available)
-        }
-
-        content.addView(View(activity), params(1, 0).apply { weight = 1f })
-        if (isPrivate) {
-            content.addView(privacyStrip(p, badge, available), params().apply { topMargin = dp(20f) })
-        }
-    }
-
-    private fun renderPrivateBody(p: BrowserPalette) {
-        val card = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            background = ThemeManager.rounded(activity, cardSurface(p), 22f, ThemeManager.hairline(p))
-            setPadding(dp(18f), dp(16f), dp(18f), dp(16f))
-        }
-        card.addView(text("Qué protege esta sesión", 14.5f, p.text, semiBold = true))
-        val bullets = listOf(
-            "No guarda historial, búsquedas ni miniaturas en el dispositivo.",
-            "Elimina cookies y datos locales al cerrar todas las pestañas privadas.",
-            "Las descargas guardadas permanecen; tu ISP y los sitios siguen viendo tu conexión."
-        )
-        bullets.forEach { line ->
-            card.addView(LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.TOP
-                setPadding(0, dp(10f), 0, 0)
-                addView(View(activity).apply {
-                    background = ThemeManager.rounded(activity, p.accent, 3f)
-                }, params(dp(6f), dp(6f)).apply { topMargin = dp(6f); marginEnd = dp(10f) })
-                addView(text(line, 13f, p.muted).apply { setLineSpacing(0f, 1.25f) }, params(0).apply { weight = 1f })
-            })
-        }
-        card.addView(NexoUi.button(activity, "Crear identidad Burner (aislada + correo)", primary = false) {
-            onAction("burner")
-        }, NexoUi.buttonParams(activity, 14f))
-        content.addView(card, params())
-    }
-
-    private fun renderStandardBody(p: BrowserPalette, cfg: StartPageConfig, badge: String?, available: Boolean) {
-        val accentLink = if (p.isDark) ColorUtils.blendARGB(p.accent, p.text, 0.35f) else p.accent
-
-        // -----------------------------------------------------------------
-        // 3. Tarjeta protagonista de Nexo AI (limpia, sin emojis duplicados)
-        // -----------------------------------------------------------------
-        val aiCardFill = if (p.isDark) {
-            ColorUtils.blendARGB(p.surfaceContainerLow, p.accentSoft, 0.32f)
-        } else {
-            ColorUtils.blendARGB(p.surfaceContainerLowest, p.accentSoft, 0.48f)
-        }
-        val aiStroke = ColorUtils.setAlphaComponent(p.accent, if (p.isAmoled) 110 else 70)
-        val aiCard = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, aiCardFill, 22f, aiStroke), 22f)
-            setPadding(dp(14f), dp(13f), dp(14f), dp(12f))
+            minimumHeight = dp(48f)
+            background = ThemeManager.ripple(activity, pill, NexoUi.Tokens.RADIUS_PILL)
+            NexoGlass.paperShadow(this, p)
+            setPadding(dp(12f), 0, dp(14f), 0)
             isClickable = true
             isFocusable = true
-            contentDescription = "Pregúntale a Nexo AI sobre esta página o tus pestañas"
-            setOnClickListener { onAction("ai") }
-        }
-        aiCard.addView(LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            contentDescription = if (count != null) "PhantomShield: $count rastreadores bloqueados" else "PhantomShield: $label"
+            setOnClickListener { onShield() }
             addView(ImageView(activity).apply {
-                setImageResource(R.drawable.ic_nexo_ai_spark)
-                imageTintList = ColorStateList.valueOf(if (p.isDark) p.onAccentSoft else p.accent)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
-                background = ThemeManager.rounded(activity, p.accentSoft, 12f)
+                setImageResource(R.drawable.ic_menu_shield)
+                imageTintList = ColorStateList.valueOf(if (available) p.success.color else p.muted)
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, params(dp(36f), dp(36f)).apply { marginEnd = dp(12f) })
-            addView(LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(text("Pregúntale a Nexo AI", 15f, p.text, semiBold = true))
-                addView(text("Resume, traduce o compara pestañas", 12f, p.muted).apply {
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(2f), 0, 0)
-                })
-            }, params(0).apply { weight = 1f })
-            addView(ImageView(activity).apply {
-                setImageResource(R.drawable.ic_nav_chevron)
-                imageTintList = ColorStateList.valueOf(if (p.isDark) p.onAccentSoft else p.accent)
+            }, params(dp(16f), dp(16f)).apply { marginEnd = dp(8f) })
+            addView(text(label, 13f, p.text).apply {
+                typeface = if (count != null) NexoUi.mono(activity) else NexoUi.medium(activity)
+                fontFeatureSettings = "tnum"
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, params(dp(18f), dp(18f)).apply { marginStart = dp(8f) })
-        })
-
-        // Píldoras sutiles de intención rápida dentro de la tarjeta IA
-        val aiIntents = listOf("Resumir", "Traducir", "Comparar pestañas")
-        val intentRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(10f), 0, 0)
-        }
-        val pillBg = if (p.isDark) ColorUtils.setAlphaComponent(p.surfaceContainerHighest, 190) else p.surfaceContainerLowest
-        aiIntents.forEachIndexed { idx, label ->
-            intentRow.addView(TextView(activity).apply {
-                text = label
-                textSize = 11.5f
-                typeface = NexoUi.medium(activity)
-                setTextColor(p.text)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(11f), dp(5f), dp(11f), dp(5f))
-                background = ThemeManager.rounded(activity, pillBg, 14f, ThemeManager.hairline(p))
-            }, params(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                if (idx > 0) marginStart = dp(6f)
             })
         }
-        aiCard.addView(intentRow)
-        content.addView(aiCard, params().apply { bottomMargin = dp(18f) })
+    }
 
-        // -----------------------------------------------------------------
-        // 4. Accesos rápidos: cuadrícula tonal de 4 columnas (sin bordes pesados)
-        // -----------------------------------------------------------------
+    private fun ghostAction(iconRes: Int, desc: String, onClick: () -> Unit): ImageView =
+        ImageView(activity).apply {
+            val p = ThemeManager.palette(activity)
+            setImageResource(iconRes)
+            imageTintList = ColorStateList.valueOf(p.muted)
+            scaleType = ImageView.ScaleType.CENTER
+            background = ThemeManager.ripple(activity, null, NexoUi.Tokens.RADIUS_PILL)
+            contentDescription = desc
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+            layoutParams = params(dp(48f), dp(48f))
+        }
+
+    private fun renderPrivateBody(p: BrowserPalette) {
+        val card = NexoUi.card(activity, 18f)
+        listOf(
+            "No se guarda historial, búsquedas ni miniaturas.",
+            "Cookies y datos locales se borran al cerrar la última pestaña privada.",
+            "Las descargas permanecen; tu proveedor y los sitios siguen viendo tu conexión."
+        ).forEachIndexed { i, line ->
+            card.addView(text(line, 14f, if (i == 0) p.text else p.muted).apply {
+                setLineSpacing(0f, 1.3f)
+                setPadding(0, if (i == 0) 0 else dp(10f), 0, 0)
+            })
+        }
+        card.addView(NexoUi.button(activity, "Crear identidad Burner") { onAction("burner") }, NexoUi.buttonParams(activity, 16f))
+        content.addView(card, params().apply { topMargin = dp(28f) })
+        content.addView(View(activity), params(1, 0).apply { weight = 1f })
+    }
+
+    private fun renderStandardBody(p: BrowserPalette, cfg: StartPageConfig) {
+        // 3. Cuadrícula 4×2 de sitios fijados: squircles tonales sin borde (r:20, 52×52).
         if (cfg.showQuickAccess) {
-            content.addView(sectionHeading("Accesos rápidos", "Editar", accentLink) { editLinks() }, params())
             val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty()
-            val links = allLinks().filterNot { it.id in hidden }.take(MAX_TILES) + Link("Añadir", kind = "add")
+            val webLinks = allLinks().filter { it.kind == "web" && it.id !in hidden }
+            val fontScale = resources.configuration.fontScale.coerceIn(1f, 2f)
             val availableWidth = (width / resources.displayMetrics.density).takeIf { it > 0 }
                 ?: resources.configuration.screenWidthDp.toFloat()
-            val usableDp = minOf(availableWidth, UiLayout.CONTENT_MAX_DP.toFloat()) - 36f
-            val fontScale = resources.configuration.fontScale.coerceIn(1f, 2f)
-            val columns = floor(usableDp / (78f * fontScale)).toInt().coerceIn(2, 5)
-            val gridBox = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(2f), 0, dp(4f))
-            }
+            val usableDp = minOf(availableWidth, UiLayout.CONTENT_MAX_DP.toFloat()) - 40f
+            val columns = floor(usableDp / (72f * fontScale)).toInt().coerceIn(2, 4)
+            val links = webLinks.take(columns * 2 - 1) + Link("Añadir", kind = "add")
+            val gridBox = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
             links.chunked(columns).forEach { group ->
                 val row = LinearLayout(activity).apply { weightSum = columns.toFloat() }
                 group.forEach { row.addView(tile(it), params(0).apply { weight = 1f }) }
                 gridBox.addView(row, params())
             }
-            content.addView(gridBox, params())
+            content.addView(gridBox, params().apply { topMargin = dp(36f) })
         }
 
-        // -----------------------------------------------------------------
-        // 5. Nexo Workspace: Favoritos, Espacios, Grupos activos y Lectura sin conexión
-        // -----------------------------------------------------------------
-        val bookmarks = if (cfg.showBookmarks) BookmarkStore.list(activity) else emptyList()
-        val workspaces = if (cfg.showWorkspaces) WorkspaceStore.list(activity) else emptyList()
-        val offlineArticles = if (cfg.showOfflineReader) {
-            OfflineArticleStore.list(OfflineArticleStore.directory(activity))
-        } else emptyList()
-
-        if (cfg.showBookmarks || cfg.showWorkspaces || cfg.showOfflineReader) {
-            content.addView(sectionHeading("Workspace", null, accentLink) {}, params().apply { topMargin = dp(8f) })
-            val hubRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-            val hubTiles = ArrayList<View>()
-            if (cfg.showBookmarks) {
-                hubTiles += workspaceHubTile(
-                    icon = R.drawable.ic_menu_bookmark,
-                    label = "Favoritos",
-                    count = if (bookmarks.isEmpty()) "Vacío" else "${bookmarks.size}",
-                    tone = NexoUi.Tone.ACCENT
-                ) { onAction("bookmarks") }
+        // Inicio no minimalista: favoritos y lectura sin conexión en tarjetas limpias.
+        if (!BrowserPrefs.minimalStart(activity)) {
+            val bookmarks = if (cfg.showBookmarks) BookmarkStore.list(activity) else emptyList()
+            if (bookmarks.isNotEmpty()) {
+                content.addView(sectionHeading("Favoritos", "Ver todos") { onAction("bookmarks") }, params().apply { topMargin = dp(20f) })
+                content.addView(horizontalCards(bookmarks.take(8).map { bm ->
+                    val host = runCatching { android.net.Uri.parse(bm.url).host }.getOrNull().orEmpty().removePrefix("www.")
+                    compactCard(bm.title, host.ifBlank { bm.url }) { onOpen(bm.url) }
+                }), params())
             }
-            if (cfg.showWorkspaces) {
-                hubTiles += workspaceHubTile(
-                    icon = R.drawable.ic_menu_workspace,
-                    label = "Espacios",
-                    count = if (workspaces.isEmpty()) "Crear" else "${workspaces.size}",
-                    tone = NexoUi.Tone.INFO
-                ) { onAction("workspaces") }
-            }
-            if (cfg.showOfflineReader) {
-                hubTiles += workspaceHubTile(
-                    icon = R.drawable.ic_menu_reader,
-                    label = "Lectura",
-                    count = if (offlineArticles.isEmpty()) "Offline" else "${offlineArticles.size}",
-                    tone = NexoUi.Tone.SUCCESS
-                ) { onAction("reader_offline") }
-            }
-            hubTiles.forEachIndexed { idx, tileView ->
-                hubRow.addView(tileView, params(0).apply {
-                    weight = 1f
-                    if (idx > 0) marginStart = dp(8f)
-                })
-            }
-            if (hubTiles.isNotEmpty()) {
-                content.addView(hubRow, params().apply { topMargin = dp(4f) })
+            val offline = if (cfg.showOfflineReader) OfflineArticleStore.list(OfflineArticleStore.directory(activity)) else emptyList()
+            if (offline.isNotEmpty()) {
+                content.addView(sectionHeading("Para leer", "Ver todos") { onAction("reader_offline") }, params().apply { topMargin = dp(16f) })
+                content.addView(horizontalCards(offline.take(6).map { art ->
+                    compactCard(art.title, listOf(art.siteName, "${art.readingMinutes} min").filter { it.isNotBlank() }.joinToString(" · ")) {
+                        NexoReader.showArticleDialog(activity, art, openedOffline = true, onOpenUrl = onOpen)
+                    }
+                }), params())
             }
         }
 
-        if (cfg.showBookmarks && bookmarks.isNotEmpty()) {
-            content.addView(sectionHeading("Favoritos recientes", "Ver todos", accentLink) { onAction("bookmarks") }, params().apply { topMargin = dp(14f) })
-            content.addView(horizontalCards(bookmarks.take(8).map { bm ->
-                val host = runCatching { android.net.Uri.parse(bm.url).host }.getOrNull().orEmpty().removePrefix("www.")
-                compactCard(bm.title, "${bm.folder} · ${host.ifBlank { bm.url }}", R.drawable.ic_menu_bookmark) {
-                    onOpen(bm.url)
+        content.addView(View(activity), params(1, 0).apply { weight = 1f })
+
+        // 4. Tira horizontal limpia de Grupos y Espacios con puntos de color, al alcance del pulgar.
+        val chips = ArrayList<View>()
+        if (cfg.showRecentGroups) {
+            TabManager.allTabs()
+                .filter { !it.isPrivate && !it.groupName.isNullOrBlank() }
+                .groupBy { it.groupName!!.trim() }
+                .entries.take(8).forEach { (name, tabs) ->
+                    chips += stripChip(name, tabs.size.toString(), TabGroupRules.color(name)) { TabManager.switchTo(tabs.first().id) }
                 }
-            }), params())
         }
-
-        if (cfg.showWorkspaces && workspaces.isNotEmpty()) {
-            content.addView(sectionHeading("Espacios guardados", "Gestionar", accentLink) { onAction("workspaces") }, params().apply { topMargin = dp(14f) })
-            content.addView(horizontalCards(workspaces.take(8).map { ws ->
-                compactCard(ws.name, ws.groupSummary(), R.drawable.ic_menu_workspace) {
+        if (cfg.showWorkspaces) {
+            WorkspaceStore.list(activity).take(8).forEach { ws ->
+                chips += stripChip(ws.name, null, SiteIconStore.letterColor(ws.name)) {
                     val count = WorkspaceStore.restoreLazily(ws)
                     Toastish.show(activity, "Espacio «${ws.name}» abierto ($count pestañas).")
                 }
-            }), params())
-        }
-
-        if (cfg.showRecentGroups) {
-            val groups = TabManager.allTabs()
-                .filter { !it.isPrivate && !it.groupName.isNullOrBlank() }
-                .groupBy { it.groupName!!.trim() }
-                .entries.toList()
-            if (groups.isNotEmpty()) {
-                content.addView(sectionHeading("Grupos activos", null, accentLink) {}, params().apply { topMargin = dp(12f) })
-                val chips = groups.take(10).map { (name, tabs) ->
-                    NexoUi.chip(activity, "$name · ${tabs.size}", selected = false, dotColor = TabGroupRules.color(name)) {
-                        TabManager.switchTo(tabs.first().id)
-                    }
-                }
-                content.addView(NexoUi.chipRow(activity, chips), params())
             }
         }
-
-        if (cfg.showOfflineReader && offlineArticles.isNotEmpty()) {
-            content.addView(sectionHeading("Lectura sin conexión", "Ver todos", accentLink) { onAction("reader_offline") }, params().apply { topMargin = dp(14f) })
-            content.addView(horizontalCards(offlineArticles.take(6).map { art ->
-                val sub = buildString {
-                    if (art.siteName.isNotBlank()) append(art.siteName).append(" · ")
-                    append("${art.readingMinutes} min")
-                }
-                compactCard(art.title, sub, R.drawable.ic_menu_reader) {
-                    NexoReader.showArticleDialog(activity, art, openedOffline = true, onOpenUrl = onOpen)
-                }
-            }), params())
+        if (chips.isNotEmpty()) {
+            content.addView(NexoUi.chipRow(activity, chips), params().apply { topMargin = dp(20f) })
         }
     }
 
-    private fun workspaceHubTile(icon: Int, label: String, count: String, tone: NexoUi.Tone, onClick: () -> Unit): View {
+    /** Píldora de la tira de Espacios/Grupos: punto de color, nombre y recuento tabular. */
+    private fun stripChip(label: String, count: String?, dot: Int, onClick: () -> Unit): View {
         val p = ThemeManager.palette(activity)
-        val (iconBg, iconFg) = NexoUi.toneColors(p, tone)
-        val fill = cardSurface(p)
-        val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
+        val pill = InsetDrawable(ThemeManager.rounded(activity, p.surface, NexoUi.Tokens.RADIUS_PILL), 0, dp(6f), 0, dp(6f))
         return LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            minimumHeight = dp(74f)
-            setPadding(dp(12f), dp(11f), dp(12f), dp(11f))
-            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, fill, 18f, stroke), 18f)
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48f)
+            setPadding(dp(14f), 0, dp(16f), 0)
+            background = ThemeManager.ripple(activity, pill, NexoUi.Tokens.RADIUS_PILL)
+            NexoGlass.paperShadow(this, p)
             isClickable = true
             isFocusable = true
-            contentDescription = "$label: $count"
+            contentDescription = listOfNotNull(label, count?.let { "$it pestañas" }).joinToString(", ")
             setOnClickListener { onClick() }
-            addView(LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(ImageView(activity).apply {
-                    setImageResource(icon)
-                    imageTintList = ColorStateList.valueOf(iconFg)
-                    scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
-                    background = ThemeManager.rounded(activity, iconBg, 10f)
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, params(dp(28f), dp(28f)))
-                addView(View(activity), params(0, dp(1f)).apply { weight = 1f })
-                addView(text(count, 11f, p.muted, bold = true).apply {
-                    typeface = NexoUi.mono(activity)
-                    maxLines = 1
-                })
-            })
-            addView(text(label, 12.5f, p.text, semiBold = true).apply {
+            addView(View(activity).apply { background = ThemeManager.rounded(activity, dot, 4f) },
+                params(dp(7f), dp(7f)).apply { marginEnd = dp(8f) })
+            addView(text(label, 13.5f, p.text).apply {
+                typeface = NexoUi.medium(activity)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(8f), 0, 0)
+                maxWidth = dp(160f)
+            })
+            if (count != null) addView(text(count, 12.5f, p.muted).apply {
+                typeface = NexoUi.mono(activity)
+                fontFeatureSettings = "tnum"
+                setPadding(dp(6f), 0, 0, 0)
             })
         }
     }
 
-    private fun sectionHeading(title: String, actionLabel: String?, accentColor: Int, onActionClick: () -> Unit): LinearLayout {
+    private fun sectionHeading(title: String, actionLabel: String?, onActionClick: () -> Unit): LinearLayout {
         val p = ThemeManager.palette(activity)
         return LinearLayout(activity).apply {
             gravity = Gravity.CENTER_VERTICAL
-            addView(text(title.uppercase(), 11f, p.muted, bold = true).apply {
-                letterSpacing = 0.08f
-                setPadding(dp(2f), dp(6f), 0, dp(4f))
+            addView(text(title, 15f, p.text, semiBold = true).apply {
+                letterSpacing = -0.025f
+                isAccessibilityHeading = true
             }, params(0).apply { weight = 1f })
             if (!actionLabel.isNullOrBlank()) {
-                addView(text(actionLabel, 12.5f, accentColor, semiBold = true).apply {
+                addView(text(actionLabel, 13f, p.muted).apply {
+                    typeface = NexoUi.medium(activity)
                     minimumHeight = dp(48f)
                     gravity = Gravity.CENTER
                     setPadding(dp(12f), 0, dp(2f), 0)
@@ -636,42 +476,36 @@ class StartPageView(
     private fun horizontalCards(cards: List<View>): HorizontalScrollView {
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         cards.forEachIndexed { idx, card ->
-            row.addView(card, LinearLayout.LayoutParams(dp(186f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            row.addView(card, LinearLayout.LayoutParams(dp(172f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 if (idx > 0) marginStart = dp(10f)
             })
         }
         return HorizontalScrollView(activity).apply {
             isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
+            clipToPadding = false
             addView(row)
         }
     }
 
-    private fun compactCard(title: String, subtitle: String, iconRes: Int, onClick: () -> Unit): View {
+    private fun compactCard(title: String, subtitle: String, onClick: () -> Unit): View {
         val p = ThemeManager.palette(activity)
-        val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            minimumHeight = dp(74f)
-            setPadding(dp(13f), dp(12f), dp(13f), dp(12f))
-            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, cardSurface(p), 18f, stroke), 18f)
+            minimumHeight = dp(72f)
+            setPadding(dp(14f), dp(12f), dp(14f), dp(12f))
+            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.surface, NexoUi.Tokens.RADIUS_CARD), NexoUi.Tokens.RADIUS_CARD)
+            NexoGlass.paperShadow(this, p)
             isClickable = true
             isFocusable = true
             contentDescription = "$title. $subtitle"
             setOnClickListener { onClick() }
-            addView(LinearLayout(activity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(ImageView(activity).apply {
-                    setImageResource(iconRes)
-                    imageTintList = ColorStateList.valueOf(p.accent)
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, params(dp(16f), dp(16f)).apply { marginEnd = dp(8f) })
-                addView(text(title, 13f, p.text, semiBold = true).apply {
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                }, params(0).apply { weight = 1f })
+            addView(text(title, 13.5f, p.text).apply {
+                typeface = NexoUi.medium(activity)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
             })
-            addView(text(subtitle, 11.5f, p.muted).apply {
+            addView(text(subtitle, 12f, p.muted).apply {
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setPadding(0, dp(6f), 0, 0)
@@ -688,33 +522,38 @@ class StartPageView(
             render(renderedPrivate)
         }
         val togglesCard = NexoUi.card(activity)
-        togglesCard.addView(NexoUi.switchRow(activity, "Accesos rápidos", "Cuadrícula de sitios fijados y frecuentes", cfg.showQuickAccess) {
+        togglesCard.addView(NexoUi.switchRow(activity, "Inicio minimalista", "Oculta favoritos y lecturas", BrowserPrefs.minimalStart(activity)) {
+            BrowserPrefs.setMinimalStart(activity, it)
+            render(renderedPrivate)
+        })
+        togglesCard.addView(NexoUi.divider(activity, 0f))
+        togglesCard.addView(NexoUi.switchRow(activity, "Sitios fijados", null, cfg.showQuickAccess) {
             update(cfg.copy(showQuickAccess = it))
         })
         togglesCard.addView(NexoUi.divider(activity, 0f))
-        togglesCard.addView(NexoUi.switchRow(activity, "Favoritos", "Acceso directo a tus sitios guardados", cfg.showBookmarks) {
+        togglesCard.addView(NexoUi.switchRow(activity, "Favoritos", null, cfg.showBookmarks) {
             update(cfg.copy(showBookmarks = it))
         })
         togglesCard.addView(NexoUi.divider(activity, 0f))
-        togglesCard.addView(NexoUi.switchRow(activity, "Espacios de trabajo", "Colecciones de pestañas y grupos con carga perezosa", cfg.showWorkspaces) {
+        togglesCard.addView(NexoUi.switchRow(activity, "Espacios", null, cfg.showWorkspaces) {
             update(cfg.copy(showWorkspaces = it))
         })
         togglesCard.addView(NexoUi.divider(activity, 0f))
-        togglesCard.addView(NexoUi.switchRow(activity, "Grupos activos", "Acceso directo a los grupos de pestañas abiertos", cfg.showRecentGroups) {
+        togglesCard.addView(NexoUi.switchRow(activity, "Grupos de pestañas", null, cfg.showRecentGroups) {
             update(cfg.copy(showRecentGroups = it))
         })
         togglesCard.addView(NexoUi.divider(activity, 0f))
-        togglesCard.addView(NexoUi.switchRow(activity, "Lectura sin conexión", "Artículos guardados con Nexo Reader", cfg.showOfflineReader) {
+        togglesCard.addView(NexoUi.switchRow(activity, "Lectura sin conexión", null, cfg.showOfflineReader) {
             update(cfg.copy(showOfflineReader = it))
         })
         togglesCard.addView(NexoUi.divider(activity, 0f))
-        togglesCard.addView(NexoUi.switchRow(activity, "Resumen de PhantomShield", "Franja inferior discreta con estado de protección", cfg.showPrivacyCard) {
+        togglesCard.addView(NexoUi.switchRow(activity, "Contador de PhantomShield", null, cfg.showPrivacyCard) {
             update(cfg.copy(showPrivacyCard = it))
         })
         body.addView(togglesCard)
 
         var sheet: android.app.Dialog? = null
-        body.addView(NexoUi.button(activity, "Elegir accesos rápidos visibles") {
+        body.addView(NexoUi.button(activity, "Elegir sitios fijados") {
             sheet?.dismiss()
             editLinks()
         }, NexoUi.buttonParams(activity, 14f))
@@ -722,26 +561,26 @@ class StartPageView(
             activity,
             NexoSheets.column(
                 activity,
-                NexoSheets.header(activity, "Personalizar inicio", "Organiza los bloques visibles de tu página principal"),
+                NexoSheets.header(activity, "Personalizar inicio"),
                 body
             )
         )
     }
 
+    /** Squircle tonal de 52×52 (r:20) sin borde: favicon real, monograma de respaldo o "+". */
     private fun tile(link: Link): View {
         val p = ThemeManager.palette(activity)
         val host = BrowserPagePresentation.shortcut(link.url)?.identity.orEmpty()
-        val wellBg = if (link.kind == "add") p.surfaceContainerHigh else elevatedSurface(p)
-        val wellStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         return LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(2f), dp(4f), dp(2f), dp(12f))
-            background = ThemeManager.ripple(activity, null, 18f)
+            setPadding(dp(2f), dp(6f), dp(2f), dp(10f))
+            background = ThemeManager.ripple(activity, null, NexoUi.Tokens.RADIUS_PINNED)
             isClickable = true
             isFocusable = true
-            contentDescription = link.label
+            contentDescription = if (link.kind == "add") "Añadir sitio fijado" else link.label
             setOnClickListener {
+                NexoMotion.pulse(getChildAt(0), 0.92f)
                 when (link.kind) {
                     "shield" -> onShield()
                     "extensions" -> onExtensions()
@@ -752,45 +591,33 @@ class StartPageView(
             }
             if (link.kind == "web") setOnLongClickListener { tileOptions(link); true }
             val square = FrameLayout(activity).apply {
-                background = ThemeManager.rounded(activity, wellBg, 17f, wellStroke)
+                background = ThemeManager.rounded(activity, p.surface, NexoUi.Tokens.RADIUS_PINNED)
+                NexoGlass.paperShadow(this, p)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
             val iconRes = when {
-                link.kind == "shield" -> R.drawable.ic_quick_shield
-                link.kind == "extensions" -> R.drawable.ic_extension_placeholder
-                link.kind == "downloads" -> R.drawable.ic_menu_download
-                link.kind == "history" -> R.drawable.ic_menu_history
-                link.kind == "burner" -> R.drawable.ic_menu_burner
                 link.kind == "add" -> R.drawable.ic_nav_add
                 host.startsWith("youtube.com:") -> R.drawable.ic_quick_youtube
                 host.startsWith("google.com:") -> R.drawable.ic_quick_google
                 host.startsWith("github.com:") -> R.drawable.ic_quick_github
                 else -> null
             }
-            val tint = when (link.kind) {
-                "extensions" -> p.info.color
-                "downloads" -> p.accent
-                "history" -> p.tertiary.color
-                "burner" -> p.warning.color
-                "add" -> p.muted
-                else -> null
-            }
             if (iconRes != null) {
                 square.addView(ImageView(activity).apply {
                     setImageResource(iconRes)
-                    if (tint != null) imageTintList = ColorStateList.valueOf(tint)
-                }, FrameLayout.LayoutParams(dp(24f), dp(24f), Gravity.CENTER))
+                    when {
+                        link.kind == "add" -> imageTintList = ColorStateList.valueOf(p.muted)
+                        host.startsWith("github.com:") -> imageTintList = ColorStateList.valueOf(p.text)
+                    }
+                }, FrameLayout.LayoutParams(dp(22f), dp(22f), Gravity.CENTER))
             } else {
                 val siteHost = runCatching { android.net.Uri.parse(link.url).host }.getOrNull().orEmpty()
-                val letterBg = SiteIconStore.letterColor(siteHost.ifBlank { link.label })
                 square.addView(text(
                     if (host.contains("wikipedia.org")) "W" else SiteIconStore.letter(siteHost.ifBlank { link.label }),
-                    18f,
-                    UiContrast.foreground(letterBg),
-                    bold = true
+                    18f, p.text, semiBold = true
                 ).apply {
                     gravity = Gravity.CENTER
-                    if (host.contains("wikipedia.org")) typeface = Typeface.create("serif", Typeface.BOLD)
-                    background = ThemeManager.rounded(activity, letterBg, 11f)
+                    if (host.contains("wikipedia.org")) typeface = Typeface.create("serif", Typeface.NORMAL)
                 }, FrameLayout.LayoutParams(dp(32f), dp(32f), Gravity.CENTER))
             }
             if (link.kind == "web" && iconRes == null && !renderedPrivate) {
@@ -800,70 +627,18 @@ class StartPageView(
                     square.addView(ImageView(activity).apply {
                         setImageBitmap(bitmap)
                         scaleType = ImageView.ScaleType.FIT_CENTER
-                    }, FrameLayout.LayoutParams(dp(28f), dp(28f), Gravity.CENTER))
+                    }, FrameLayout.LayoutParams(dp(24f), dp(24f), Gravity.CENTER))
                 }
             }
-            addView(square, params(dp(54f), dp(54f)))
-            addView(text(link.label, 11.5f, if (link.kind == "add") p.muted else p.text, semiBold = false).apply {
-                typeface = NexoUi.medium(activity)
+            addView(square, params(dp(52f), dp(52f)))
+            addView(text(link.label, 12f, p.muted).apply {
+                typeface = NexoUi.regular(activity)
                 gravity = Gravity.CENTER
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(2f), dp(6f), dp(2f), 0)
-            }, params())
-        }
-    }
-
-    private fun privacyStrip(p: BrowserPalette, badge: String?, available: Boolean): View {
-        val statusBg = if (available) p.success.container else p.surfaceContainerHigh
-        val statusFg = if (available) p.success.onContainer else p.muted
-        val statusLabel = when (badge) {
-            "OFF", "PAUSE" -> "PAUSADA"
-            null -> if (available) "ACTIVA" else "PANEL"
-            else -> "ACTIVA"
-        }
-        val subtitle = if (badge != null && badge.matches(Regex("[0-9]{1,3}\\+?"))) {
-            "$badge rastreadores y anuncios bloqueados"
-        } else {
-            "Protección integrada de Nexo"
-        }
-        val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
-        return LinearLayout(activity).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(58f)
-            setPadding(dp(14f), dp(11f), dp(14f), dp(11f))
-            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, cardSurface(p), 18f, stroke), 18f)
-            isClickable = true
-            isFocusable = true
-            contentDescription = "Abrir protección PhantomShield"
-            setOnClickListener { onShield() }
-            addView(ImageView(activity).apply {
-                setImageResource(R.drawable.ic_quick_shield)
-                setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
-                imageTintList = if (available) null else ColorStateList.valueOf(p.muted)
-                background = ThemeManager.rounded(activity, statusBg, 11f)
-            }, params(dp(34f), dp(34f)).apply { marginEnd = dp(12f) })
-            addView(LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(text("PhantomShield", 13f, p.text, semiBold = true))
-                addView(text(subtitle, 11.5f, p.muted).apply {
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(1f), 0, 0)
-                })
-            }, params(0).apply { weight = 1f })
-            addView(text(statusLabel, 9.5f, statusFg, bold = true).apply {
-                typeface = NexoUi.mono(activity)
-                setPadding(dp(7f), dp(3f), dp(7f), dp(3f))
-                background = ThemeManager.rounded(activity, statusBg, 8f)
-            }, params(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6f)
-            })
-            addView(ImageView(activity).apply {
-                setImageResource(R.drawable.ic_nav_chevron)
-                imageTintList = ColorStateList.valueOf(p.muted)
+                setPadding(dp(2f), dp(8f), dp(2f), 0)
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, params(dp(18f), dp(18f)))
+            }, params())
         }
     }
 
@@ -914,7 +689,7 @@ class StartPageView(
             ThemeManager.styleEdit(activity, this)
             setPadding(dp(16f), dp(12f), dp(16f), dp(12f))
         }
-        val dialog = AlertDialog.Builder(activity).setTitle("Añadir acceso rápido").setView(input)
+        val dialog = AlertDialog.Builder(activity).setTitle("Añadir sitio fijado").setView(input)
             .setNegativeButton("Cancelar", null).setPositiveButton("Añadir", null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -984,7 +759,7 @@ class StartPageView(
     private fun editLinks() {
         val links = allLinks().take(20)
         val hidden = prefs.getStringSet("hidden", emptySet()).orEmpty().toMutableSet()
-        AlertDialog.Builder(activity).setTitle("Mostrar accesos rápidos")
+        AlertDialog.Builder(activity).setTitle("Sitios fijados")
             .setMultiChoiceItems(links.map { it.label }.toTypedArray(), links.map { it.id !in hidden }.toBooleanArray()) { _, index, checked ->
                 if (checked) hidden.remove(links[index].id) else hidden.add(links[index].id)
             }.setNegativeButton("Cancelar", null).setPositiveButton("Guardar") { _, _ ->
