@@ -660,7 +660,7 @@ class MainActivity :
             else SheetAction(R.drawable.ic_tab_tools, "Herramientas") { TabTools.show(this) },
             SheetAction(
                 R.drawable.ic_nexo_ai_spark,
-                "Nexo AI ✨",
+                "Nexo AI",
                 active = com.nexo.browser.ai.NexoAiConfig.read(this).enabled,
                 subtitle = "Asistente de página, selección y pestañas"
             ) { com.nexo.browser.ai.NexoAiSheet.show(this) },
@@ -726,8 +726,8 @@ class MainActivity :
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16f), dp(8f), dp(16f), dp(10f))
             addView(TextView(this@MainActivity).apply {
-                text = "EXTENSIONES  ›"; textSize = 11.5f; letterSpacing = 0.07f
-                typeface = android.graphics.Typeface.create(resources.getFont(R.font.inter_variable), android.graphics.Typeface.BOLD)
+                text = "EXTENSIONES  ›"; textSize = 11f; letterSpacing = 0.085f
+                typeface = NexoUi.bold(this@MainActivity)
                 setTextColor(p.accent)
                 minimumHeight = dp(48f); gravity = android.view.Gravity.CENTER_VERTICAL
                 isClickable = true; contentDescription = "Administrar extensiones"
@@ -735,9 +735,11 @@ class MainActivity :
             })
             if (items.isEmpty() && others.isEmpty()) addView(TextView(this@MainActivity).apply {
                 text = "Administrar extensiones"; textSize = 13f; setTextColor(p.muted)
+                typeface = NexoUi.regular(this@MainActivity)
                 minimumHeight = dp(48f); gravity = android.view.Gravity.CENTER_VERTICAL
                 isClickable = true; setOnClickListener { dismiss(); openScreen(ExtensionsActivity::class.java) }
             })
+            val rowStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
             items.forEach { extension ->
                 val isShield = extension.id == ExtensionManager.PHANTOMSHIELD_ID
                 val badge = if (isShield) ExtensionManager.phantomBadge() else null
@@ -745,16 +747,16 @@ class MainActivity :
                     setImageResource(if (isShield) R.drawable.ic_quick_shield else R.drawable.ic_extension_placeholder)
                     if (!isShield) imageTintList = android.content.res.ColorStateList.valueOf(p.accent)
                     setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
-                    background = ThemeManager.rounded(this@MainActivity, if (isShield) p.success.container else p.accentSoft, 12f)
+                    background = ThemeManager.rounded(this@MainActivity, if (isShield) p.success.container else p.primary.container, 12f)
                 }
                 if (!isShield) ExtensionManager.loadIconFor(extension.id, dp(40f)) { bitmap ->
                     if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }
                 }
                 val row = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
-                    minimumHeight = dp(76f); setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
-                    val surface = if (isShield) p.surfaceContainerHigh else p.elevated
-                    background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 16f, p.outlineVariant), 16f)
+                    minimumHeight = dp(72f); setPadding(dp(14f), dp(12f), dp(12f), dp(12f))
+                    val surface = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
+                    background = ThemeManager.ripple(this@MainActivity, ThemeManager.rounded(this@MainActivity, surface, 18f, rowStroke), 18f)
                     isClickable = true; isFocusable = true
                     contentDescription = "Abrir panel de ${extension.name ?: "extensión"}"
                     setOnClickListener {
@@ -764,12 +766,12 @@ class MainActivity :
                             if (!ok) runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
                         }
                     }
-                    addView(icon, LinearLayout.LayoutParams(dp(36f), dp(36f)).apply { marginEnd = dp(12f) })
+                    addView(icon, LinearLayout.LayoutParams(dp(38f), dp(38f)).apply { marginEnd = dp(12f) })
                     addView(LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         addView(TextView(this@MainActivity).apply {
-                            text = extension.name ?: "Extensión"; textSize = 12.5f
-                            typeface = android.graphics.Typeface.create(resources.getFont(R.font.inter_variable), android.graphics.Typeface.BOLD)
+                            text = extension.name ?: "Extensión"; textSize = 14f
+                            typeface = NexoUi.semiBold(this@MainActivity)
                             setTextColor(p.text); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                         })
                         addView(TextView(this@MainActivity).apply {
@@ -780,8 +782,8 @@ class MainActivity :
                                 badge != null -> "$badge bloqueos en esta página"
                                 else -> "Abrir controles y ajustes"
                             }
-                            textSize = 10.5f; setTextColor(p.muted); setPadding(0, dp(4f), 0, 0)
-                            if (badge?.matches(Regex("[0-9]{1,3}\\+?")) == true) typeface = resources.getFont(R.font.jetbrains_mono)
+                            textSize = 12f; setTextColor(p.muted); setPadding(0, dp(2f), 0, 0)
+                            typeface = if (badge?.matches(Regex("[0-9]{1,3}\\+?")) == true) NexoUi.mono(this@MainActivity) else NexoUi.regular(this@MainActivity)
                         })
                     }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
                     if (isShield) addView(android.widget.Switch(this@MainActivity).apply {
@@ -819,11 +821,17 @@ class MainActivity :
         fun dp(value: Float) = (value * d).toInt()
         val name = extension?.name ?: "Añadir"
         val badge = extension?.let { ExtensionManager.badgeFor(it.id) }
+        val tileStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         val icon = ImageView(this).apply {
             setImageResource(if (extension == null) R.drawable.ic_nav_add else R.drawable.ic_extension_placeholder)
-            imageTintList = android.content.res.ColorStateList.valueOf(if (extension == null) p.muted else p.accent)
-            setPadding(dp(9f), dp(9f), dp(9f), dp(9f))
-            background = ThemeManager.rounded(this@MainActivity, if (extension == null) p.elevated else p.accentSoft, 14f, p.outline)
+            imageTintList = android.content.res.ColorStateList.valueOf(if (extension == null) p.muted else p.primary.onContainer)
+            setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
+            background = ThemeManager.rounded(
+                this@MainActivity,
+                if (extension == null) (if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest) else p.primary.container,
+                16f,
+                tileStroke
+            )
         }
         if (extension != null) ExtensionManager.loadIconFor(extension.id, dp(44f)) { bitmap ->
             if (bitmap != null) runOnUiThread { icon.imageTintList = null; icon.setImageBitmap(bitmap) }

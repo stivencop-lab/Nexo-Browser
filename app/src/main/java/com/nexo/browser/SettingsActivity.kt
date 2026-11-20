@@ -256,8 +256,43 @@ class SettingsActivity : Activity() {
         AppUpdater.resumePendingInstallIfAllowed(this)
     }
 
+    private var selectedCategory: String = "all"
+
+    private val settingsCategories = listOf(
+        "all" to "Todo",
+        "appearance" to "Apariencia",
+        "navigation" to "Navegación",
+        "privacy" to "Privacidad",
+        "media" to "Multimedia",
+        "advanced" to "Avanzado"
+    )
+
+    private fun sectionBelongsToCategory(normalizedTitle: String, category: String): Boolean = when (category) {
+        "all" -> true
+        "appearance" -> normalizedTitle.contains("apariencia") || normalizedTitle.contains("busqueda")
+        "navigation" -> normalizedTitle.contains("navegacion") || normalizedTitle.contains("pestanas") || normalizedTitle.contains("traduccion")
+        "privacy" -> normalizedTitle.contains("privacidad") || normalizedTitle.contains("datos")
+        "media" -> normalizedTitle.contains("multimedia") || normalizedTitle.contains("subtitulos")
+        "advanced" -> normalizedTitle.contains("actualizaciones") || normalizedTitle.contains("avanzado")
+        else -> true
+    }
+
+    private fun renderCategoryRail() {
+        val holder = findViewById<ViewGroup>(R.id.settingsCategoryHolder) ?: return
+        holder.removeAllViews()
+        holder.addView(NexoUi.chipRow(this, settingsCategories.map { (id, label) ->
+            NexoUi.chip(this, label, selectedCategory == id) {
+                if (selectedCategory != id) {
+                    selectedCategory = id
+                    renderCategoryRail()
+                    filterSettings(settingsSearchInput.text?.toString()?.trim().orEmpty())
+                }
+            }
+        }, sidePaddingDp = 0f))
+    }
+
     private fun updateDefaultBrowserVisibility() {
-        val filtering = settingsSearchInput.text?.toString()?.trim().orEmpty().isNotEmpty()
+        val filtering = settingsSearchInput.text?.toString()?.trim().orEmpty().isNotEmpty() || selectedCategory != "all"
         findViewById<Button>(R.id.defaultBrowserButton).visibility =
             if (filtering || isDefaultBrowser()) View.GONE else View.VISIBLE
     }
@@ -291,20 +326,28 @@ class SettingsActivity : Activity() {
         updateDefaultBrowserVisibility()
         var currentSection: View? = null
         var currentSectionTitle = ""
+        var sectionAllowed = true
         var sectionHasMatch = false
         for (i in 0 until column.childCount) {
             val child = column.getChildAt(i)
-            if (child.id == R.id.settingsSearchBox || child.id == R.id.defaultBrowserButton || child.id == R.id.aboutText) continue
+            if (child.id == R.id.settingsSearchBox ||
+                child.id == R.id.settingsCategoryHolder ||
+                child.id == R.id.defaultBrowserButton ||
+                child.id == R.id.aboutText
+            ) continue
             if (child is TextView && child.tag == "section") {
-                currentSection?.visibility = if (terms.isEmpty() || sectionHasMatch) View.VISIBLE else View.GONE
+                currentSection?.visibility = if (sectionAllowed && (terms.isEmpty() || sectionHasMatch)) View.VISIBLE else View.GONE
                 currentSection = child
                 currentSectionTitle = normalize(child.text?.toString().orEmpty())
+                sectionAllowed = terms.isNotEmpty() || sectionBelongsToCategory(currentSectionTitle, selectedCategory)
                 sectionHasMatch = false
-                if (terms.isEmpty()) child.visibility = View.VISIBLE
+                if (terms.isEmpty()) child.visibility = if (sectionAllowed) View.VISIBLE else View.GONE
                 continue
             }
             if (child.tag == "card") {
-                if (terms.isEmpty()) {
+                if (!sectionAllowed) {
+                    child.visibility = View.GONE
+                } else if (terms.isEmpty()) {
                     child.visibility = View.VISIBLE
                     sectionHasMatch = true
                 } else {
@@ -315,7 +358,7 @@ class SettingsActivity : Activity() {
                 }
             }
         }
-        currentSection?.visibility = if (terms.isEmpty() || sectionHasMatch) View.VISIBLE else View.GONE
+        currentSection?.visibility = if (sectionAllowed && (terms.isEmpty() || sectionHasMatch)) View.VISIBLE else View.GONE
     }
 
     private fun collectText(view: View): String {
@@ -652,10 +695,21 @@ class SettingsActivity : Activity() {
         ).forEach {
             ThemeManager.styleSwitch(this, it)
         }
-        ThemeManager.styleEdit(this, settingsSearchInput)
+        val searchBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
+        val searchStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
+        settingsSearchInput.setTextColor(p.text)
+        settingsSearchInput.setHintTextColor(p.muted)
+        settingsSearchInput.typeface = NexoUi.regular(this)
+        settingsSearchInput.background = ThemeManager.rounded(this, searchBg, 24f, searchStroke)
+        settingsSearchInput.compoundDrawablesRelative.firstOrNull()?.mutate()?.setTint(p.muted)
         ThemeManager.styleIconButton(this, settingsSearchClear)
+        renderCategoryRail()
         ThemeManager.styleEdit(this, dnsCustomInput)
-        ThemeManager.styleText(this, findViewById(R.id.settingsTitle))
+        findViewById<TextView>(R.id.settingsTitle).apply {
+            ThemeManager.styleText(this@SettingsActivity, this)
+            typeface = NexoUi.bold(this@SettingsActivity)
+            letterSpacing = -0.015f
+        }
         ThemeManager.styleButton(this, findViewById(R.id.saveSettingsButton), primary = true)
         ThemeManager.styleButton(this, findViewById(R.id.clearDataButton), danger = true)
         ThemeManager.styleButton(this, findViewById(R.id.defaultBrowserButton))
