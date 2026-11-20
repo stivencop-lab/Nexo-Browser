@@ -6,7 +6,7 @@ import org.junit.Test
 
 class UiContrastTest {
     @Test fun accentLabelsMeetNormalTextContrast() {
-        listOf(0x3D6BF2, 0x06B6D4, 0x22C55E, 0xF97316, 0xEC4899, 0xEF4444, 0x7C3AED).forEach { rgb ->
+        listOf(0x2563EB, 0x3B82F6, 0xF97316, 0x16A34A, 0x111113, 0xF4F4F5).forEach { rgb ->
             val background = rgb or 0xFF000000.toInt()
             val a = UiContrast.luminance(background)
             val b = UiContrast.luminance(UiContrast.foreground(background))
@@ -20,7 +20,7 @@ class UiContrastTest {
         assertEquals(0xFF000000.toInt(), UiContrast.foreground(0xFFFFFFFF.toInt()))
     }
 
-    @Test fun cobaltButtonsUseWhiteLabels() {
-        assertEquals(0xFFFFFFFF.toInt(), UiContrast.foreground(0xFF3D6BF2.toInt()))
+    @Test fun signalBlueButtonsUseWhiteLabels() {
+        assertEquals(0xFFFFFFFF.toInt(), UiContrast.foreground(0xFF2563EB.toInt()))
     }
 }

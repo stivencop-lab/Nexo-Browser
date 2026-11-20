@@ -24,6 +24,7 @@ import com.nexo.browser.extensions.hub.ExtensionStoreResolver
 import com.nexo.browser.extensions.hub.ExtensionUpdateManager
 import com.nexo.browser.extensions.nxr.NxrPackageInstaller
 import com.nexo.browser.extensions.nxr.NxrRuntime
+import com.nexo.browser.extensions.nxr.NxrExtensionPanel
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
@@ -58,6 +59,8 @@ class ExtensionsActivity : Activity() {
     private lateinit var queryInput: EditText
     private lateinit var filterBar: LinearLayout
     private lateinit var metricsRow: LinearLayout
+    private var toolsScroll: View? = null
+    private var filterScroll: View? = null
     private var activeFilter = Filter.ALL
     private var displayedIds: List<String?> = emptyList()
     private val availableUpdates = ConcurrentHashMap<String, ExtensionUpdateManager.UpdateCheckResult>()
@@ -69,19 +72,21 @@ class ExtensionsActivity : Activity() {
         NxrRuntime.initialize(this)
 
         findViewById<TextView>(R.id.listTitle).apply {
-            text = "Extension Hub"
-            typeface = NexoUi.bold(this@ExtensionsActivity)
-            letterSpacing = -0.015f
+            text = "Extensiones"
+            typeface = NexoUi.semiBold(this@ExtensionsActivity)
+            letterSpacing = -0.025f
         }
         findViewById<Button>(R.id.listAction).apply {
-            text = "Archivo local"
+            text = "Archivo .crx"
             setOnClickListener { pickPackage() }
         }
         findViewById<TextView>(R.id.listEmpty).visibility = View.GONE
         listView = findViewById(R.id.listView)
         listView.setOnItemClickListener { _, _, position, _ ->
             val extId = displayedIds.getOrNull(position) ?: return@setOnItemClickListener
-            if (extId == ExtensionManager.PHANTOMSHIELD_ID) {
+            if (extId == MATRIX_ROW) {
+                ExtensionHubSheets.showCompatibilityMatrixSheet(this)
+            } else if (extId == ExtensionManager.PHANTOMSHIELD_ID) {
                 PhantomShieldPanel.show(this)
             } else {
                 val installed = NxrRuntime.installed(this).firstOrNull { it.id == extId }
@@ -98,6 +103,7 @@ class ExtensionsActivity : Activity() {
         findViewById<View>(R.id.listRoot).setBackgroundColor(p.background)
         ThemeManager.styleText(this, findViewById(R.id.listTitle))
         ThemeManager.styleButton(this, findViewById(R.id.listAction))
+        findViewById<Button>(R.id.listAction).textSize = 13.5f
         ThemeManager.styleBackButton(this, findViewById(R.id.backButton))
         refreshList()
     }
@@ -123,14 +129,13 @@ class ExtensionsActivity : Activity() {
         }
 
         // Buscador universal tipo píldora (tiendas / URL / ID de 32 letras)
-        val searchBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
-        val searchStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
+        val searchBg = p.surface
         val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         queryInput = EditText(this).apply {
-            hint = "Buscar, pegar URL de tienda o ID…"
+            hint = "Pegar URL de tienda o ID…"
             setSingleLine(true)
             textSize = 14f
             typeface = NexoUi.regular(this@ExtensionsActivity)
@@ -139,7 +144,7 @@ class ExtensionsActivity : Activity() {
             minHeight = dp(48f)
             imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_EXTRACT_UI
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            background = ThemeManager.rounded(this@ExtensionsActivity, searchBg, 24f, searchStroke)
+            background = ThemeManager.rounded(this@ExtensionsActivity, searchBg, NexoUi.Tokens.RADIUS_PILL)
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
             compoundDrawablesRelative.firstOrNull()?.mutate()?.setTint(p.muted)
             compoundDrawablePadding = dp(10f)
@@ -156,15 +161,19 @@ class ExtensionsActivity : Activity() {
             text = "Ir"
             isAllCaps = false
             textSize = 14f
-            minWidth = dp(56f)
+            minWidth = dp(48f)
             minHeight = dp(48f)
             ThemeManager.styleButton(this@ExtensionsActivity, this, primary = true)
+            setPadding(dp(16f), 0, dp(16f), 0)
             setOnClickListener { handleHubInput() }
         }
-        searchRow.addView(queryInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginEnd = dp(8f)
-        })
-        searchRow.addView(goBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // Campo y botón «Ir» comparten una sola píldora (sin caja dentro de caja).
+        searchRow.background = ThemeManager.rounded(this, searchBg, NexoUi.Tokens.RADIUS_PILL)
+        NexoGlass.paperShadow(searchRow, p)
+        searchRow.setPadding(0, 0, dp(4f), 0)
+        queryInput.background = null
+        searchRow.addView(queryInput, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        searchRow.addView(goBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40f)))
         header.addView(searchRow)
 
         // Tarjetas de tiendas oficiales lado a lado (Chrome Web Store + Edge Add-ons)
@@ -172,18 +181,18 @@ class ExtensionsActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(10f), 0, dp(8f))
         }
-        storesRow.addView(storeSourceCard("Chrome Store", "Modo escritorio auto · .crx", p.primary.container, p.primary.onContainer) {
+        storesRow.addView(storeSourceCard("Chrome Web Store", "Catálogo oficial", p.text, p.text) {
             openInBrowser(ExtensionStoreResolver.CWS_HOME_URL)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
-        storesRow.addView(storeSourceCard("Edge Add-ons", "Modo escritorio auto · Edge", p.info.container, p.info.onContainer) {
+        storesRow.addView(storeSourceCard("Edge Add-ons", "Extensiones PC", p.text, p.text) {
             openInBrowser(ExtensionStoreResolver.EDGE_HOME_URL)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(storesRow)
 
-        // Métricas compactas de estado
+        // Franja compacta de estado (solo con extensiones instaladas; nunca cajas 0/0/0).
         metricsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(6f))
+            setPadding(dp(4f), 0, 0, dp(4f))
         }
         header.addView(metricsRow)
 
@@ -203,6 +212,7 @@ class ExtensionsActivity : Activity() {
         }, chipMargin())
         toolsScroll.addView(toolsRow)
         header.addView(toolsScroll)
+        this.toolsScroll = toolsScroll
 
         // Filtros de lista
         val filterScroll = HorizontalScrollView(this).apply {
@@ -214,27 +224,27 @@ class ExtensionsActivity : Activity() {
         }
         filterScroll.addView(filterBar)
         header.addView(filterScroll)
+        this.filterScroll = filterScroll
 
         root.addView(header, 1)
         renderFilterChips()
     }
 
+    /** Tarjeta de descubrimiento: icono desnudo, nombre y una línea; r:22 sin borde. */
     private fun storeSourceCard(
         title: String,
         subtitle: String,
-        badgeBg: Int,
+        @Suppress("UNUSED_PARAMETER") badgeBg: Int,
         badgeFg: Int,
         onClick: () -> Unit
     ): LinearLayout {
         val p = ThemeManager.palette(this)
-        val surface = if (p.isDark) p.surfaceContainer else p.surfaceContainerLowest
-        val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(60f)
-            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
-            background = ThemeManager.ripple(this@ExtensionsActivity, ThemeManager.rounded(this@ExtensionsActivity, surface, 18f, stroke), 18f)
+            orientation = LinearLayout.VERTICAL
+            minimumHeight = dp(104f)
+            setPadding(dp(16f), dp(16f), dp(12f), dp(14f))
+            background = ThemeManager.ripple(this@ExtensionsActivity, ThemeManager.rounded(this@ExtensionsActivity, p.surface, NexoUi.Tokens.RADIUS_CARD), NexoUi.Tokens.RADIUS_CARD)
+            NexoGlass.paperShadow(this, p)
             isClickable = true
             isFocusable = true
             contentDescription = "Abrir $title"
@@ -242,30 +252,26 @@ class ExtensionsActivity : Activity() {
             addView(android.widget.ImageView(this@ExtensionsActivity).apply {
                 setImageResource(R.drawable.ic_menu_store)
                 imageTintList = android.content.res.ColorStateList.valueOf(badgeFg)
-                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
-                background = ThemeManager.rounded(this@ExtensionsActivity, badgeBg, 12f)
-            }, LinearLayout.LayoutParams(dp(36f), dp(36f)).apply { marginEnd = dp(10f) })
-            addView(LinearLayout(this@ExtensionsActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(this@ExtensionsActivity).apply {
-                    text = title
-                    textSize = 13.5f
-                    typeface = NexoUi.semiBold(this@ExtensionsActivity)
-                    setTextColor(p.text)
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-                addView(TextView(this@ExtensionsActivity).apply {
-                    text = subtitle
-                    textSize = 11.5f
-                    typeface = NexoUi.regular(this@ExtensionsActivity)
-                    setTextColor(p.muted)
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }, LinearLayout.LayoutParams(dp(20f), dp(20f)).apply { bottomMargin = dp(14f) })
+            addView(TextView(this@ExtensionsActivity).apply {
+                text = title
+                textSize = 15f
+                typeface = NexoUi.semiBold(this@ExtensionsActivity)
+                letterSpacing = -0.015f
+                setTextColor(p.text)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            addView(TextView(this@ExtensionsActivity).apply {
+                text = subtitle
+                textSize = 12.5f
+                typeface = NexoUi.regular(this@ExtensionsActivity)
+                setTextColor(p.muted)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(0, dp(2f), 0, 0)
+            })
         }
     }
 
@@ -402,7 +408,11 @@ class ExtensionsActivity : Activity() {
         val statusTone: NexoUi.Tone,
         val toggleable: Boolean = false,
         val enabled: Boolean = false,
-        val hasPopup: Boolean = false
+        val hasPopup: Boolean = false,
+        val builtIn: Boolean = false,
+        val icon: Int = 0,
+        val popupPage: String? = null,
+        val optionsPage: String? = null
     )
 
     private val iconCache = HashMap<String, android.graphics.Bitmap?>()
@@ -422,37 +432,70 @@ class ExtensionsActivity : Activity() {
         val runningCount = installed.count { NxrRuntime.lifecycleState(it.id, this) == ExtensionCompatibility.LifecycleState.RUNNING }
         val updatesCount = availableUpdates.size
 
+        // Con 0 CRX se ocultan métricas, filtros y herramientas vacías: prioridad al descubrimiento.
+        val hasInstalled = installed.isNotEmpty()
         metricsRow.removeAllViews()
-        metricsRow.addView(NexoUi.metricTile(this, "${installed.size}", "Instaladas", NexoUi.Tone.NEUTRAL),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
-        metricsRow.addView(NexoUi.metricTile(this, "$runningCount", "Activas", if (runningCount > 0) NexoUi.Tone.SUCCESS else NexoUi.Tone.NEUTRAL),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
-        metricsRow.addView(NexoUi.metricTile(this, "$updatesCount", "Actualizaciones", if (updatesCount > 0) NexoUi.Tone.INFO else NexoUi.Tone.NEUTRAL),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        metricsRow.visibility = if (hasInstalled) View.VISIBLE else View.GONE
+        toolsScroll?.visibility = if (hasInstalled) View.VISIBLE else View.GONE
+        filterScroll?.visibility = if (hasInstalled) View.VISIBLE else View.GONE
+        if (!hasInstalled) activeFilter = Filter.ALL
+        if (hasInstalled) {
+            val pal = ThemeManager.palette(this)
+            metricsRow.addView(TextView(this).apply {
+                text = buildList {
+                    add("${installed.size} instaladas")
+                    add("$runningCount activas")
+                    if (updatesCount > 0) add("$updatesCount actualizaciones")
+                }.joinToString(" · ")
+                textSize = 12.5f
+                typeface = NexoUi.mono(this@ExtensionsActivity)
+                fontFeatureSettings = "tnum"
+                setTextColor(pal.muted)
+                minHeight = dp(32f)
+                gravity = Gravity.CENTER_VERTICAL
+            })
+        }
 
         if (activeFilter == Filter.ALL) {
             val shieldOn = com.nexo.browser.shield.PhantomShield.isEnabled()
             items += HubItem(
                 id = ExtensionManager.PHANTOMSHIELD_ID,
                 title = "PhantomShield",
-                subtitle = "Bloqueo nativo de anuncios y rastreadores integrado en Chromium",
-                meta = if (shieldOn) "Integrada · toca para abrir el panel" else "Desactivado desde el menú",
+                subtitle = "Bloqueo nativo en Chromium",
+                meta = "",
                 badge = "PS",
                 status = if (shieldOn) "Activa" else "Pausada",
-                statusTone = if (shieldOn) NexoUi.Tone.SUCCESS else NexoUi.Tone.NEUTRAL
+                statusTone = if (shieldOn) NexoUi.Tone.SUCCESS else NexoUi.Tone.NEUTRAL,
+                builtIn = true,
+                icon = R.drawable.ic_menu_shield
             )
             ids += ExtensionManager.PHANTOMSHIELD_ID
 
             items += HubItem(
                 id = null,
-                title = "Puente de Nexo",
-                subtitle = "Media Engine, Dark Engine, Reader y Subtítulos en vivo",
-                meta = "Integrado en Cefrium 0.21.0",
+                title = "Puente Nexo",
+                subtitle = "Dark Engine, Reader y firmas CRX3",
+                meta = "",
                 badge = "NX",
-                status = "Integrado",
-                statusTone = NexoUi.Tone.SUCCESS
+                status = "Nativo",
+                statusTone = NexoUi.Tone.NEUTRAL,
+                builtIn = true,
+                icon = R.drawable.ic_extension_placeholder
             )
             ids += null
+
+            items += HubItem(
+                id = MATRIX_ROW,
+                title = "Compatibilidad",
+                subtitle = "Matriz de 20 APIs sobre Cefrium",
+                meta = "",
+                badge = "API",
+                status = "",
+                statusTone = NexoUi.Tone.NEUTRAL,
+                builtIn = true,
+                icon = R.drawable.ic_ai_benchmark
+            )
+            ids += MATRIX_ROW
         }
 
         val filtered = installed.filter { ext ->
@@ -468,22 +511,18 @@ class ExtensionsActivity : Activity() {
             }
         }
 
-        if (filtered.isEmpty()) {
+        if (filtered.isEmpty() && hasInstalled) {
             items += HubItem(
                 id = null,
-                title = if (installed.isEmpty()) "Nexo Extension Hub listo" else "Sin extensiones en «${activeFilter.label}»",
-                subtitle = if (installed.isEmpty()) {
-                    "Abre Chrome Store o Edge Add-ons arriba (modo escritorio automático), pega una URL/ID o elige un .crx/.zip/.xpi."
-                } else {
-                    "Cambia el filtro superior o instala nuevas extensiones desde las tiendas compatibles."
-                },
-                meta = "NXR verifica firmas CRX · extracción en streaming · sin tope de 10 MB",
+                title = "Sin extensiones en «${activeFilter.label}»",
+                subtitle = "Cambia el filtro o instala desde las tiendas.",
+                meta = "",
                 badge = "HUB",
                 status = "Listo",
                 statusTone = NexoUi.Tone.ACCENT
             )
             ids += null
-        } else {
+        } else if (filtered.isNotEmpty()) {
             val rootDir = NxrRuntime.rootDirectory(this)
             for (ext in filtered) {
                 val state = NxrRuntime.lifecycleState(ext.id, this)
@@ -521,7 +560,9 @@ class ExtensionsActivity : Activity() {
                     statusTone = statusTone,
                     toggleable = true,
                     enabled = policy.enabled,
-                    hasPopup = !manifest?.action?.popup.isNullOrBlank()
+                    hasPopup = !manifest?.action?.popup.isNullOrBlank(),
+                    popupPage = manifest?.action?.popup,
+                    optionsPage = manifest?.optionsPage
                 )
                 ids += ext.id
             }
@@ -535,109 +576,155 @@ class ExtensionsActivity : Activity() {
 
     private fun buildHubAdapter(items: List<HubItem>): android.widget.BaseAdapter {
         val p = ThemeManager.palette(this)
-        val surface = if (p.isDark) p.surfaceContainer else p.surfaceContainerLowest
-        val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         return object : android.widget.BaseAdapter() {
             override fun getCount(): Int = items.size
             override fun getItem(position: Int): HubItem = items[position]
             override fun getItemId(position: Int): Long = position.toLong()
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val item = items[position]
+                val first = position == 0 || items[position - 1].builtIn != item.builtIn
+                val last = position == items.lastIndex || items[position + 1].builtIn != item.builtIn
                 val wrapper = LinearLayout(this@ExtensionsActivity).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(dp(16f), dp(4f), dp(16f), dp(4f))
+                    setPadding(dp(16f), 0, dp(16f), if (item.builtIn && !last) 0 else dp(10f))
                 }
+                if (item.builtIn && first) wrapper.addView(NexoUi.section(this@ExtensionsActivity, "Integrados"))
+                // Integrados: una lista agrupada con divisores inset; instaladas: tarjetas r:22.
+                val r = NexoUi.Tokens.RADIUS_CARD * resources.displayMetrics.density
+                val radii = if (item.builtIn) floatArrayOf(
+                    if (first) r else 0f, if (first) r else 0f, if (first) r else 0f, if (first) r else 0f,
+                    if (last) r else 0f, if (last) r else 0f, if (last) r else 0f, if (last) r else 0f
+                ) else FloatArray(8) { r }
+                val shape = android.graphics.drawable.GradientDrawable().apply { setColor(p.surface); cornerRadii = radii }
+                val mask = android.graphics.drawable.GradientDrawable().apply { setColor(android.graphics.Color.WHITE); cornerRadii = radii }
                 val card = LinearLayout(this@ExtensionsActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(14f), dp(12f), dp(14f), dp(12f))
-                    background = ThemeManager.ripple(
-                        this@ExtensionsActivity,
-                        ThemeManager.rounded(this@ExtensionsActivity, surface, NexoUi.Tokens.RADIUS_CARD, stroke),
-                        NexoUi.Tokens.RADIUS_CARD
-                    )
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(16f), dp(12f), dp(14f), dp(12f))
+                    background = android.graphics.drawable.RippleDrawable(
+                        android.content.res.ColorStateList.valueOf(androidx.core.graphics.ColorUtils.setAlphaComponent(p.text, 28)), shape, mask)
+                    minimumHeight = dp(64f)
                 }
+                val row = LinearLayout(this@ExtensionsActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
 
-                // Icono real de la extensión (o monograma elegante de respaldo)
                 val iconBitmap = item.id?.takeIf { item.toggleable }?.let { cachedIcon(it) }
-                if (iconBitmap != null) {
-                    card.addView(android.widget.ImageView(this@ExtensionsActivity).apply {
+                when {
+                    item.builtIn -> row.addView(android.widget.ImageView(this@ExtensionsActivity).apply {
+                        setImageResource(item.icon)
+                        imageTintList = android.content.res.ColorStateList.valueOf(
+                            if (item.statusTone == NexoUi.Tone.SUCCESS) p.success.color else p.muted)
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }, LinearLayout.LayoutParams(dp(20f), dp(20f)).apply { marginEnd = dp(16f) })
+                    iconBitmap != null -> row.addView(android.widget.ImageView(this@ExtensionsActivity).apply {
                         setImageBitmap(iconBitmap)
                         scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                        background = ThemeManager.rounded(this@ExtensionsActivity, p.surfaceContainerHigh, 12f)
+                        background = ThemeManager.rounded(this@ExtensionsActivity, p.surfaceContainerHigh, 10f)
                         clipToOutline = true
                         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    }, LinearLayout.LayoutParams(dp(42f), dp(42f)).apply { marginEnd = dp(12f) })
-                } else {
-                    card.addView(TextView(this@ExtensionsActivity).apply {
-                        text = item.badge
-                        textSize = 13f
-                        typeface = NexoUi.bold(this@ExtensionsActivity)
+                    }, LinearLayout.LayoutParams(dp(36f), dp(36f)).apply { marginEnd = dp(14f) })
+                    item.toggleable -> row.addView(TextView(this@ExtensionsActivity).apply {
+                        text = item.badge.take(1)
+                        textSize = 14f
+                        typeface = NexoUi.medium(this@ExtensionsActivity)
                         gravity = Gravity.CENTER
-                        setTextColor(p.primary.onContainer)
-                        background = ThemeManager.rounded(this@ExtensionsActivity, p.primary.container, 12f)
+                        setTextColor(p.text)
+                        background = ThemeManager.rounded(this@ExtensionsActivity, p.surfaceContainerHighest, NexoUi.Tokens.RADIUS_PILL)
                         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                    }, LinearLayout.LayoutParams(dp(42f), dp(42f)).apply { marginEnd = dp(12f) })
+                    }, LinearLayout.LayoutParams(dp(36f), dp(36f)).apply { marginEnd = dp(14f) })
                 }
 
-                val textCol = LinearLayout(this@ExtensionsActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                }
-                val titleRow = LinearLayout(this@ExtensionsActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                }
-                titleRow.addView(TextView(this@ExtensionsActivity).apply {
+                val textCol = LinearLayout(this@ExtensionsActivity).apply { orientation = LinearLayout.VERTICAL }
+                textCol.addView(TextView(this@ExtensionsActivity).apply {
                     text = item.title
-                    textSize = 14.5f
-                    typeface = NexoUi.semiBold(this@ExtensionsActivity)
+                    textSize = 15f
+                    typeface = NexoUi.medium(this@ExtensionsActivity)
                     setTextColor(p.text)
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6f) })
-                titleRow.addView(NexoUi.statusPill(this@ExtensionsActivity, item.status, item.statusTone))
-                textCol.addView(titleRow)
-
-                textCol.addView(TextView(this@ExtensionsActivity).apply {
-                    text = item.subtitle
-                    textSize = 12.5f
-                    typeface = NexoUi.regular(this@ExtensionsActivity)
-                    setTextColor(p.muted)
-                    maxLines = 2
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    setPadding(0, dp(3f), 0, 0)
                 })
-                textCol.addView(TextView(this@ExtensionsActivity).apply {
-                    text = item.meta
-                    textSize = 11f
+                if (item.subtitle.isNotBlank()) textCol.addView(TextView(this@ExtensionsActivity).apply {
+                    text = item.subtitle
+                    textSize = 13f
                     typeface = NexoUi.regular(this@ExtensionsActivity)
                     setTextColor(p.muted)
-                    alpha = 0.85f
+                    maxLines = if (item.builtIn) 1 else 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, dp(2f), 0, 0)
+                })
+                if (item.meta.isNotBlank()) textCol.addView(TextView(this@ExtensionsActivity).apply {
+                    text = item.meta
+                    textSize = 11.5f
+                    typeface = NexoUi.mono(this@ExtensionsActivity)
+                    fontFeatureSettings = "tnum"
+                    setTextColor(p.muted)
                     maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     setPadding(0, dp(4f), 0, 0)
                 })
-
-                card.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
                 if (item.toggleable && item.id != null) {
-                    val sw = android.widget.Switch(this@ExtensionsActivity).apply {
+                    row.addView(android.widget.Switch(this@ExtensionsActivity).apply {
                         isChecked = item.enabled
                         isFocusable = false
                         isFocusableInTouchMode = false
+                        minHeight = dp(48f)
                         contentDescription = "Activar o desactivar ${item.title}"
+                        ThemeManager.styleSwitch(this@ExtensionsActivity, this)
                         setOnCheckedChangeListener { _, checked ->
                             NxrRuntime.setEnabled(this@ExtensionsActivity, item.id, checked)
                             if (checked) NxrRuntime.injectActiveTabIfMatching(item.id)
                             refreshList()
                         }
-                    }
-                    card.addView(sw, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                         marginStart = dp(8f)
                     })
+                } else if (item.status.isNotBlank()) {
+                    row.addView(TextView(this@ExtensionsActivity).apply {
+                        text = item.status
+                        textSize = 13f
+                        typeface = NexoUi.medium(this@ExtensionsActivity)
+                        setTextColor(if (item.statusTone == NexoUi.Tone.SUCCESS) p.success.color else p.muted)
+                    })
+                }
+                card.addView(row)
+
+                // Popup / Opciones como acciones fantasma (solo si la extensión las declara).
+                if (item.id != null && item.toggleable && (item.popupPage != null || item.optionsPage != null)) {
+                    val actions = LinearLayout(this@ExtensionsActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(dp(50f), dp(4f), 0, 0)
+                    }
+                    fun ghost(label: String, page: String) = TextView(this@ExtensionsActivity).apply {
+                        text = label
+                        textSize = 13f
+                        typeface = NexoUi.medium(this@ExtensionsActivity)
+                        setTextColor(p.text)
+                        gravity = Gravity.CENTER
+                        minHeight = dp(48f)
+                        setPadding(dp(14f), 0, dp(14f), 0)
+                        background = ThemeManager.ripple(this@ExtensionsActivity, android.graphics.drawable.InsetDrawable(
+                            ThemeManager.rounded(this@ExtensionsActivity, p.surfaceContainerHigh, NexoUi.Tokens.RADIUS_PILL), 0, dp(8f), 0, dp(8f)), NexoUi.Tokens.RADIUS_PILL)
+                        setOnClickListener {
+                            if (!NxrExtensionPanel.show(this@ExtensionsActivity, item.id, item.title, page)) {
+                                Toastish.show(this@ExtensionsActivity, "No se pudo abrir $label de ${item.title}.")
+                            }
+                        }
+                    }
+                    item.popupPage?.let { actions.addView(ghost("Popup", it)) }
+                    item.optionsPage?.let { actions.addView(ghost("Opciones", it), LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8f) }) }
+                    card.addView(actions)
                 }
 
                 wrapper.addView(card)
+                if (item.builtIn && !last) wrapper.addView(View(this@ExtensionsActivity).apply {
+                    setBackgroundColor(p.surface)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(0.6f).coerceAtLeast(1)).apply { })
+                if (item.builtIn && !last) (wrapper.getChildAt(wrapper.childCount - 1)).background =
+                    android.graphics.drawable.LayerDrawable(arrayOf(
+                        android.graphics.drawable.ColorDrawable(p.surface),
+                        android.graphics.drawable.InsetDrawable(android.graphics.drawable.ColorDrawable(ThemeManager.hairline(p)), dp(52f), 0, 0, 0)
+                    ))
                 return wrapper
             }
         }
@@ -715,6 +802,7 @@ class ExtensionsActivity : Activity() {
     }
 
     private companion object {
+        private const val MATRIX_ROW = "__nexo_api_matrix__"
         const val REQUEST_PACKAGE = 4101
         const val MAX_PACKAGE_BYTES = ExtensionStoreClient.MAX_DOWNLOAD_BYTES
     }

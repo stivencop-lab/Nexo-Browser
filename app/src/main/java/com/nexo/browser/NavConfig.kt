@@ -127,7 +127,7 @@ object NavConfig {
         Action.NEW_TAB -> R.drawable.ic_nav_add
         Action.HISTORY -> R.drawable.ic_menu_history
         Action.DOWNLOADS -> R.drawable.ic_menu_download
-        Action.AI -> R.drawable.ic_menu_ai
+        Action.AI -> R.drawable.ic_nexo_aperture
         Action.SHIELD -> R.drawable.ic_menu_shield
         Action.EXTENSIONS -> R.drawable.ic_menu_extensions
         Action.READER -> R.drawable.ic_menu_reader

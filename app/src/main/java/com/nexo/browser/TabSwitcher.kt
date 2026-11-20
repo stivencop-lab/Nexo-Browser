@@ -65,10 +65,10 @@ object TabSwitcher {
         var onlyDuplicates = false
         var viewMode = TabProModel.ViewMode.fromId(BrowserPrefs.tabViewMode(activity))
 
-        val root = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(p.background)
-        }
+        // Deck espacial: columna de contenido + barra inferior flotante de cristal superpuesta.
+        val frame = FrameLayout(activity).apply { setBackgroundColor(p.background) }
+        val root = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        frame.addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         lateinit var refresh: () -> Unit
 
@@ -86,43 +86,67 @@ object TabSwitcher {
             setOnClickListener { dialog.dismiss() }
         }
 
-        // Selector segmentado centrado dentro de la propia barra superior
-        val segContainerBg = if (p.isDark) p.surfaceContainer else p.surfaceContainerHigh
-        val segStroke = if (p.isAmoled) ThemeManager.hairline(p) else null
-        val segments = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = ThemeManager.rounded(activity, segContainerBg, 22f, segStroke)
-            setPadding(dp(activity, 3f), dp(activity, 3f), dp(activity, 3f), dp(activity, 3f))
+        val heading = TextView(activity).apply {
+            text = "Pestañas"
+            textSize = 17f
+            letterSpacing = -0.025f
+            typeface = NexoUi.semiBold(activity)
+            setTextColor(p.text)
+            gravity = Gravity.CENTER
+            isAccessibilityHeading = true
         }
-        val normalSeg = segmentButton(activity, "Pestañas")
-        val privateSeg = segmentButton(activity, "Privadas")
-        segments.addView(normalSeg, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        segments.addView(privateSeg, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
+        val searchToggle = ImageButton(activity).apply {
+            setImageResource(R.drawable.ic_search)
+            contentDescription = "Buscar pestañas"
+            layoutParams = LinearLayout.LayoutParams(dp(activity, 48f), dp(activity, 48f))
+            ThemeManager.styleIconButton(activity, this)
+        }
         val viewModeBtn = ImageButton(activity).apply {
             layoutParams = LinearLayout.LayoutParams(dp(activity, 48f), dp(activity, 48f))
             ThemeManager.styleIconButton(activity, this)
         }
 
+        // «Cerrar todas» vive en la hoja de vista (botón de vista) junto a las densidades.
+        val closeAll = Button(activity).apply { visibility = View.GONE }
         topBar.addView(back)
-        topBar.addView(segments, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(activity, 4f)
-            marginEnd = dp(activity, 4f)
-        })
+        topBar.addView(heading, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        topBar.addView(searchToggle)
         topBar.addView(viewModeBtn)
         root.addView(topBar)
+
+        // Segmentos [Pestañas | Privadas] dentro de la barra flotante inferior.
+        val normalSeg = segmentButton(activity, "Pestañas")
+        val privateSeg = segmentButton(activity, "Privadas")
+        val segments = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexoGlassDrawable(activity, p, NexoUi.Tokens.RADIUS_PILL)
+            NexoGlass.float(this, p)
+            setPadding(dp(activity, 5f), dp(activity, 5f), dp(activity, 5f), dp(activity, 5f))
+            addView(normalSeg, LinearLayout.LayoutParams(0, dp(activity, 48f), 1f))
+            addView(privateSeg, LinearLayout.LayoutParams(0, dp(activity, 48f), 1f))
+        }
 
         // ==================== BUSCADOR + RAIL DE GRUPOS ====================
         val (searchBox, searchInput) = NexoUi.searchBar(activity, "Buscar pestañas por título, sitio o grupo") { q ->
             searchQuery = q
             refresh()
         }
+        searchBox.visibility = View.GONE
         root.addView(searchBox, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             setMargins(dp(activity, 16f), dp(activity, 2f), dp(activity, 16f), dp(activity, 4f))
         })
+        searchToggle.setOnClickListener {
+            val show = searchBox.visibility != View.VISIBLE
+            searchBox.visibility = if (show) View.VISIBLE else View.GONE
+            if (show) {
+                searchInput.requestFocus()
+                (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .showSoftInput(searchInput, 0)
+            } else searchInput.setText("")
+        }
 
         val groupBar = FrameLayout(activity)
         root.addView(groupBar, LinearLayout.LayoutParams(
@@ -141,12 +165,12 @@ object TabSwitcher {
         val layoutManager = GridLayoutManager(activity, if (viewMode == TabProModel.ViewMode.LIST) 1 else gridColumns)
         val grid = RecyclerView(activity).apply {
             this.layoutManager = layoutManager
-            setPadding(dp(activity, 11f), dp(activity, 4f), dp(activity, 11f), dp(activity, 16f))
+            setPadding(dp(activity, 11f), dp(activity, 4f), dp(activity, 11f), dp(activity, 112f))
             clipToPadding = false
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             itemAnimator = DefaultItemAnimator().apply { supportsChangeAnimations = false }
-            val gap = dp(activity, 5f)
+            val gap = dp(activity, 5f)  // 10dp entre tarjetas
             addItemDecoration(object : RecyclerView.ItemDecoration() {
                 override fun getItemOffsets(outRect: Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
                     outRect.set(gap, gap, gap, gap)
@@ -170,21 +194,22 @@ object TabSwitcher {
 
         fun updateViewModeIcon() {
             val (iconRes, desc) = when (viewMode) {
-                TabProModel.ViewMode.GRID -> R.drawable.ic_view_grid to "Vista cuadrícula. Pulsa para cambiar de vista"
-                TabProModel.ViewMode.COMPACT -> R.drawable.ic_view_compact to "Vista compacta. Pulsa para cambiar de vista"
-                TabProModel.ViewMode.LIST -> R.drawable.ic_view_list to "Vista lista. Pulsa para cambiar de vista"
+                TabProModel.ViewMode.GRID -> R.drawable.ic_view_grid to "Vista cuadrícula. Opciones de vista y cerrar pestañas"
+                TabProModel.ViewMode.COMPACT -> R.drawable.ic_view_compact to "Vista compacta. Opciones de vista y cerrar pestañas"
+                TabProModel.ViewMode.LIST -> R.drawable.ic_view_list to "Vista lista. Opciones de vista y cerrar pestañas"
             }
             viewModeBtn.setImageResource(iconRes)
             viewModeBtn.contentDescription = desc
         }
 
-        viewModeBtn.setOnClickListener {
+        viewModeBtn.setOnLongClickListener {
             val allModes = TabProModel.ViewMode.entries
             val next = allModes[(allModes.indexOf(viewMode) + 1) % allModes.size]
             applyViewMode(next)
             Toastish.show(activity, "Vista: ${next.label}")
+            true
         }
-        viewModeBtn.setOnLongClickListener {
+        viewModeBtn.setOnClickListener {
             lateinit var picker: Dialog
             val actions = listOf(
                 SheetAction(R.drawable.ic_view_grid, "Cuadrícula", active = viewMode == TabProModel.ViewMode.GRID, subtitle = "Miniaturas visuales por pestaña") {
@@ -195,17 +220,19 @@ object TabSwitcher {
                 },
                 SheetAction(R.drawable.ic_view_list, "Lista", active = viewMode == TabProModel.ViewMode.LIST, subtitle = "Ideal para muchas pestañas abiertas") {
                     applyViewMode(TabProModel.ViewMode.LIST)
+                },
+                SheetAction(R.drawable.ic_menu_close, closeAll.text.toString().ifBlank { "Cerrar todas" }, danger = true) {
+                    closeAll.performClick()
                 }
             )
             picker = NexoSheets.show(
                 activity,
                 NexoSheets.column(
                     activity,
-                    NexoSheets.header(activity, "Vista de pestañas", "Elige la densidad que prefieras"),
+                    NexoSheets.header(activity, "Vista de pestañas"),
                     NexoSheets.list(activity, actions) { picker.dismiss() }
                 )
             )
-            true
         }
 
         // ==================== BARRA DESHACER ====================
@@ -220,8 +247,8 @@ object TabSwitcher {
             text = "Deshacer"
             textSize = 13.5f
             gravity = Gravity.CENTER
-            setTextColor(p.accent)
-            typeface = NexoUi.bold(activity)
+            setTextColor(p.text)
+            typeface = NexoUi.semiBold(activity)
             setPadding(dp(activity, 14f), dp(activity, 8f), dp(activity, 14f), dp(activity, 8f))
             minWidth = dp(activity, 48f)
             minHeight = dp(activity, 48f)
@@ -233,62 +260,44 @@ object TabSwitcher {
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = dp(activity, 48f)
             setPadding(dp(activity, 16f), dp(activity, 2f), dp(activity, 4f), dp(activity, 2f))
-            background = ThemeManager.rounded(activity, p.surfaceContainerHighest, 16f, ThemeManager.hairline(p))
-            elevation = dp(activity, 4f).toFloat()
+            background = NexoGlassDrawable(activity, p, NexoUi.Tokens.RADIUS_PILL)
+            NexoGlass.float(this, p)
             visibility = View.GONE
             addView(undoText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(undoButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        root.addView(undoBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(dp(activity, 16f), dp(activity, 4f), dp(activity, 16f), dp(activity, 6f))
-        })
-
-        // ==================== BARRA INFERIOR PARA UNA SOLA MANO ====================
-        root.addView(NexoUi.divider(activity, 0f))
-        val bottomDock = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(if (p.isAmoled) p.background else p.surfaceContainerLow)
-            setPadding(dp(activity, 14f), dp(activity, 10f), dp(activity, 14f), dp(activity, 12f))
-        }
-        val closeAll = Button(activity).apply {
-            text = "Cerrar todas"
-            contentDescription = "Cerrar todas las pestañas visibles"
-            textSize = 13.5f
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            ThemeManager.styleButton(activity, this, danger = false)
-            setTextColor(p.danger)
-            setPadding(dp(activity, 16f), dp(activity, 10f), dp(activity, 16f), dp(activity, 10f))
-        }
-        val newTabBtn = Button(activity).apply {
-            text = "+ Nueva pestaña"
+        // ==================== BARRA INFERIOR FLOTANTE DE CRISTAL ====================
+        val newTabBtn = ImageButton(activity).apply {
+            setImageResource(R.drawable.ic_nav_add)
             contentDescription = "Abrir una nueva pestaña"
-            textSize = 14f
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            ThemeManager.styleButton(activity, this, primary = true)
-            setPadding(dp(activity, 18f), dp(activity, 10f), dp(activity, 18f), dp(activity, 10f))
+            scaleType = ImageView.ScaleType.CENTER
+            background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.text, NexoUi.Tokens.RADIUS_PILL), NexoUi.Tokens.RADIUS_PILL)
+            imageTintList = ColorStateList.valueOf(p.background)
+            NexoGlass.float(this, p)
             setOnClickListener {
+                NexoMotion.pulse(this, 0.9f)
                 dialog.dismiss()
                 onNewTab(showPrivate)
                 TabManager.activeTab()?.let { TabManager.moveToGroup(it.id, selectedGroup) }
             }
         }
-        bottomDock.addView(closeAll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        bottomDock.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
-        bottomDock.addView(newTabBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            marginStart = dp(activity, 10f)
+        val bottomDock = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(activity, 16f), 0, dp(activity, 16f), dp(activity, 12f))
+            clipChildren = false
+            clipToPadding = false
+        }
+        bottomDock.addView(undoBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(activity, 10f)
         })
-        root.addView(bottomDock, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        bottomDock.addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            addView(segments, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(newTabBtn, LinearLayout.LayoutParams(dp(activity, 58f), dp(activity, 58f)).apply { marginStart = dp(activity, 10f) })
+        })
+        frame.addView(bottomDock, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
         val hideUndo = Runnable { undoBar.visibility = View.GONE }
 
@@ -442,7 +451,7 @@ object TabSwitcher {
                     refresh()
                 }
             }
-            chips += NexoUi.chip(activity, "+ Grupo", false) {
+            chips += NexoUi.chip(activity, "Nuevo grupo", false) {
                 NexoUi.askText(activity, "Nuevo grupo", "Nombre del grupo", action = "Crear") { value ->
                     val name = TabGroupRules.name(value) ?: return@askText
                     val tab = TabManager.activeTab()?.takeIf { it.isPrivate == showPrivate }
@@ -480,7 +489,7 @@ object TabSwitcher {
             }
             closeAll.isEnabled = items.isNotEmpty()
             closeAll.alpha = if (items.isNotEmpty()) 1f else 0.45f
-            newTabBtn.text = if (showPrivate) "+ Privada" else "+ Nueva pestaña"
+            newTabBtn.contentDescription = if (showPrivate) "Abrir una pestaña privada" else "Abrir una nueva pestaña"
 
             WindowPrivacy.apply(dialog.window!!, showPrivate || activity.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0)
 
@@ -517,8 +526,11 @@ object TabSwitcher {
                 emptyContainer.visibility = View.GONE
             }
 
-            normalSeg.text = "Pestañas · $normalCount"
-            privateSeg.text = "Privadas · $privateCount"
+            normalSeg.text = "Pestañas"
+            privateSeg.text = "Privadas"
+            normalSeg.contentDescription = "Pestañas: $normalCount"
+            privateSeg.contentDescription = "Privadas: $privateCount"
+            heading.text = if (showPrivate) "Privadas · $privateCount" else "Pestañas · $normalCount"
             styleSegment(activity, normalSeg, !showPrivate)
             styleSegment(activity, privateSeg, showPrivate)
         }
@@ -548,7 +560,7 @@ object TabSwitcher {
         refresh()
         adapter.items.indexOfFirst { it.id == TabManager.activeTab()?.id }.takeIf { it > 0 }?.let { grid.scrollToPosition(it) }
 
-        dialog.setContentView(root)
+        dialog.setContentView(frame)
         dialog.window?.apply {
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setBackgroundDrawable(ColorDrawable(p.background))
@@ -561,13 +573,15 @@ object TabSwitcher {
             }
             setWindowAnimations(android.R.style.Animation_Activity)
         }
-        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(frame) { _, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            v.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            root.setPadding(safe.left, safe.top, safe.right, 0)
+            bottomDock.setPadding(safe.left + dp(activity, 16f), 0, safe.right + dp(activity, 16f), maxOf(safe.bottom, ime) + dp(activity, 12f))
             insets
         }
         dialog.show()
-        ViewCompat.requestApplyInsets(root)
+        ViewCompat.requestApplyInsets(frame)
     }
 
     private fun moveSheet(activity: Activity, tab: BrowserTab, done: () -> Unit) {
@@ -650,21 +664,21 @@ object TabSwitcher {
         TextView(activity).apply {
             text = label
             gravity = Gravity.CENTER
-            textSize = 13f
+            textSize = 14f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            minHeight = dp(activity, 40f)
-            setPadding(dp(activity, 8f), dp(activity, 7f), dp(activity, 8f), dp(activity, 7f))
+            setPadding(dp(activity, 8f), 0, dp(activity, 8f), 0)
             isClickable = true
         }
 
+    /** Segmento activo concéntrico: r = 999 dentro de la píldora de cristal. */
     private fun styleSegment(activity: Activity, view: TextView, selected: Boolean) {
         val p = ThemeManager.palette(activity)
-        val activeBg = if (p.isDark) p.surfaceContainerHighest else p.surfaceContainerLowest
-        view.background = if (selected) ThemeManager.rounded(activity, activeBg, 19f) else null
+        view.background = if (selected) ThemeManager.rounded(activity, if (p.isDark) p.surfaceContainerHighest else p.surface, NexoUi.Tokens.RADIUS_PILL)
+            else ThemeManager.ripple(activity, null, NexoUi.Tokens.RADIUS_PILL)
         view.setTextColor(if (selected) p.text else p.muted)
-        view.typeface = if (selected) NexoUi.semiBold(activity) else NexoUi.medium(activity)
-        view.elevation = if (selected && !p.isDark) dp(activity, 1f).toFloat() else 0f
+        view.typeface = NexoUi.medium(activity)
+        view.isSelected = selected
     }
 }
 
@@ -759,7 +773,12 @@ private class TabCardAdapter(
         val placeholderIcon: ImageView,
         val placeholderLetter: TextView,
         val placeholderHost: TextView,
-        val image: TopCropImageView
+        val image: TopCropImageView,
+        val stage: FrameLayout,
+        val headerTop: FrameLayout,
+        val headerBottom: FrameLayout,
+        val scrim: View,
+        val activeChip: TextView
     ) : RecyclerView.ViewHolder(card) {
         var boundId: String? = null
         var shownPreview: Bitmap? = null
@@ -767,10 +786,9 @@ private class TabCardAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val p = ThemeManager.palette(activity)
-        val cardBg = if (p.isDark) p.surfaceContainer else p.surfaceContainerLowest
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = ThemeManager.rounded(activity, cardBg, 20f)
+            background = ThemeManager.rounded(activity, p.surface, NexoUi.Tokens.RADIUS_CARD)
             clipToOutline = true
             layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
@@ -780,26 +798,24 @@ private class TabCardAdapter(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10f), dp(4f), dp(2f), dp(4f))
         }
-        val iconWell = FrameLayout(activity).apply {
-            background = ThemeManager.rounded(activity, p.surfaceContainerHigh, 10f)
-        }
+        val iconWell = FrameLayout(activity)
         val icon = ImageView(activity).apply {
             scaleType = ImageView.ScaleType.CENTER_INSIDE
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
-        iconWell.addView(icon, FrameLayout.LayoutParams(dp(18f), dp(18f), Gravity.CENTER))
-        header.addView(iconWell, LinearLayout.LayoutParams(dp(28f), dp(28f)).apply { marginEnd = dp(8f) })
+        iconWell.addView(icon, FrameLayout.LayoutParams(dp(16f), dp(16f), Gravity.CENTER))
+        header.addView(iconWell, LinearLayout.LayoutParams(dp(18f), dp(18f)).apply { marginEnd = dp(8f) })
 
         val titleCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val title = TextView(activity).apply {
             textSize = 13.5f
             setTextColor(p.text)
-            typeface = NexoUi.semiBold(activity)
+            typeface = NexoUi.medium(activity)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
         val subtitle = TextView(activity).apply {
-            textSize = 11.5f
+            textSize = 12f
             typeface = NexoUi.regular(activity)
             setTextColor(p.muted)
             maxLines = 1
@@ -812,29 +828,29 @@ private class TabCardAdapter(
 
         val close = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_menu_close)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(13f), dp(13f), dp(13f), dp(13f))
-            ThemeManager.styleIconButton(activity, this)
+            scaleType = ImageView.ScaleType.CENTER
+            scaleX = 0.8f
+            scaleY = 0.8f
+            background = ThemeManager.ripple(activity, null, NexoUi.Tokens.RADIUS_PILL)
             imageTintList = ColorStateList.valueOf(p.muted)
         }
         header.addView(close, LinearLayout.LayoutParams(dp(44f), dp(44f)))
-        card.addView(header)
 
-        // Banda de insignias (solo para modos Compacta y Lista; en Cuadrícula van sobre el preview para alturas uniformes)
+        // Ranura superior (Compacta / Lista) e inferior sobre el degradado (Cuadrícula).
+        val headerTop = FrameLayout(activity)
+        card.addView(headerTop, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
         val badgeStrip = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10f), 0, dp(10f), dp(10f))
+            setPadding(dp(12f), 0, dp(12f), dp(10f))
             visibility = View.GONE
         }
         card.addView(badgeStrip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // Marco de vista previa neutro y elegante (misma altura en todas las tarjetas de cuadrícula)
-        val previewSurface = if (p.isDark) p.surfaceContainerLow else p.surfaceContainer
-        val preview = FrameLayout(activity).apply {
-            background = ThemeManager.rounded(activity, previewSurface, 14f)
-            clipToOutline = true
-        }
+        // Captura real a sangre completa (miniatura WebView) dentro de la tarjeta r:22.
+        val stage = FrameLayout(activity)
+        val preview = FrameLayout(activity).apply { setBackgroundColor(if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer) }
         val placeholderIcon = ImageView(activity).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -843,10 +859,10 @@ private class TabCardAdapter(
             gravity = Gravity.CENTER
             textSize = 18f
             setTextColor(p.text)
-            typeface = NexoUi.bold(activity)
+            typeface = NexoUi.semiBold(activity)
         }
         val placeholderHost = TextView(activity).apply {
-            textSize = 11.5f
+            textSize = 12f
             typeface = NexoUi.medium(activity)
             setTextColor(p.muted)
             maxLines = 1
@@ -857,36 +873,55 @@ private class TabCardAdapter(
         preview.addView(LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(40f))
             addView(FrameLayout(activity).apply {
                 addView(placeholderIcon, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 addView(placeholderLetter, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            }, LinearLayout.LayoutParams(dp(42f), dp(42f)))
+            }, LinearLayout.LayoutParams(dp(36f), dp(36f)))
             addView(placeholderHost)
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-
         val image = TopCropImageView(activity).apply { visibility = View.GONE }
         preview.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        stage.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        // Insignias flotantes limpias en la esquina inferior izquierda de la miniatura
+        // Degradado oscuro inferior sutil: el título siempre es legible sobre cualquier captura.
+        val scrim = View(activity).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xCC000000.toInt(), 0x66000000, 0x00000000))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        stage.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(84f), Gravity.BOTTOM))
+
         val previewBadges = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8f), dp(6f), dp(8f), dp(8f))
+            setPadding(dp(8f), dp(8f), dp(8f), 0)
             visibility = View.GONE
         }
-        preview.addView(previewBadges, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM or Gravity.START
-        ))
+        stage.addView(previewBadges, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
 
-        card.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(164f)).apply {
-            setMargins(dp(6f), 0, dp(6f), dp(6f))
+        val activeChip = TextView(activity).apply {
+            text = "Activa"
+            textSize = 11.5f
+            typeface = NexoUi.medium(activity)
+            setTextColor(0xFFF4F4F5.toInt())
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8f), dp(4f), dp(10f), dp(4f))
+            background = ThemeManager.rounded(activity, 0x99000000.toInt(), NexoUi.Tokens.RADIUS_PILL)
+            compoundDrawablePadding = dp(6f)
+            visibility = View.GONE
+        }
+        stage.addView(activeChip, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+            setMargins(dp(8f), dp(8f), 0, 0)
         })
+
+        val headerBottom = FrameLayout(activity)
+        stage.addView(headerBottom, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        card.addView(stage, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(212f)))
 
         return Holder(
             card, header, iconWell, icon, title, subtitle, badgeStrip, close,
-            preview, previewBadges, placeholderIcon, placeholderLetter, placeholderHost, image
+            preview, previewBadges, placeholderIcon, placeholderLetter, placeholderHost, image,
+            stage, headerTop, headerBottom, scrim, activeChip
         )
     }
 
@@ -909,18 +944,29 @@ private class TabCardAdapter(
         val changedTab = holder.boundId != tab.id
         holder.boundId = tab.id
 
-        val radius = if (mode == TabProModel.ViewMode.LIST) 16f else 20f
-        val cardBg = if (p.isDark) p.surfaceContainer else p.surfaceContainerLowest
-        holder.card.background = ThemeManager.rounded(activity, cardBg, radius)
-        val strokeColor = when {
-            active -> p.accent
-            tab.groupName != null -> ColorUtils.setAlphaComponent(TabGroupRules.color(tab.groupName!!), 150)
-            p.isAmoled || !p.isDark -> ThemeManager.hairline(p)
-            else -> Color.TRANSPARENT
+        val grid = mode == TabProModel.ViewMode.GRID
+        val radius = if (mode == TabProModel.ViewMode.LIST) 18f else NexoUi.Tokens.RADIUS_CARD
+        holder.card.background = ThemeManager.rounded(activity, p.surface, radius)
+        NexoGlass.paperShadow(holder.card, p)
+        // Activa: aro fino del acento (Monocromo = tinta). Sin contornos en el resto.
+        val ring = if (p.isMonochrome) p.text else p.accentSwatch
+        holder.card.foreground = if (active) ThemeManager.rounded(activity, Color.TRANSPARENT, radius, ring, 2f) else null
+
+        // La cabecera vive sobre el degradado en Cuadrícula y arriba en Compacta/Lista.
+        val slot = if (grid) holder.headerBottom else holder.headerTop
+        if (holder.header.parent !== slot) {
+            (holder.header.parent as? ViewGroup)?.removeView(holder.header)
+            slot.addView(holder.header, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        holder.card.foreground = if (strokeColor != Color.TRANSPARENT) {
-            ThemeManager.rounded(activity, Color.TRANSPARENT, radius, strokeColor, if (active) 2f else 1f)
-        } else null
+        val onImage = 0xFFF4F4F5.toInt()
+        holder.title.setTextColor(if (grid) onImage else p.text)
+        holder.close.imageTintList = ColorStateList.valueOf(if (grid) ColorUtils.setAlphaComponent(onImage, 200) else p.muted)
+        holder.activeChip.visibility = if (grid && active) View.VISIBLE else View.GONE
+        if (active) holder.activeChip.setCompoundDrawablesRelativeWithIntrinsicBounds(GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (p.isMonochrome) p.success.color else p.accentSwatch)
+            setSize(dp(6f), dp(6f))
+        }, null, null, null)
 
         holder.card.setOnClickListener { onOpen(tab) }
         if (onLongPress != null) holder.card.setOnLongClickListener { onLongPress.invoke(tab); true }
@@ -945,6 +991,7 @@ private class TabCardAdapter(
             }, null, null, null
         )
         holder.title.compoundDrawablePadding = dp(6f)
+        holder.title.typeface = NexoUi.medium(activity)
         holder.close.contentDescription = "Cerrar pestaña: ${tab.title}"
         holder.close.setOnClickListener { onClose(tab) }
 
@@ -954,10 +1001,10 @@ private class TabCardAdapter(
         holder.placeholderHost.text = displayHost
 
         if (mode == TabProModel.ViewMode.GRID) {
-            holder.header.setPadding(dp(10f), dp(4f), dp(2f), dp(4f))
+            holder.header.setPadding(dp(12f), 0, dp(0f), 0)
             holder.subtitle.visibility = View.GONE
         } else {
-            holder.header.setPadding(dp(12f), dp(8f), dp(4f), dp(8f))
+            holder.header.setPadding(dp(14f), dp(8f), dp(4f), dp(8f))
             holder.subtitle.text = if (mode == TabProModel.ViewMode.LIST && !home) {
                 tab.url.substringAfter("://").removePrefix("www.")
             } else displayHost
@@ -974,7 +1021,7 @@ private class TabCardAdapter(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { marginEnd = dp(5f) })
         }
-        if (active) addBadge("Activa", NexoUi.Tone.ACCENT)
+        if (active && !grid) addBadge("Activa", NexoUi.Tone.ACCENT)
         if (tab.pinned) addBadge("Fijada", NexoUi.Tone.INFO)
         if (tab.burnerId != null) addBadge("Burner", NexoUi.Tone.WARNING)
         if (dupCount >= 2) addBadge("×$dupCount", NexoUi.Tone.WARNING)
@@ -992,34 +1039,35 @@ private class TabCardAdapter(
         val origin = BrowserPagePresentation.shortcut(tab.url)?.origin
         when {
             tab.isPrivate -> {
-                holder.iconWell.background = ThemeManager.rounded(activity, p.primary.container, 10f)
+                holder.iconWell.background = null
                 holder.icon.setImageResource(R.drawable.ic_menu_private)
-                holder.icon.imageTintList = ColorStateList.valueOf(p.primary.onContainer)
+                holder.icon.imageTintList = ColorStateList.valueOf(if (grid) onImage else p.text)
                 holder.placeholderIcon.setImageResource(R.drawable.ic_menu_private)
-                holder.placeholderIcon.imageTintList = ColorStateList.valueOf(p.accent)
+                holder.placeholderIcon.imageTintList = ColorStateList.valueOf(p.muted)
                 holder.placeholderIcon.background = null
             }
             home || origin == null -> {
-                holder.iconWell.background = ThemeManager.rounded(activity, p.surfaceContainerHigh, 10f)
+                holder.iconWell.background = null
                 holder.icon.setImageResource(R.drawable.ic_nexo_logo)
-                holder.icon.imageTintList = null
-                holder.placeholderIcon.setImageResource(R.drawable.ic_nexo_logo)
+                holder.icon.imageTintList = ColorStateList.valueOf(if (grid) onImage else p.text)
+                holder.placeholderIcon.setImageDrawable(NexoMonogramDrawable(activity, p.text, p.background, 9f))
                 holder.placeholderIcon.imageTintList = null
                 holder.placeholderIcon.background = null
             }
             else -> {
-                holder.iconWell.background = ThemeManager.rounded(activity, p.surfaceContainerHigh, 10f)
+                holder.iconWell.background = ThemeManager.rounded(activity, 0xFFFFFFFF.toInt(), 4f)
                 holder.icon.imageTintList = null
                 holder.placeholderIcon.imageTintList = null
                 val cachedIcon = SiteIconStore.cached(origin)
                 if (cachedIcon != null) {
                     showSiteIcon(holder, cachedIcon)
                 } else {
+                    holder.iconWell.background = null
                     holder.icon.setImageResource(R.drawable.ic_search)
-                    holder.icon.imageTintList = ColorStateList.valueOf(p.muted)
+                    holder.icon.imageTintList = ColorStateList.valueOf(if (grid) onImage else p.muted)
                     holder.placeholderIcon.setImageDrawable(null)
-                    holder.placeholderIcon.background = ThemeManager.rounded(activity, SiteIconStore.letterColor(host), 14f)
-                    holder.placeholderLetter.setTextColor(UiContrast.foreground(SiteIconStore.letterColor(host)))
+                    holder.placeholderIcon.background = ThemeManager.rounded(activity, p.surfaceContainerHighest, 12f)
+                    holder.placeholderLetter.setTextColor(p.text)
                     holder.placeholderLetter.text = SiteIconStore.letter(host)
                     holder.placeholderLetter.visibility = View.VISIBLE
                     SiteIconStore.load(activity, origin) { bitmap ->
@@ -1030,9 +1078,11 @@ private class TabCardAdapter(
         }
 
         if (mode == TabProModel.ViewMode.GRID) {
+            holder.stage.visibility = View.VISIBLE
             holder.preview.visibility = View.VISIBLE
             bindPreview(holder, tab)
         } else {
+            holder.stage.visibility = View.GONE
             holder.preview.visibility = View.GONE
             holder.shownPreview = null
             holder.image.setImageDrawable(null)

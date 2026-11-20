@@ -120,7 +120,7 @@ object NexoAiModels {
         EXPANDED
     }
 
-    /** Estado del botón ✨ y del indicador flotante minimizado. */
+    /** Estado del emblema Aperture y del indicador flotante minimizado. */
     enum class IndicatorState {
         IDLE,
         GENERATING,
@@ -138,7 +138,7 @@ object NexoAiModels {
         val startedAtMs: Long
     )
 
-    /** Instantánea inmutable observada por la UI (panel, botón ✨ y píldora minimizada). */
+    /** Instantánea inmutable observada por la UI (panel, emblema Aperture y píldora minimizada). */
     data class ControllerSnapshot(
         val conversations: List<AiConversation>,
         val activeConversationId: String,

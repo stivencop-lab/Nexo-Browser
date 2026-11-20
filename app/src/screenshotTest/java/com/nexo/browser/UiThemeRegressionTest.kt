@@ -52,13 +52,24 @@ class UiThemeRegressionTest {
             val activity = controller.get()
             val root = activity.findViewById<View>(R.id.settingsRoot)
             measure(root, 360)
-            val spinner = activity.findViewById<Spinner>(R.id.themeSpinner)
-            val selected = spinner.selectedView
-            assertNotNull(selected)
-            assertTrue("Spinner must grow with its text", spinner.height >= selected.measuredHeight)
-            assertTrue(spinner.height >= 48 * activity.resources.displayMetrics.density)
-            val save = activity.findViewById<Button>(R.id.saveSettingsButton)
-            assertTrue("Multiline action must not clip", save.height >= save.layout.height + save.compoundPaddingTop + save.compoundPaddingBottom)
+            val density = activity.resources.displayMetrics.density
+            // UI 7.0: Tema y Acento son selectores en vivo; el antiguo Spinner queda oculto.
+            assertEquals(View.GONE, activity.findViewById<Spinner>(R.id.themeSpinner).visibility)
+            val themeSelector = activity.findViewById<View>(R.id.themeSegmented)
+            assertTrue("Theme selector must keep 48dp targets", themeSelector.height >= 48 * density)
+            val swatches = activity.findViewById<android.view.ViewGroup>(R.id.accentSwatches)
+            assertEquals(BrowserPrefs.ACCENTS.size, swatches.childCount)
+            for (i in 0 until swatches.childCount) {
+                val sw = swatches.getChildAt(i)
+                val lp = sw.layoutParams as android.view.ViewGroup.MarginLayoutParams
+                assertTrue("Accent swatch touch area ≥ 48dp", sw.width + lp.marginEnd >= 48 * density - 1)
+            }
+            // Guardado automático: ya no existe un botón estático inferior.
+            assertEquals(0, activity.resources.getIdentifier("saveSettingsButton", "id", activity.packageName))
+            val visibleSpinner = activity.findViewById<Spinner>(R.id.searchSpinner)
+            assertNotNull(visibleSpinner.selectedView)
+            assertTrue("Spinner must grow with its text", visibleSpinner.height >= visibleSpinner.selectedView.measuredHeight)
+            assertTrue(visibleSpinner.height >= 48 * density)
             for (buttonId in listOf(R.id.perfLogButton, R.id.transferProfileButton, R.id.checkUpdatesButton, R.id.resetSettingsButton)) {
                 val btn = activity.findViewById<Button>(buttonId)
                 assertNotNull(btn.background)
@@ -117,14 +128,15 @@ class UiThemeRegressionTest {
         controller.pause().stop().destroy()
     }
 
-    @Test @Config(sdk = [30, 31]) fun dynamicColorHasFallbackAndDoesNotRetainWrongTheme() {
+    @Test fun legacyAccentsMigrateAndPaletteIsCachedPerTheme() {
         val app = RuntimeEnvironment.getApplication()
         BrowserPrefs.setTheme(app, BrowserPrefs.THEME_LIGHT)
-        BrowserPrefs.setAccent(app, BrowserPrefs.ACCENT_DYNAMIC)
+        // Un acento de UI 6.x (dinámico) se migra al Monocromo adulto de UI 7.0.
+        BrowserPrefs.setAccent(app, "dynamic")
+        assertEquals(BrowserPrefs.ACCENT_MONO, BrowserPrefs.accent(app))
         val controller = Robolectric.buildActivity(Activity::class.java).setup()
         val a = controller.get()
-        val seed = if (Build.VERSION.SDK_INT >= 31) a.getColor(android.R.color.system_accent1_500) else BrowserColors.COBALT
-        assertEquals(BrowserColors.create(seed, false), ThemeManager.palette(a))
+        assertEquals(BrowserColors.create(BrowserColors.MONOCHROME, false), ThemeManager.palette(a))
         assertSame(ThemeManager.palette(a), ThemeManager.palette(a))
         val key = ThemeManager.themeKey(a)
         BrowserPrefs.setTheme(app, BrowserPrefs.THEME_OLED)
@@ -148,8 +160,7 @@ class UiThemeRegressionTest {
         val a = controller.get()
         for (mode in listOf(BrowserPrefs.THEME_LIGHT, BrowserPrefs.THEME_MIDNIGHT)) {
             BrowserPrefs.setTheme(app, mode)
-            for (accent in listOf(BrowserPrefs.ACCENT_COBALT, BrowserPrefs.ACCENT_VIOLET, BrowserPrefs.ACCENT_CYAN,
-                BrowserPrefs.ACCENT_LIME, BrowserPrefs.ACCENT_ORANGE, BrowserPrefs.ACCENT_PINK, BrowserPrefs.ACCENT_RED)) {
+            for (accent in BrowserPrefs.ACCENTS) {
                 BrowserPrefs.setAccent(app, accent)
                 ThemeManager.applyWindow(a)
                 val value = android.util.TypedValue()

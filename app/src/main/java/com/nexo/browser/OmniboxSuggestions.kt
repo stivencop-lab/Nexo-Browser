@@ -198,7 +198,7 @@ class OmniboxSuggestions(
         "history" -> R.drawable.ic_menu_history
         "settings" -> R.drawable.ic_menu_settings
         "phantom_shield" -> R.drawable.ic_menu_shield
-        "nexo_ai" -> R.drawable.ic_nexo_ai_spark
+        "nexo_ai" -> R.drawable.ic_nexo_aperture
         "extensions" -> R.drawable.ic_menu_extensions
         "reader_mode", "offline_articles" -> R.drawable.ic_menu_reader
         "bookmarks", "bookmark_page" -> R.drawable.ic_menu_bookmark

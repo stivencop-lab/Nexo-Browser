@@ -1,156 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  Nexo UI 7.0 «Liquid Craft»: lienzo web edge-to-edge con cromo flotante de cristal.
+  Capas (de abajo arriba): página → velo de barra de estado → avisos superiores → cromo inferior.
+  MainActivity reparte los insets: nada se rellena dos veces.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/rootView"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
 
-    <!-- Buscar dentro de la página: tarjeta flotante superior limpia. -->
-    <LinearLayout
-        android:id="@+id/findBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="10dp"
-        android:layout_marginTop="6dp"
-        android:layout_marginEnd="10dp"
-        android:layout_marginBottom="4dp"
-        android:gravity="center_vertical"
-        android:minHeight="52dp"
-        android:orientation="horizontal"
-        android:paddingStart="10dp"
-        android:paddingEnd="4dp"
-        android:visibility="gone">
-
-        <EditText
-            android:id="@+id/findInput"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="@string/find_in_page_hint"
-            android:imeOptions="actionSearch"
-            android:importantForAutofill="no"
-            android:inputType="text"
-            android:maxLines="1"
-            android:minHeight="@dimen/touch_target"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:singleLine="true"
-            android:textSize="14.5sp" />
-
-        <TextView
-            android:id="@+id/findCount"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:minWidth="40dp"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp"
-            android:textSize="12.5sp" />
-
-        <ImageButton
-            android:id="@+id/findPrev"
-            android:layout_width="@dimen/touch_target"
-            android:layout_height="@dimen/touch_target"
-            android:contentDescription="@string/find_previous"
-            android:scaleType="center"
-            android:src="@drawable/ic_nav_up" />
-
-        <ImageButton
-            android:id="@+id/findNext"
-            android:layout_width="@dimen/touch_target"
-            android:layout_height="@dimen/touch_target"
-            android:contentDescription="@string/find_next"
-            android:scaleType="center"
-            android:src="@drawable/ic_nav_down" />
-
-        <ImageButton
-            android:id="@+id/findClose"
-            android:layout_width="@dimen/touch_target"
-            android:layout_height="@dimen/touch_target"
-            android:contentDescription="@string/find_close"
-            android:scaleType="center"
-            android:src="@drawable/ic_menu_close" />
-    </LinearLayout>
-
-    <!-- Píldora flotante discreta de modo privado o identidad Burner. -->
-    <TextView
-        android:id="@+id/privateBanner"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginStart="16dp"
-        android:layout_marginTop="6dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="4dp"
-        android:ellipsize="end"
-        android:gravity="center"
-        android:letterSpacing="0.01"
-        android:maxLines="1"
-        android:paddingStart="14dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="14dp"
-        android:paddingBottom="6dp"
-        android:text="Navegación privada"
-        android:textSize="12sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
-
-    <!-- Aviso contextual flotante de extensión en Chrome Web Store / Edge Add-ons. -->
-    <LinearLayout
-        android:id="@+id/extensionInstallBanner"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="10dp"
-        android:layout_marginTop="4dp"
-        android:layout_marginEnd="10dp"
-        android:layout_marginBottom="4dp"
-        android:gravity="center_vertical"
-        android:minHeight="@dimen/touch_target"
-        android:orientation="horizontal"
-        android:paddingStart="14dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="6dp"
-        android:paddingBottom="6dp"
-        android:visibility="gone">
-
-        <TextView
-            android:id="@+id/extensionBannerText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="2"
-            android:textSize="12.5sp"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/extensionBannerAction"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:minWidth="0dp"
-            android:minHeight="40dp"
-            android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:text="Instalar en Nexo"
-            android:textAllCaps="false"
-            android:textSize="12.5sp" />
-
-        <ImageButton
-            android:id="@+id/extensionBannerDismiss"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:contentDescription="Ocultar aviso de extensión"
-            android:scaleType="center"
-            android:src="@drawable/ic_menu_close" />
-    </LinearLayout>
-
-    <!-- Área principal de contenido web (maximizada, nunca tapada por las barras). -->
+    <!-- Lienzo web full-bleed: la página fluye detrás del cromo inferior de cristal. -->
     <com.nexo.browser.PullRefreshLayout
         android:id="@+id/browserFrame"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_height="match_parent">
 
         <!-- Lugar de la vista de página: MainActivity la sustituye por la del motor. -->
         <View
@@ -178,7 +41,7 @@
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
             android:layout_marginEnd="14dp"
-            android:layout_marginBottom="14dp"
+            android:layout_marginBottom="96dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -196,7 +59,7 @@
                 android:text="CC"
                 android:textAllCaps="false"
                 android:textSize="13.5sp"
-                android:textStyle="bold"
+                android:textFontWeight="600"
                 android:visibility="gone" />
 
             <Button
@@ -222,231 +85,452 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|start"
-            android:layout_marginStart="12dp"
-            android:layout_marginBottom="14dp"
+            android:layout_marginStart="14dp"
+            android:layout_marginBottom="96dp"
             android:visibility="gone" />
     </com.nexo.browser.PullRefreshLayout>
 
-    <!-- Progreso de carga fino integrado sobre el bloque inferior de navegación. -->
-    <ProgressBar
-        android:id="@+id/pageProgress"
-        style="?android:attr/progressBarStyleHorizontal"
+    <!-- Velo translúcido bajo los iconos de la barra de estado. -->
+    <View
+        android:id="@+id/statusScrim"
         android:layout_width="match_parent"
-        android:layout_height="2.5dp"
-        android:max="100"
-        android:visibility="gone" />
+        android:layout_height="0dp"
+        android:layout_gravity="top"
+        android:importantForAccessibility="no" />
 
-    <!-- Sugerencias de la barra (Nexo Command): tarjeta flotante sobre el omnibox. -->
+    <!-- Avisos superiores flotantes (buscar en página, Burner, tiendas de extensiones). -->
     <LinearLayout
-        android:id="@+id/omniboxSuggestions"
+        android:id="@+id/topOverlay"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="10dp"
-        android:layout_marginEnd="10dp"
-        android:layout_marginBottom="6dp"
-        android:orientation="vertical"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp"
-        android:visibility="gone" />
+        android:layout_gravity="top"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:orientation="vertical">
 
-    <!-- Nexo UI 5.0: barra de direcciones con cápsula unificada + controles alineados. -->
-    <LinearLayout
-        android:id="@+id/topBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:minHeight="52dp"
-        android:orientation="horizontal"
-        android:paddingStart="10dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="6dp"
-        android:paddingBottom="4dp">
-
-        <!-- Se conserva por compatibilidad (atajo a Inicio). -->
-        <TextView
-            android:id="@+id/brandText"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
+        <!-- Progreso de carga ultrafino bajo la barra de estado. -->
+        <ProgressBar
+            android:id="@+id/pageProgress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:max="100"
             android:visibility="gone" />
 
-        <ImageButton
-            android:id="@+id/compactBackButton"
-            android:layout_width="44dp"
-            android:layout_height="@dimen/touch_target"
-            android:layout_marginEnd="4dp"
-            android:contentDescription="@string/back"
-            android:scaleType="center"
-            android:src="@drawable/ic_nav_back"
-            android:visibility="gone" />
-
-        <!-- Cápsula unificada: información del sitio + dirección web + acceso directo ✨ Nexo AI. -->
+        <!-- Buscar dentro de la página: tarjeta flotante superior limpia. -->
         <LinearLayout
-            android:id="@+id/omniboxCapsule"
-            android:layout_width="0dp"
+            android:id="@+id/findBar"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="4dp"
             android:gravity="center_vertical"
-            android:minHeight="@dimen/touch_target"
+            android:minHeight="52dp"
             android:orientation="horizontal"
-            android:paddingStart="2dp"
-            android:paddingEnd="3dp">
-
-            <ImageButton
-                android:id="@+id/tabToolsButton"
-                android:layout_width="42dp"
-                android:layout_height="@dimen/touch_target"
-                android:contentDescription="Control del sitio, permisos, red e identidad Burner"
-                android:scaleType="center"
-                android:src="@drawable/ic_lock" />
+            android:paddingStart="10dp"
+            android:paddingEnd="4dp"
+            android:visibility="gone">
 
             <EditText
-                android:id="@+id/omnibox"
+                android:id="@+id/findInput"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:background="@null"
-                android:ellipsize="end"
-                android:gravity="center_vertical"
-                android:hint="@string/omnibox_hint"
-                android:imeOptions="actionGo"
+                android:hint="@string/find_in_page_hint"
+                android:imeOptions="actionSearch"
                 android:importantForAutofill="no"
-                android:inputType="textUri"
+                android:inputType="text"
                 android:maxLines="1"
                 android:minHeight="@dimen/touch_target"
-                android:paddingStart="2dp"
-                android:paddingEnd="4dp"
-                android:selectAllOnFocus="true"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
                 android:singleLine="true"
                 android:textSize="14.5sp" />
 
-            <Button
-                android:id="@+id/clearOmniboxButton"
-                android:layout_width="38dp"
-                android:layout_height="@dimen/touch_target"
-                android:contentDescription="@string/clear_address"
+            <TextView
+                android:id="@+id/findCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:gravity="center"
-                android:minWidth="0dp"
-                android:minHeight="@dimen/touch_target"
-                android:padding="0dp"
-                android:text="×"
-                android:textAllCaps="false"
-                android:textSize="20sp"
-                android:visibility="gone" />
+                android:minWidth="40dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:textSize="12.5sp" />
 
             <ImageButton
-                android:id="@+id/aiButton"
-                android:layout_width="44dp"
+                android:id="@+id/findPrev"
+                android:layout_width="@dimen/touch_target"
                 android:layout_height="@dimen/touch_target"
-                android:contentDescription="@string/nexo_ai_action"
+                android:contentDescription="@string/find_previous"
                 android:scaleType="center"
-                android:src="@drawable/ic_nexo_ai_spark" />
+                android:src="@drawable/ic_nav_up" />
+
+            <ImageButton
+                android:id="@+id/findNext"
+                android:layout_width="@dimen/touch_target"
+                android:layout_height="@dimen/touch_target"
+                android:contentDescription="@string/find_next"
+                android:scaleType="center"
+                android:src="@drawable/ic_nav_down" />
+
+            <ImageButton
+                android:id="@+id/findClose"
+                android:layout_width="@dimen/touch_target"
+                android:layout_height="@dimen/touch_target"
+                android:contentDescription="@string/find_close"
+                android:scaleType="center"
+                android:src="@drawable/ic_menu_close" />
         </LinearLayout>
 
-        <Button
-            android:id="@+id/tabButton"
-            android:layout_width="44dp"
-            android:layout_height="@dimen/touch_target"
-            android:layout_marginStart="4dp"
-            android:contentDescription="@string/open_tabs"
-            android:gravity="center"
-            android:minWidth="0dp"
-            android:minHeight="@dimen/touch_target"
-            android:padding="0dp"
-            android:text="1"
-            android:textAllCaps="false"
-            android:textSize="11.5sp"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/menuButton"
-            android:layout_width="44dp"
-            android:layout_height="@dimen/touch_target"
-            android:contentDescription="@string/open_menu"
-            android:gravity="center"
-            android:minWidth="0dp"
-            android:minHeight="@dimen/touch_target"
-            android:padding="0dp"
-            android:text="" />
-    </LinearLayout>
-
-    <!-- Dock inferior flotante ligero y compacto con pista sutil de gestos. -->
-    <com.nexo.browser.GestureDock
-        android:id="@+id/browserDock"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
-        android:layout_marginTop="2dp"
-        android:layout_marginEnd="12dp"
-        android:layout_marginBottom="8dp"
-        android:gravity="center_horizontal"
-        android:orientation="vertical"
-        android:paddingStart="6dp"
-        android:paddingTop="4dp"
-        android:paddingEnd="6dp"
-        android:paddingBottom="2dp">
-
-        <View
-            android:id="@+id/dockGesturePill"
-            android:layout_width="28dp"
-            android:layout_height="3dp"
+        <!-- Identidad Burner: chip de cristal discreto (el modo privado se expresa en el propio cromo). -->
+        <TextView
+            android:id="@+id/privateBanner"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="1dp"
-            android:importantForAccessibility="no" />
+            android:layout_marginTop="6dp"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="@dimen/touch_target"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:textSize="12.5sp"
+            android:visibility="gone" />
 
+        <!-- Aviso contextual flotante de extensión en Chrome Web Store / Edge Add-ons. -->
         <LinearLayout
-            android:id="@+id/navBar"
+            android:id="@+id/extensionInstallBanner"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="4dp"
             android:gravity="center_vertical"
             android:minHeight="@dimen/touch_target"
             android:orientation="horizontal"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp">
+            android:paddingStart="14dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/extensionBannerText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textSize="12.5sp"
+                android:textFontWeight="600" />
+
+            <Button
+                android:id="@+id/extensionBannerAction"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:minWidth="0dp"
+                android:minHeight="40dp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:text="Instalar en Nexo"
+                android:textAllCaps="false"
+                android:textSize="12.5sp" />
 
             <ImageButton
-                android:id="@+id/backButton"
-                android:layout_width="0dp"
-                android:layout_height="@dimen/touch_target"
-                android:layout_weight="1"
-                android:contentDescription="Atrás"
+                android:id="@+id/extensionBannerDismiss"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:contentDescription="Ocultar aviso de extensión"
                 android:scaleType="center"
-                android:src="@drawable/ic_nav_back" />
-
-            <ImageButton
-                android:id="@+id/forwardButton"
-                android:layout_width="0dp"
-                android:layout_height="@dimen/touch_target"
-                android:layout_weight="1"
-                android:contentDescription="Adelante"
-                android:scaleType="center"
-                android:src="@drawable/ic_nav_forward" />
-
-            <ImageButton
-                android:id="@+id/homeButton"
-                android:layout_width="0dp"
-                android:layout_height="@dimen/touch_target"
-                android:layout_weight="1"
-                android:contentDescription="Inicio"
-                android:scaleType="center"
-                android:src="@drawable/ic_nav_home" />
-
-            <ImageButton
-                android:id="@+id/reloadButton"
-                android:layout_width="0dp"
-                android:layout_height="@dimen/touch_target"
-                android:layout_weight="1"
-                android:contentDescription="Recargar"
-                android:scaleType="center"
-                android:src="@drawable/ic_nav_reload" />
-
-            <ImageButton
-                android:id="@+id/newTabButton"
-                android:layout_width="0dp"
-                android:layout_height="@dimen/touch_target"
-                android:layout_weight="1"
-                android:contentDescription="Nueva pestaña"
-                android:scaleType="center"
-                android:src="@drawable/ic_nav_add" />
+                android:src="@drawable/ic_menu_close" />
         </LinearLayout>
-    </com.nexo.browser.GestureDock>
-</LinearLayout>
+    </LinearLayout>
+
+    <!-- Cromo inferior: sugerencias + Liquid Split Chrome (o Dock Clásico). -->
+    <LinearLayout
+        android:id="@+id/bottomChrome"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:orientation="vertical">
+
+        <!-- Sugerencias de la barra (Nexo Command): lámina flotante sobre el cromo. -->
+        <LinearLayout
+            android:id="@+id/omniboxSuggestions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="8dp"
+            android:orientation="vertical"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:visibility="gone" />
+
+        <FrameLayout
+            android:id="@+id/chromeStage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipChildren="false"
+            android:clipToPadding="false">
+
+            <!-- Liquid Split Chrome: píldora de dirección + clúster desacoplado. -->
+            <com.nexo.browser.GestureDock
+                android:id="@+id/topBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="12dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="6dp">
+
+                <!-- Se conserva por compatibilidad (atajo a Inicio). -->
+                <TextView
+                    android:id="@+id/brandText"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/compactBackButton"
+                    android:layout_width="@dimen/touch_target"
+                    android:layout_height="@dimen/touch_target"
+                    android:layout_marginEnd="6dp"
+                    android:contentDescription="@string/back"
+                    android:scaleType="center"
+                    android:src="@drawable/ic_nav_back"
+                    android:visibility="gone" />
+
+                <!-- Píldora de cristal: [candado sutil] dominio [recargar]. -->
+                <LinearLayout
+                    android:id="@+id/omniboxCapsule"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/chrome_pill_height"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="4dp"
+                    android:paddingEnd="4dp">
+
+                    <ImageButton
+                        android:id="@+id/tabToolsButton"
+                        android:layout_width="40dp"
+                        android:layout_height="@dimen/touch_target"
+                        android:contentDescription="Control del sitio, permisos, red e identidad Burner"
+                        android:scaleType="center"
+                        android:src="@drawable/ic_lock" />
+
+                    <EditText
+                        android:id="@+id/omnibox"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@null"
+                        android:ellipsize="end"
+                        android:gravity="center_vertical"
+                        android:hint="@string/omnibox_hint"
+                        android:imeOptions="actionGo"
+                        android:importantForAutofill="no"
+                        android:inputType="textUri"
+                        android:maxLines="1"
+                        android:minHeight="@dimen/touch_target"
+                        android:paddingStart="0dp"
+                        android:paddingEnd="4dp"
+                        android:selectAllOnFocus="true"
+                        android:singleLine="true"
+                        android:textSize="15sp" />
+
+                    <Button
+                        android:id="@+id/clearOmniboxButton"
+                        android:layout_width="40dp"
+                        android:layout_height="@dimen/touch_target"
+                        android:contentDescription="@string/clear_address"
+                        android:gravity="center"
+                        android:minWidth="0dp"
+                        android:minHeight="@dimen/touch_target"
+                        android:padding="0dp"
+                        android:text="×"
+                        android:textAllCaps="false"
+                        android:textSize="20sp"
+                        android:visibility="gone" />
+
+                    <ImageButton
+                        android:id="@+id/pillReloadButton"
+                        android:layout_width="40dp"
+                        android:layout_height="@dimen/touch_target"
+                        android:contentDescription="Recargar"
+                        android:scaleType="center"
+                        android:src="@drawable/ic_nav_reload" />
+                </LinearLayout>
+
+                <!-- Clúster de cristal desacoplado: [Nexo Aperture] [pestañas] [•••]. -->
+                <LinearLayout
+                    android:id="@+id/chromeCluster"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/chrome_pill_height"
+                    android:layout_marginStart="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="2dp"
+                    android:paddingEnd="2dp">
+
+                    <ImageButton
+                        android:id="@+id/aiButton"
+                        android:layout_width="44dp"
+                        android:layout_height="@dimen/touch_target"
+                        android:contentDescription="@string/nexo_ai_action"
+                        android:scaleType="center" />
+
+                    <Button
+                        android:id="@+id/tabButton"
+                        android:layout_width="44dp"
+                        android:layout_height="@dimen/touch_target"
+                        android:contentDescription="@string/open_tabs"
+                        android:gravity="center"
+                        android:minWidth="0dp"
+                        android:minHeight="@dimen/touch_target"
+                        android:padding="0dp"
+                        android:text="1"
+                        android:textAllCaps="false"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/menuButton"
+                        android:layout_width="44dp"
+                        android:layout_height="@dimen/touch_target"
+                        android:contentDescription="@string/open_menu"
+                        android:gravity="center"
+                        android:minWidth="0dp"
+                        android:minHeight="@dimen/touch_target"
+                        android:padding="0dp"
+                        android:text="" />
+                </LinearLayout>
+            </com.nexo.browser.GestureDock>
+
+            <!-- Scroll Compacto: mini-píldora centrada de 34dp (objetivo táctil de 48dp). -->
+            <LinearLayout
+                android:id="@+id/miniPill"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target"
+                android:layout_gravity="center_horizontal|bottom"
+                android:layout_marginBottom="4dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingStart="16dp"
+                android:paddingEnd="18dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/miniLock"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
+                    android:layout_marginEnd="6dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_lock" />
+
+                <TextView
+                    android:id="@+id/miniDomain"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="middle"
+                    android:maxWidth="220dp"
+                    android:singleLine="true"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Dock Clásico refinado (opcional en Configuración). -->
+        <com.nexo.browser.GestureDock
+            android:id="@+id/browserDock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="4dp"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingStart="6dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="2dp">
+
+            <View
+                android:id="@+id/dockGesturePill"
+                android:layout_width="28dp"
+                android:layout_height="3dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="1dp"
+                android:importantForAccessibility="no" />
+
+            <LinearLayout
+                android:id="@+id/navBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:minHeight="@dimen/touch_target"
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <ImageButton
+                    android:id="@+id/backButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_target"
+                    android:layout_weight="1"
+                    android:contentDescription="Atrás"
+                    android:scaleType="center"
+                    android:src="@drawable/ic_nav_back" />
+
+                <ImageButton
+                    android:id="@+id/forwardButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_target"
+                    android:layout_weight="1"
+                    android:contentDescription="Adelante"
+                    android:scaleType="center"
+                    android:src="@drawable/ic_nav_forward" />
+
+                <ImageButton
+                    android:id="@+id/homeButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_target"
+                    android:layout_weight="1"
+                    android:contentDescription="Inicio"
+                    android:scaleType="center"
+                    android:src="@drawable/ic_nav_home" />
+
+                <ImageButton
+                    android:id="@+id/reloadButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_target"
+                    android:layout_weight="1"
+                    android:contentDescription="Recargar"
+                    android:scaleType="center"
+                    android:src="@drawable/ic_nav_reload" />
+
+                <ImageButton
+                    android:id="@+id/newTabButton"
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/touch_target"
+                    android:layout_weight="1"
+                    android:contentDescription="Nueva pestaña"
+                    android:scaleType="center"
+                    android:src="@drawable/ic_nav_add" />
+            </LinearLayout>
+        </com.nexo.browser.GestureDock>
+    </LinearLayout>
+</FrameLayout>

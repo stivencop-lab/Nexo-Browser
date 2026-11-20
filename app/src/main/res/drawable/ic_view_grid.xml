@@ -1,10 +1,32 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Nexo UI 7.0: icono lineal (trazo 1.6dp, extremos redondos). Generado por tools/generate_line_icons.py. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="22dp"
-    android:height="22dp"
+    android:width="20dp"
+    android:height="20dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M4,4h7v7H4V4zm9,0h7v7h-7V4zM4,13h7v7H4v-7zm9,0h7v7h-7v-7z" />
+        android:pathData="M5.6,4h3.3a1.6,1.6 0 0,1 1.6,1.6v3.3a1.6,1.6 0 0,1 -1.6,1.6h-3.3a1.6,1.6 0 0,1 -1.6,-1.6v-3.3a1.6,1.6 0 0,1 1.6,-1.6z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.92"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M15.1,4h3.3a1.6,1.6 0 0,1 1.6,1.6v3.3a1.6,1.6 0 0,1 -1.6,1.6h-3.3a1.6,1.6 0 0,1 -1.6,-1.6v-3.3a1.6,1.6 0 0,1 1.6,-1.6z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.92"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M5.6,13.5h3.3a1.6,1.6 0 0,1 1.6,1.6v3.3a1.6,1.6 0 0,1 -1.6,1.6h-3.3a1.6,1.6 0 0,1 -1.6,-1.6v-3.3a1.6,1.6 0 0,1 1.6,-1.6z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.92"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M15.1,13.5h3.3a1.6,1.6 0 0,1 1.6,1.6v3.3a1.6,1.6 0 0,1 -1.6,1.6h-3.3a1.6,1.6 0 0,1 -1.6,-1.6v-3.3a1.6,1.6 0 0,1 1.6,-1.6z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.92"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>

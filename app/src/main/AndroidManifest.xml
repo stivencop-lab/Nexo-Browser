@@ -58,7 +58,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Nexo.Light.Violet"
+        android:theme="@style/Theme.Nexo.Dark.Mono"
         android:usesCleartextTraffic="true">
         <!-- Solo activo en la actualización de transición (paquete anterior). -->
         <provider

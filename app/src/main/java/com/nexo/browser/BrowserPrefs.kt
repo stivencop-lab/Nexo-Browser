@@ -10,14 +10,28 @@ object BrowserPrefs {
     const val THEME_OLED = "oled"
     const val THEME_LIGHT = "light"
 
+    // Nexo UI 7.0: cinco acentos adultos. Los valores antiguos se migran al leerlos.
+    const val ACCENT_MONO = "mono"
+    const val ACCENT_SIGNAL = "signal"
     const val ACCENT_COBALT = "cobalt"
-    const val ACCENT_VIOLET = "violet"
-    const val ACCENT_CYAN = "cyan"
-    const val ACCENT_LIME = "lime"
     const val ACCENT_ORANGE = "orange"
-    const val ACCENT_PINK = "pink"
-    const val ACCENT_RED = "red"
-    const val ACCENT_DYNAMIC = "dynamic"
+    const val ACCENT_SAGE = "sage"
+    val ACCENTS = listOf(ACCENT_MONO, ACCENT_SIGNAL, ACCENT_COBALT, ACCENT_ORANGE, ACCENT_SAGE)
+
+    /** Cromo inferior: «Liquid Split» (por defecto) o el Dock clásico refinado. */
+    const val CHROME_LIQUID = "liquid"
+    const val CHROME_DOCK = "dock"
+
+    /** Acentos de UI 5.x/6.x → equivalente adulto más cercano de UI 7.0. */
+    fun migrateAccent(raw: String?): String = when (raw) {
+        null, "", "dynamic" -> ACCENT_MONO
+        "violet" -> ACCENT_SIGNAL
+        "cyan" -> ACCENT_COBALT
+        "lime" -> ACCENT_SAGE
+        "pink", "red" -> ACCENT_ORANGE
+        in ACCENTS -> raw
+        else -> ACCENT_MONO
+    }
 
     const val ENGINE_GOOGLE = "google"
     const val ENGINE_DDG = "duckduckgo"
@@ -51,7 +65,7 @@ object BrowserPrefs {
     fun theme(c: Context) = p(c).getString("theme", THEME_SYSTEM) ?: THEME_SYSTEM
     fun setTheme(c: Context, v: String) = p(c).edit().putString("theme", v).apply()
 
-    fun accent(c: Context) = p(c).getString("accent", ACCENT_COBALT) ?: ACCENT_COBALT
+    fun accent(c: Context) = migrateAccent(p(c).getString("accent", ACCENT_MONO))
     fun setAccent(c: Context, v: String) = p(c).edit().putString("accent", v).apply()
 
     fun searchEngine(c: Context) = p(c).getString("search", ENGINE_GOOGLE) ?: ENGINE_GOOGLE
@@ -237,6 +251,11 @@ object BrowserPrefs {
     fun navActions(c: Context) = p(c).getString("nav_actions", NavConfig.serializeActions(NavConfig.DEFAULT_ACTIONS))
         ?: NavConfig.serializeActions(NavConfig.DEFAULT_ACTIONS)
     fun setNavActions(c: Context, v: String) = p(c).edit().putString("nav_actions", v).apply()
+    fun chromeStyle(c: Context) = p(c).getString("chrome_style", CHROME_LIQUID)
+        ?.takeIf { it == CHROME_LIQUID || it == CHROME_DOCK } ?: CHROME_LIQUID
+    fun setChromeStyle(c: Context, v: String) = p(c).edit().putString("chrome_style", v).apply()
+    fun minimalStart(c: Context) = p(c).getBoolean("minimal_start", true)
+    fun setMinimalStart(c: Context, v: Boolean) = p(c).edit().putBoolean("minimal_start", v).apply()
     fun autoHideBars(c: Context) = p(c).getBoolean("auto_hide_bars", true)
     fun setAutoHideBars(c: Context, v: Boolean) = p(c).edit().putBoolean("auto_hide_bars", v).apply()
     /** Vista preferida de Nexo Tabs Pro: grid, compact o list. */

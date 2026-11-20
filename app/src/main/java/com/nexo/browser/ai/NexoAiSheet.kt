@@ -36,7 +36,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Panel adaptable de **Nexo AI 5.1**:
+ * Panel adaptable de **Nexo AI 5.1** con la presentación de Nexo UI 7.0 «Liquid Craft»
+ * (hoja de 34dp sobre la web desenfocada y escalada al 96 %, pestañas con línea deslizante,
+ * chat editorial sin burbujas y compositor en píldora flotante):
  *
  * Arquitectura y experiencia:
  * - **Conversaciones persistentes** gobernadas por [NexoAiController] + [NexoAiStore]:
@@ -141,39 +143,32 @@ object NexoAiSheet {
         val headerRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16f), dp(2f), dp(8f), dp(8f))
+            setPadding(dp(20f), dp(2f), dp(10f), dp(6f))
         }
-        val brandBadge = FrameLayout(activity).apply {
-            background = ThemeManager.rounded(
-                activity,
-                p.primary.container,
-                14f,
-                ColorUtils.setAlphaComponent(p.accent, 80)
-            )
-        }
-        brandBadge.addView(ImageView(activity).apply {
-            setImageResource(R.drawable.ic_nexo_ai_spark)
-            imageTintList = ColorStateList.valueOf(p.primary.onContainer)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        // Emblema Aperture desnudo (sin caja ni borde de color); respira durante el streaming.
+        val headerAperture = com.nexo.browser.NexoApertureDrawable(activity, 22f).apply { setColor(p.text) }
+        val brandBadge = ImageView(activity).apply {
+            setImageDrawable(headerAperture)
+            scaleType = ImageView.ScaleType.CENTER
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, FrameLayout.LayoutParams(dp(20f), dp(20f), Gravity.CENTER))
+        }
 
         val titleCol = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12f), 0, dp(6f), 0)
+            setPadding(dp(10f), 0, dp(6f), 0)
         }
         val headerTitle = TextView(activity).apply {
-            text = "Nexo AI"
-            textSize = 17.5f
-            letterSpacing = -0.01f
-            typeface = NexoUi.bold(activity)
+            text = "Nexo"
+            textSize = 17f
+            letterSpacing = -0.025f
+            typeface = NexoUi.semiBold(activity)
             setTextColor(p.text)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
         val modelPill = TextView(activity).apply {
-            textSize = 11.5f
-            typeface = NexoUi.medium(activity)
+            textSize = 13f
+            typeface = NexoUi.regular(activity)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(2f), 0, 0)
@@ -193,26 +188,18 @@ object NexoAiSheet {
             setOnClickListener { sheetHandle.dismissAnimated() }
         }
 
-        headerRow.addView(brandBadge, LinearLayout.LayoutParams(dp(38f), dp(38f)))
+        headerRow.addView(brandBadge, LinearLayout.LayoutParams(dp(28f), dp(28f)))
         headerRow.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         headerRow.addView(expandBtn, LinearLayout.LayoutParams(dp(44f), dp(48f)))
         headerRow.addView(minimizeBtn, LinearLayout.LayoutParams(dp(44f), dp(48f)))
         header.addView(headerRow)
 
-        // Selector segmentado de 3 secciones: Chat | Comparar | Ajustes
-        val tabBarTrack = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
-            background = ThemeManager.rounded(
-                activity,
-                if (p.isAmoled) 0xFF121620.toInt() else if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer,
-                16f,
-                ThemeManager.hairline(p)
-            )
-        }
+        // Pestañas con línea inferior deslizante: Chat | Comparar | Ajustes (sin cajas grises).
+        var onTabPicked: (Tab) -> Unit = {}
+        val tabBar = NexoUi.UnderlineTabs(activity, listOf(Tab.CHAT to "Chat", Tab.BENCHMARK to "Comparar", Tab.SETTINGS to "Ajustes"), activeTab) { onTabPicked(it) }
         val tabBarWrap = FrameLayout(activity).apply {
-            setPadding(dp(16f), 0, dp(16f), dp(10f))
-            addView(tabBarTrack, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setPadding(dp(20f), 0, dp(20f), 0)
+            addView(tabBar.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         header.addView(tabBarWrap)
         header.addView(NexoUi.divider(activity, 0f))
@@ -221,12 +208,12 @@ object NexoAiSheet {
         val rootBody = FrameLayout(activity)
         val chatContainer = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16f), dp(10f), dp(16f), dp(12f))
+            setPadding(dp(20f), dp(14f), dp(20f), dp(12f))
         }
         val benchmarkView = NexoAiBenchmarkView(activity) { scrollToBottom() }
         val settingsContainer = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16f), dp(8f), dp(16f), dp(18f))
+            setPadding(dp(NexoUi.Tokens.SHEET_PADDING), dp(12f), dp(NexoUi.Tokens.SHEET_PADDING), dp(18f))
             visibility = View.GONE
         }
         rootBody.addView(chatContainer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -252,13 +239,8 @@ object NexoAiSheet {
         // Banner contextual compacto si faltan credenciales o consentimiento
         val setupBanner = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14f), dp(12f), dp(14f), dp(12f))
-            background = ThemeManager.rounded(
-                activity,
-                if (p.isDark) ColorUtils.setAlphaComponent(p.accent, 24) else p.accentSoft,
-                16f,
-                ColorUtils.setAlphaComponent(p.accent, 80)
-            )
+            setPadding(dp(16f), dp(14f), dp(16f), dp(14f))
+            background = ThemeManager.rounded(activity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_CARD)
             visibility = View.GONE
         }
         chatContainer.addView(setupBanner, LinearLayout.LayoutParams(
@@ -272,68 +254,68 @@ object NexoAiSheet {
         // ==================== PIE FIJO (COMPOSITOR DEL CHAT) ====================
         val footer = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14f), dp(6f), dp(14f), dp(8f))
-            background = GradientDrawable().apply {
-                setColor(if (p.isAmoled) 0xFF0C0E13.toInt() else if (p.isDark) p.surfaceContainer else p.surfaceContainerLow)
-            }
+            setPadding(dp(NexoUi.Tokens.SHEET_PADDING), dp(6f), dp(NexoUi.Tokens.SHEET_PADDING), dp(8f))
         }
-        footer.addView(NexoUi.divider(activity, 0f))
-
-        val composerMetaRow = HorizontalScrollView(activity).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(0, dp(6f), 0, dp(6f))
-        }
-        val composerMetaInner = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        composerMetaRow.addView(composerMetaInner)
-        footer.addView(composerMetaRow)
-
+        // Compositor en píldora flotante: [Página ▾] campo [↑].
         val composerRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12f), dp(4f), dp(6f), dp(4f))
-            background = ThemeManager.rounded(
-                activity,
-                if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest,
-                22f,
-                ThemeManager.hairline(p)
-            )
+            minimumHeight = dp(56f)
+            setPadding(dp(6f), dp(4f), dp(6f), dp(4f))
+            background = ThemeManager.rounded(activity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_PILL)
+            com.nexo.browser.NexoGlass.paperShadow(this, p)
+        }
+        val scopeButton = TextView(activity).apply {
+            textSize = 13f
+            typeface = NexoUi.medium(activity)
+            setTextColor(p.text)
+            gravity = Gravity.CENTER
+            minHeight = dp(48f)
+            minWidth = dp(48f)
+            setPadding(dp(12f), 0, dp(10f), 0)
+            background = ThemeManager.ripple(activity, android.graphics.drawable.InsetDrawable(
+                ThemeManager.rounded(activity, if (p.isDark) p.surfaceContainerHighest else p.surfaceContainer, NexoUi.Tokens.RADIUS_PILL), 0, dp(6f), 0, dp(6f)
+            ), NexoUi.Tokens.RADIUS_PILL)
+            compoundDrawablePadding = dp(4f)
         }
         val promptField = EditText(activity).apply {
-            hint = "Pregunta sobre esta página o conversa…"
-            textSize = 14.5f
+            hint = "Preguntar…"
+            textSize = 15f
             typeface = NexoUi.regular(activity)
             setTextColor(p.text)
             setHintTextColor(p.muted)
             background = null
-            maxLines = 4
-            minHeight = dp(42f)
+            maxLines = 5
+            minHeight = dp(48f)
             imeOptions = EditorInfo.IME_ACTION_SEND
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            setPadding(dp(4f), dp(8f), dp(6f), dp(8f))
+            setPadding(dp(10f), dp(8f), dp(6f), dp(8f))
         }
         val sendOrStopBtn = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_ai_send)
             contentDescription = "Enviar consulta a Nexo AI"
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            scaleType = ImageView.ScaleType.CENTER
         }
+        composerRow.addView(scopeButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48f)))
         composerRow.addView(promptField, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        composerRow.addView(sendOrStopBtn, LinearLayout.LayoutParams(dp(40f), dp(40f)).apply { marginStart = dp(6f) })
+        composerRow.addView(sendOrStopBtn, LinearLayout.LayoutParams(dp(48f), dp(48f)))
         footer.addView(composerRow)
 
         fun updateSendButton(generating: Boolean) {
             if (generating) {
                 sendOrStopBtn.setImageResource(R.drawable.ic_ai_stop)
                 sendOrStopBtn.contentDescription = "Detener generación actual"
-                sendOrStopBtn.background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.error.container, 20f), 20f)
-                sendOrStopBtn.imageTintList = ColorStateList.valueOf(p.error.onContainer)
+                sendOrStopBtn.background = ThemeManager.ripple(activity, android.graphics.drawable.InsetDrawable(
+                    ThemeManager.rounded(activity, p.surfaceContainerHighest, NexoUi.Tokens.RADIUS_PILL), dp(4f)), NexoUi.Tokens.RADIUS_PILL)
+                sendOrStopBtn.imageTintList = ColorStateList.valueOf(p.text)
+                headerAperture.setBreathing(!NexoUi.reducedMotion(activity))
             } else {
                 sendOrStopBtn.setImageResource(R.drawable.ic_ai_send)
                 sendOrStopBtn.contentDescription = "Enviar consulta a Nexo AI"
-                sendOrStopBtn.background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, p.accent, 20f), 20f)
+                sendOrStopBtn.background = ThemeManager.ripple(activity, android.graphics.drawable.InsetDrawable(
+                    ThemeManager.rounded(activity, p.accent, NexoUi.Tokens.RADIUS_PILL), dp(4f)), NexoUi.Tokens.RADIUS_PILL)
                 sendOrStopBtn.imageTintList = ColorStateList.valueOf(p.onAccent)
+                headerAperture.setBreathing(false)
             }
         }
 
@@ -346,48 +328,37 @@ object NexoAiSheet {
                 !keyOk -> "Configura tu clave API"
                 else -> s.effectiveModel().ifBlank { s.provider }
             }
-            modelPill.text = "$hostLabel · $modelLabel"
-            modelPill.setTextColor(if (s.enabled && keyOk) p.muted else p.accent)
+            modelPill.text = if (s.enabled && keyOk) hostLabel else "$hostLabel · $modelLabel"
+            modelPill.setTextColor(if (s.enabled && keyOk) p.muted else p.warning.color)
         }
 
+        // Selector de contexto inline «Página ▾» (y razonamiento si el modelo lo admite).
         fun renderScopeAndReasoning() {
-            composerMetaInner.removeAllViews()
-            val scopes = listOf(
-                "page" to "Página",
-                "selection" to "Selección",
-                "tabs" to "Pestañas",
-                "free" to "Sin contexto"
-            )
-            for ((id, label) in scopes) {
-                composerMetaInner.addView(
-                    NexoUi.chip(activity, label, scope == id) {
-                        scope = id
-                        renderScopeAndReasoning()
-                    },
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        marginEnd = dp(6f)
-                    }
-                )
-            }
-            val s = NexoAiConfig.read(activity)
-            if (NexoAiClient.supportsReasoningEffort(s.provider, s.effectiveModel())) {
-                val nextLabel = when (reasoningEffort) {
-                    "low" -> "Raz: Bajo"
-                    "medium" -> "Raz: Medio"
-                    "high" -> "Raz: Alto"
-                    else -> "Raz: Auto"
+            val scopes = listOf("page" to "Página", "selection" to "Selección", "tabs" to "Pestañas", "free" to "Sin contexto")
+            scopeButton.text = scopes.firstOrNull { it.first == scope }?.second ?: "Página"
+            scopeButton.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null,
+                activity.getDrawable(R.drawable.ic_chevron_down)?.mutate()?.apply {
+                    setTint(p.muted); setBounds(0, 0, dp(14f), dp(14f))
+                }, null)
+            scopeButton.contentDescription = "Contexto: ${scopeButton.text}. Cambiar"
+            scopeButton.setOnClickListener { anchor ->
+                val menu = android.widget.PopupMenu(activity, anchor)
+                scopes.forEachIndexed { i, (_, label) -> menu.menu.add(0, i, i, label).apply { isCheckable = true; isChecked = scopes[i].first == scope } }
+                val s = NexoAiConfig.read(activity)
+                val reasoning = NexoAiClient.supportsReasoningEffort(s.provider, s.effectiveModel())
+                if (reasoning) {
+                    listOf(null to "Razonamiento automático", "low" to "Razonamiento bajo", "medium" to "Razonamiento medio", "high" to "Razonamiento alto")
+                        .forEachIndexed { i, (_, label) -> menu.menu.add(1, 10 + i, 10 + i, label).apply { isCheckable = true } }
+                    menu.menu.setGroupCheckable(1, true, true)
+                    menu.menu.findItem(10 + listOf(null, "low", "medium", "high").indexOf(reasoningEffort))?.isChecked = true
                 }
-                composerMetaInner.addView(
-                    NexoUi.chip(activity, nextLabel, reasoningEffort != null) {
-                        reasoningEffort = when (reasoningEffort) {
-                            null -> "low"
-                            "low" -> "medium"
-                            "medium" -> "high"
-                            else -> null
-                        }
-                        renderScopeAndReasoning()
-                    }
-                )
+                menu.setOnMenuItemClickListener { item ->
+                    if (item.itemId < 10) scope = scopes[item.itemId].first
+                    else reasoningEffort = listOf(null, "low", "medium", "high")[item.itemId - 10]
+                    renderScopeAndReasoning()
+                    true
+                }
+                menu.show()
             }
         }
 
@@ -403,6 +374,7 @@ object NexoAiSheet {
                     renderScopeAndReasoning()
                     benchmarkView.refreshConfig()
                     activeTab = Tab.CHAT
+                    tabBar.select(Tab.CHAT, animate = true)
                     // Actualizar visibilidad de pestañas
                     chatContainer.visibility = View.VISIBLE
                     benchmarkView.visibility = View.GONE
@@ -413,44 +385,15 @@ object NexoAiSheet {
         }
 
         fun renderTabs() {
-            tabBarTrack.removeAllViews()
-            val items = listOf(
-                Tab.CHAT to "Chat",
-                Tab.BENCHMARK to "Comparar",
-                Tab.SETTINGS to "Ajustes"
-            )
-            val activeBg = if (p.isDark) p.surfaceContainerHighest else p.surfaceContainerLowest
-            for ((tab, label) in items) {
-                val selected = activeTab == tab
-                val btn = TextView(activity).apply {
-                    text = label
-                    textSize = 12.5f
-                    gravity = Gravity.CENTER
-                    typeface = if (selected) NexoUi.semiBold(activity) else NexoUi.medium(activity)
-                    setTextColor(if (selected) p.text else p.muted)
-                    minHeight = dp(34f)
-                    setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
-                    background = if (selected) {
-                        ThemeManager.rounded(activity, activeBg, 12f, ThemeManager.hairline(p))
-                    } else {
-                        ThemeManager.ripple(activity, null, 12f)
-                    }
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        if (activeTab == tab) return@setOnClickListener
-                        activeTab = tab
-                        chatContainer.visibility = if (tab == Tab.CHAT) View.VISIBLE else View.GONE
-                        benchmarkView.visibility = if (tab == Tab.BENCHMARK) View.VISIBLE else View.GONE
-                        settingsContainer.visibility = if (tab == Tab.SETTINGS) View.VISIBLE else View.GONE
-                        footer.visibility = if (tab == Tab.CHAT) View.VISIBLE else View.GONE
-                        if (tab == Tab.SETTINGS) refreshSettingsForm()
-                        if (tab == Tab.BENCHMARK) benchmarkView.refreshConfig()
-                        renderTabs()
-                        bodyScroll.post { bodyScroll.scrollTo(0, 0) }
-                    }
+            if (tabBar.current != activeTab) tabBar.select(activeTab, animate = true)
+            onTabPicked = { tab ->
+                if (activeTab != tab) {
+                    activeTab = tab
+                    if (tab == Tab.SETTINGS) refreshSettingsForm()
+                    if (tab == Tab.BENCHMARK) benchmarkView.refreshConfig()
+                    renderTabs()
+                    bodyScroll.post { bodyScroll.scrollTo(0, 0) }
                 }
-                tabBarTrack.addView(btn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             }
             chatContainer.visibility = if (activeTab == Tab.CHAT) View.VISIBLE else View.GONE
             benchmarkView.visibility = if (activeTab == Tab.BENCHMARK) View.VISIBLE else View.GONE
@@ -565,68 +508,31 @@ object NexoAiSheet {
 
         fun renderEmptyState() {
             emptyStateBox.removeAllViews()
-            val heroCard = NexoUi.card(activity, paddingDp = 14f)
-            heroCard.addView(TextView(activity).apply {
-                text = if (pageHost.isBlank()) "¿En qué te ayudo hoy?" else "Analiza $pageHost o pregunta lo que necesites"
-                textSize = 15.5f
-                typeface = NexoUi.bold(activity)
+            emptyStateBox.addView(TextView(activity).apply {
+                text = if (pageHost.isBlank()) "¿En qué te ayudo?" else "¿Qué quieres saber de $pageHost?"
+                textSize = 20f
+                letterSpacing = -0.025f
+                typeface = NexoUi.semiBold(activity)
                 setTextColor(p.text)
+                isAccessibilityHeading = true
+                setPadding(0, dp(4f), 0, dp(14f))
             })
-            heroCard.addView(TextView(activity).apply {
-                text = "Puedes minimizar este panel en cualquier momento: tus consultas siguen activas y el historial se conserva."
-                textSize = 12f
-                typeface = NexoUi.regular(activity)
-                setTextColor(p.muted)
-                setPadding(0, dp(4f), 0, 0)
-                setLineSpacing(dp(2f).toFloat(), 1f)
-            })
-            emptyStateBox.addView(heroCard, LinearLayout.LayoutParams(
+            // Lista agrupada: iconos lineales desnudos y divisores inset (sin cuadrados de color).
+            val group = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                background = ThemeManager.rounded(activity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_CARD)
+                clipToOutline = true
+                com.nexo.browser.NexoGlass.paperShadow(this, p)
+            }
+            QUICK_ACTIONS.forEachIndexed { index, qa ->
+                if (index > 0) group.addView(NexoUi.insetDivider(activity))
+                group.addView(NexoUi.actionRow(activity, qa.icon, qa.title) {
+                    dispatchPrompt(qa.prompt, qa.logLabel, qa.forceScope)
+                })
+            }
+            emptyStateBox.addView(group, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(10f) })
-
-            val tileBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-            val tileStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
-            QUICK_ACTIONS.chunked(2).forEach { pair ->
-                val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
-                pair.forEachIndexed { idx, qa ->
-                    val cell = LinearLayout(activity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
-                        background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, tileBg, 16f, tileStroke), 16f)
-                        isClickable = true
-                        isFocusable = true
-                        setOnClickListener { dispatchPrompt(qa.prompt, qa.logLabel, qa.forceScope) }
-                        addView(ImageView(activity).apply {
-                            setImageResource(qa.icon)
-                            imageTintList = ColorStateList.valueOf(if (p.isDark) p.onAccentSoft else p.accent)
-                            setPadding(dp(7f), dp(7f), dp(7f), dp(7f))
-                            background = ThemeManager.rounded(activity, p.accentSoft, 10f)
-                        }, LinearLayout.LayoutParams(dp(32f), dp(32f)).apply { bottomMargin = dp(6f) })
-                        addView(TextView(activity).apply {
-                            text = qa.title
-                            textSize = 13f
-                            typeface = NexoUi.semiBold(activity)
-                            setTextColor(p.text)
-                            maxLines = 1
-                            ellipsize = TextUtils.TruncateAt.END
-                        })
-                        addView(TextView(activity).apply {
-                            text = qa.subtitle
-                            textSize = 11.5f
-                            typeface = NexoUi.regular(activity)
-                            setTextColor(p.muted)
-                            maxLines = 1
-                            ellipsize = TextUtils.TruncateAt.END
-                            setPadding(0, dp(2f), 0, 0)
-                        })
-                    }
-                    row.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        if (idx > 0) marginStart = dp(8f)
-                        bottomMargin = dp(8f)
-                    })
-                }
-                emptyStateBox.addView(row)
-            }
         }
 
         fun renderSetupBanner() {
@@ -639,137 +545,101 @@ object NexoAiSheet {
             }
             setupBanner.visibility = View.VISIBLE
             setupBanner.addView(TextView(activity).apply {
-                text = if (!s.enabled) "Nexo AI está desactivado (opt-in)" else "Falta configurar tu proveedor o clave API"
-                textSize = 13f
-                typeface = NexoUi.semiBold(activity)
+                text = if (!s.enabled) "Nexo AI está desactivado" else "Falta tu proveedor o clave API"
+                textSize = 15f
+                typeface = NexoUi.medium(activity)
                 setTextColor(p.text)
             })
-            setupBanner.addView(TextView(activity).apply {
-                text = "Tus claves se cifran en Android Keystore y nunca se envía ninguna página automáticamente."
-                textSize = 11.5f
-                typeface = NexoUi.regular(activity)
-                setTextColor(p.muted)
-                setPadding(0, dp(2f), 0, dp(8f))
-            })
-            setupBanner.addView(NexoUi.chip(activity, "Configurar proveedor y clave", true) {
+            setupBanner.addView(NexoUi.button(activity, "Configurar", primary = true) {
                 activeTab = Tab.SETTINGS
                 refreshSettingsForm()
                 renderTabs()
-            })
+            }, NexoUi.buttonParams(activity, 12f))
         }
 
-        fun buildMessageBubble(msg: NexoAiModels.AiMessage, convId: String): View {
+        // Chat editorial: sin burbujas ni tarjetas contenedoras.
+        fun buildMessageBubble(msg: NexoAiModels.AiMessage, convId: String, first: Boolean): View {
             if (msg.role == NexoAiModels.Role.USER) {
-                val wrap = FrameLayout(activity).apply {
-                    setPadding(dp(36f), dp(2f), 0, dp(8f))
-                }
-                val bubble = LinearLayout(activity).apply {
+                val wrap = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
-                    background = ThemeManager.rounded(activity, p.primary.container, 18f)
+                    setPadding(0, if (first) dp(2f) else dp(18f), 0, dp(10f))
                 }
-                val scopeBadge = when (msg.scope) {
+                if (!first) wrap.addView(NexoUi.divider(activity, 0f), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(0.6f).coerceAtLeast(1)).apply { bottomMargin = dp(18f) })
+                val scopeLabel = when (msg.scope) {
                     "selection" -> "Selección"
                     "tabs" -> "Pestañas"
-                    "free" -> "Libre"
+                    "free" -> "Sin contexto"
                     else -> msg.pageBinding?.host?.takeIf { it.isNotBlank() } ?: "Página"
                 }
-                bubble.addView(TextView(activity).apply {
-                    text = scopeBadge
-                    textSize = 10.5f
-                    typeface = NexoUi.semiBold(activity)
-                    setTextColor(ColorUtils.setAlphaComponent(p.primary.onContainer, 190))
+                wrap.addView(TextView(activity).apply {
+                    text = "Tú · $scopeLabel"
+                    textSize = 12f
+                    typeface = NexoUi.regular(activity)
+                    setTextColor(p.muted)
                 })
-                bubble.addView(TextView(activity).apply {
+                wrap.addView(TextView(activity).apply {
                     text = msg.text
-                    textSize = 14f
+                    textSize = 16f
+                    letterSpacing = -0.01f
                     typeface = NexoUi.medium(activity)
-                    setTextColor(p.primary.onContainer)
-                    setPadding(0, dp(2f), 0, 0)
+                    setTextColor(p.text)
+                    setTextIsSelectable(true)
+                    setPadding(0, dp(4f), 0, 0)
                 })
-                wrap.addView(bubble, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END))
                 return wrap
             }
 
-            // Burbuja del asistente
-            val cardBg = if (p.isAmoled) 0xFF111520.toInt() else if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-            val cardStroke = when (msg.status) {
-                NexoAiModels.MessageStatus.ERROR, NexoAiModels.MessageStatus.INTERRUPTED -> ColorUtils.setAlphaComponent(p.danger, 120)
-                NexoAiModels.MessageStatus.SENDING, NexoAiModels.MessageStatus.STREAMING -> ColorUtils.setAlphaComponent(p.accent, 130)
-                else -> ThemeManager.hairline(p)
-            }
+            // Respuesta directa sobre el fondo limpio.
             val card = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(14f), dp(12f), dp(14f), dp(10f))
-                background = ThemeManager.rounded(activity, cardBg, 18f, cardStroke)
+                setPadding(0, 0, 0, dp(4f))
             }
-
-            // Cabecera de respuesta: modelo + estado
-            val topMeta = LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            topMeta.addView(TextView(activity).apply {
-                text = (msg.model ?: "Nexo AI").substringAfterLast('/')
-                textSize = 11.5f
-                typeface = NexoUi.semiBold(activity)
-                setTextColor(p.muted)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
             val statusLabel = when (msg.status) {
-                NexoAiModels.MessageStatus.SENDING -> "Consultando…" to NexoUi.Tone.INFO
-                NexoAiModels.MessageStatus.STREAMING -> "Respondiendo en vivo…" to NexoUi.Tone.ACCENT
-                NexoAiModels.MessageStatus.CANCELLED -> "Detenida" to NexoUi.Tone.WARNING
-                NexoAiModels.MessageStatus.INTERRUPTED -> "Interrumpida" to NexoUi.Tone.WARNING
-                NexoAiModels.MessageStatus.ERROR -> "Error" to NexoUi.Tone.DANGER
+                NexoAiModels.MessageStatus.SENDING -> "Consultando…" to p.muted
+                NexoAiModels.MessageStatus.STREAMING -> "Escribiendo…" to p.muted
+                NexoAiModels.MessageStatus.CANCELLED -> "Detenida" to p.warning.color
+                NexoAiModels.MessageStatus.INTERRUPTED -> "Interrumpida" to p.warning.color
+                NexoAiModels.MessageStatus.ERROR -> "Error" to p.danger
                 NexoAiModels.MessageStatus.COMPLETED -> null
             }
-            statusLabel?.let { (lbl, tone) ->
-                topMeta.addView(NexoUi.statusPill(activity, lbl, tone))
+            statusLabel?.let { (lbl, color) ->
+                card.addView(TextView(activity).apply {
+                    text = "${(msg.model ?: "Nexo").substringAfterLast('/')} · $lbl"
+                    textSize = 12f
+                    typeface = NexoUi.regular(activity)
+                    setTextColor(color)
+                    setPadding(0, 0, 0, dp(4f))
+                })
             }
-            card.addView(topMeta)
 
             if (msg.text.isNotBlank()) {
                 card.addView(TextView(activity).apply {
                     text = msg.text
-                    textSize = 14.5f
+                    textSize = 15.5f
                     typeface = NexoUi.regular(activity)
                     setTextColor(p.text)
                     setTextIsSelectable(true)
-                    setLineSpacing(dp(4f).toFloat(), 1f)
-                    setPadding(0, dp(6f), 0, dp(4f))
+                    setLineSpacing(0f, 1.45f)
+                    setPadding(0, dp(2f), 0, dp(4f))
                 })
             } else if (msg.status == NexoAiModels.MessageStatus.SENDING) {
                 card.addView(TextView(activity).apply {
-                    text = "Analizando tu solicitud… Puedes minimizar el panel y volver después."
-                    textSize = 13f
+                    text = "Analizando…"
+                    textSize = 15f
                     typeface = NexoUi.regular(activity)
                     setTextColor(p.muted)
-                    setPadding(0, dp(6f), 0, dp(4f))
+                    setPadding(0, dp(2f), 0, dp(4f))
                 })
             }
 
             if (!msg.errorMessage.isNullOrBlank()) {
                 card.addView(TextView(activity).apply {
                     text = msg.errorMessage
-                    textSize = 12.5f
-                    typeface = NexoUi.medium(activity)
+                    textSize = 13.5f
+                    typeface = NexoUi.regular(activity)
                     setTextColor(if (msg.status == NexoAiModels.MessageStatus.ERROR) p.danger else p.muted)
-                    setPadding(0, dp(4f), 0, dp(4f))
-                })
-            }
-
-            // Métricas reales medidas (sin datos inventados)
-            val metricsLine = msg.metrics?.formatCompact(msg.usage).orEmpty()
-                .ifBlank { msg.usage?.format().orEmpty() }
-            if (metricsLine.isNotBlank()) {
-                card.addView(TextView(activity).apply {
-                    text = metricsLine
-                    textSize = 10.5f
-                    typeface = NexoUi.mono(activity)
-                    setTextColor(p.muted)
                     setPadding(0, dp(4f), 0, dp(4f))
                 })
             }
@@ -791,52 +661,45 @@ object NexoAiSheet {
                         setPadding(0, 0, 0, dp(4f))
                     })
                 }
-                val actionChips = msg.actions.map { act ->
-                    NexoUi.chip(activity, act.label, false) {
-                        NexoAiPageAgent.confirmAndExecuteAction(activity, act, msg.pageBinding)
-                    }
-                }
-                actionsWrap.addView(NexoUi.chipRow(activity, actionChips, sidePaddingDp = 0f))
-                card.addView(actionsWrap)
+                if (actionsWrap.childCount > 0) card.addView(actionsWrap)
             }
 
-            // Barra de acciones de la respuesta (Detener / Copiar / Reintentar)
-            val controls = LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(4f), 0, 0)
-            }
+            // Acciones fantasma: propuestas de página (Resaltar, Abrir…), Copiar, Reintentar / Detener.
+            val ghost = ArrayList<View>()
             if (msg.isInFlight && msg.requestId != null) {
-                controls.addView(NexoUi.chip(activity, "Detener", false) {
-                    NexoAiController.cancelRequest(msg.requestId)
-                })
+                ghost += ghostAction(activity, "Detener") { NexoAiController.cancelRequest(msg.requestId) }
             } else {
+                msg.actions.forEach { act ->
+                    ghost += ghostAction(activity, act.label) { NexoAiPageAgent.confirmAndExecuteAction(activity, act, msg.pageBinding) }
+                }
                 if (msg.text.isNotBlank()) {
-                    controls.addView(NexoUi.chip(activity, "Copiar", false) {
+                    ghost += ghostAction(activity, "Copiar") {
                         val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                         cm?.setPrimaryClip(ClipData.newPlainText("Nexo AI", msg.text))
                         Toastish.show(activity, "Respuesta copiada.")
-                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        marginEnd = dp(6f)
-                    })
+                    }
                 }
                 if ((msg.status == NexoAiModels.MessageStatus.ERROR ||
                         msg.status == NexoAiModels.MessageStatus.INTERRUPTED ||
                         msg.status == NexoAiModels.MessageStatus.CANCELLED) && !msg.retryPrompt.isNullOrBlank()
                 ) {
-                    controls.addView(NexoUi.chip(activity, "Reintentar", true) {
+                    ghost += ghostAction(activity, "Reintentar") {
                         NexoAiController.selectConversation(convId)
                         dispatchPrompt(msg.retryPrompt, "reintentar", msg.scope)
-                    })
+                    }
                 }
             }
-            if (controls.childCount > 0) card.addView(controls)
+            if (ghost.isNotEmpty()) card.addView(NexoUi.chipRow(activity, ghost), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
+
+            // Telemetría real medida, plegable: «1.84 s · 43 tok/s ▾».
+            telemetryChip(activity, msg)?.let { card.addView(it) }
 
             return card.apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(10f) }
+                ).apply { bottomMargin = dp(6f) }
             }
         }
 
@@ -845,7 +708,7 @@ object NexoAiSheet {
 
             // Carril de conversaciones persistentes
             threadRail.removeAllViews()
-            threadRail.addView(NexoUi.chip(activity, "+ Nueva", false) {
+            threadRail.addView(NexoUi.chip(activity, "Nueva", false) {
                 NexoAiController.newConversation(pageHost)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6f)
@@ -881,8 +744,8 @@ object NexoAiSheet {
             val renderKey = "${conv?.id}|${msgs.size}|${msgs.lastOrNull()?.status}|${msgs.lastOrNull()?.text?.length}"
             messagesBox.removeAllViews()
             if (conv != null) {
-                for (m in msgs) {
-                    messagesBox.addView(buildMessageBubble(m, conv.id))
+                msgs.forEachIndexed { i, m ->
+                    messagesBox.addView(buildMessageBubble(m, conv.id, first = i == 0))
                 }
             }
             if (renderKey != lastRenderedKey && msgs.isNotEmpty()) {
@@ -950,6 +813,14 @@ object NexoAiSheet {
             }
         )
         bodyScroll = sheetHandle.scrollView
+        // La web queda detrás desenfocada (blur-behind de la ventana) y escalada al 96 %.
+        val webLayer = activity.findViewById<View>(android.R.id.content)
+        webLayer?.let {
+            it.pivotX = it.width / 2f
+            it.pivotY = it.height * 0.35f
+            com.nexo.browser.NexoMotion.spring(it, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_X, 0.96f)
+            com.nexo.browser.NexoMotion.spring(it, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_Y, 0.96f)
+        }
         @Suppress("DEPRECATION")
         sheetHandle.dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
@@ -962,9 +833,60 @@ object NexoAiSheet {
 
         // CRÍTICO: Minimizar/cerrar el panel JAMÁS cancela consultas ni borra conversaciones.
         sheetHandle.dialog.setOnDismissListener {
+            webLayer?.let {
+                com.nexo.browser.NexoMotion.spring(it, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_X, 1f)
+                com.nexo.browser.NexoMotion.spring(it, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_Y, 1f)
+            }
             NexoAiController.unobserve(observer)
             benchmarkView.detach()
             NexoAiController.setPanelState(NexoAiModels.PanelState.MINIMIZED)
+        }
+    }
+
+    /** Acción fantasma: píldora tonal compacta (48dp táctiles), sin borde ni color de marca. */
+    private fun ghostAction(activity: Activity, label: String, onClick: () -> Unit): View {
+        val p = ThemeManager.palette(activity)
+        val d = { v: Float -> NexoUi.dp(activity, v) }
+        return TextView(activity).apply {
+            text = label
+            textSize = 13f
+            typeface = NexoUi.medium(activity)
+            setTextColor(p.text)
+            gravity = Gravity.CENTER
+            minHeight = d(48f)
+            minWidth = d(48f)
+            setPadding(d(14f), 0, d(14f), 0)
+            background = ThemeManager.ripple(activity, android.graphics.drawable.InsetDrawable(
+                ThemeManager.rounded(activity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_PILL), 0, d(8f), 0, d(8f)), NexoUi.Tokens.RADIUS_PILL)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    /** Chip de telemetría colapsable en JetBrains Mono tabular; solo métricas medidas de verdad. */
+    private fun telemetryChip(activity: Activity, msg: NexoAiModels.AiMessage): View? {
+        val m = msg.metrics
+        val full = m?.formatCompact(msg.usage).orEmpty().ifBlank { msg.usage?.format().orEmpty() }
+        if (full.isBlank()) return null
+        val short = if (m != null) listOfNotNull(
+            NexoAiModels.AiMetrics.formatDuration(m.totalDurationMs),
+            m.tokensPerSecond?.let { String.format(Locale.US, "%.0f tok/s", it) }
+        ).joinToString(" · ") else full
+        val p = ThemeManager.palette(activity)
+        var expanded = false
+        return TextView(activity).apply {
+            textSize = 12f
+            typeface = NexoUi.mono(activity)
+            fontFeatureSettings = "tnum"
+            setTextColor(p.muted)
+            minHeight = NexoUi.dp(activity, 44f)
+            gravity = Gravity.CENTER_VERTICAL
+            fun bind() {
+                text = if (expanded) "$full ▴" else "$short ▾"
+                contentDescription = "Telemetría: " + if (expanded) full else short
+            }
+            bind()
+            background = ThemeManager.ripple(activity, null, 12f)
+            setOnClickListener { expanded = !expanded; bind() }
         }
     }
 
@@ -986,7 +908,7 @@ object NexoAiSheet {
         }, NexoUi.buttonParams(activity, 6f))
         dialog = NexoSheets.show(
             activity,
-            NexoSheets.column(activity, NexoSheets.header(activity, "Privacidad de Nexo AI", "Consentimiento explícito"), body)
+            NexoSheets.column(activity, NexoSheets.header(activity, "Privacidad de Nexo AI"), body)
         )
     }
 
@@ -1008,7 +930,7 @@ object NexoAiSheet {
             activity,
             NexoSheets.column(
                 activity,
-                NexoSheets.header(activity, "Configurar Nexo AI", "Claves cifradas en Keystore"),
+                NexoSheets.header(activity, "Configurar Nexo AI"),
                 body
             )
         )
@@ -1032,12 +954,7 @@ object NexoAiSheet {
 
         if (includeEnableToggle) {
             val masterCard = NexoUi.card(activity, paddingDp = 4f)
-            masterCard.addView(NexoUi.switchRow(
-                activity,
-                "Activar Nexo AI",
-                "Solo envía contexto saneado cuando tú pulses una acción.",
-                enabled
-            ) { enabled = it })
+            masterCard.addView(NexoUi.switchRow(activity, "Nexo AI", null, enabled) { enabled = it })
             container.addView(masterCard)
         }
 
@@ -1057,11 +974,30 @@ object NexoAiSheet {
         )
         val (keyView, keyField) = NexoUi.field(
             activity,
-            "Clave API (cifrada en Android Keystore)",
+            "Clave API",
             "Pega tu clave",
             NexoAiConfig.apiKey(activity)
         )
         keyField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        keyField.typeface = NexoUi.mono(activity)
+        // Indicador discreto de almacenamiento seguro junto a la etiqueta.
+        ((keyView as LinearLayout).getChildAt(0) as? TextView)?.let { label ->
+            val pal = ThemeManager.palette(activity)
+            val row = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL }
+            keyView.removeView(label)
+            row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(TextView(activity).apply {
+                text = "Android Keystore"
+                textSize = 12f
+                typeface = NexoUi.medium(activity)
+                setTextColor(pal.success.color)
+                setCompoundDrawablesRelativeWithIntrinsicBounds(activity.getDrawable(R.drawable.ic_lock)?.mutate()?.apply {
+                    setTint(pal.success.color); setBounds(0, 0, NexoUi.dp(activity, 12f), NexoUi.dp(activity, 12f))
+                }, null, null, null)
+                compoundDrawablePadding = NexoUi.dp(activity, 4f)
+            })
+            keyView.addView(row, 0)
+        }
 
         fun renderSuggestedModels() {
             suggestedHolder.removeAllViews()
@@ -1071,7 +1007,7 @@ object NexoAiSheet {
                 NexoUi.chip(activity, m.substringAfterLast('/'), currentText == m) {
                     modelField.setText(m)
                     renderSuggestedModels()
-                }
+                }.apply { typeface = NexoUi.mono(activity); textSize = 12.5f }
             }, sidePaddingDp = 0f))
         }
 
@@ -1091,7 +1027,7 @@ object NexoAiSheet {
         renderProviders()
         renderSuggestedModels()
 
-        container.addView(NexoUi.section(activity, "Proveedor de IA"))
+        container.addView(NexoUi.section(activity, "Proveedor"))
         container.addView(providerHolder)
         container.addView(modelView)
         container.addView(suggestedHolder)
@@ -1102,38 +1038,32 @@ object NexoAiSheet {
         val ctxHolder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         fun renderCtx() {
             ctxHolder.removeAllViews()
-            ctxHolder.addView(NexoUi.chipRow(activity, listOf(4000 to "4 KB", 8000 to "8 KB", 12000 to "12 KB", 16000 to "16 KB").map { (v, label) ->
-                NexoUi.chip(activity, label, maxContext == v) { maxContext = v; renderCtx() }
-            }, sidePaddingDp = 0f))
+            ctxHolder.addView(NexoUi.segmented(activity, listOf(4000 to "4 KB", 8000 to "8 KB", 12000 to "12 KB", 16000 to "16 KB"), maxContext, mono = true) {
+                maxContext = it; renderCtx()
+            })
         }
         renderCtx()
         container.addView(ctxHolder)
 
-        container.addView(NexoUi.section(activity, "Tiempo máximo de espera"))
+        container.addView(NexoUi.section(activity, "Tiempo límite"))
         val timeoutHolder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         fun renderTimeouts() {
             timeoutHolder.removeAllViews()
-            timeoutHolder.addView(NexoUi.chipRow(activity, listOf(20 to "20 s", 35 to "35 s", 60 to "60 s", 90 to "90 s").map { (v, label) ->
-                NexoUi.chip(activity, label, timeoutSec == v) { timeoutSec = v; renderTimeouts() }
-            }, sidePaddingDp = 0f))
+            timeoutHolder.addView(NexoUi.segmented(activity, listOf(20 to "20 s", 35 to "35 s", 60 to "60 s", 90 to "90 s"), timeoutSec, mono = true) {
+                timeoutSec = it; renderTimeouts()
+            })
         }
         renderTimeouts()
         container.addView(timeoutHolder)
 
         val privacyCard = NexoUi.card(activity, paddingDp = 4f)
-        privacyCard.addView(NexoUi.switchRow(
-            activity,
-            "Permitir en pestañas privadas",
-            "Desactivado por defecto para máxima privacidad.",
-            allowPrivate
-        ) { allowPrivate = it })
+        privacyCard.addView(NexoUi.switchRow(activity, "Permitir en pestañas privadas", null, allowPrivate) { allowPrivate = it })
         if (includeLogRow) {
             privacyCard.addView(NexoUi.insetDivider(activity))
             privacyCard.addView(NexoUi.actionRow(
                 activity,
                 R.drawable.ic_menu_history,
-                "Registro local de acciones",
-                "Historial saneado sin claves ni contraseñas"
+                "Registro local de acciones"
             ) {
                 showLogSheet(activity)
             })
@@ -1151,7 +1081,7 @@ object NexoAiSheet {
         }
         container.addView(errorView)
 
-        container.addView(NexoUi.button(activity, "Guardar configuración", primary = true) {
+        container.addView(NexoUi.button(activity, "Guardar", primary = true) {
             val next = current.copy(
                 enabled = enabled,
                 provider = provider,
@@ -1202,7 +1132,7 @@ object NexoAiSheet {
         }, NexoUi.buttonParams(activity, 6f))
         logDialog = NexoSheets.show(
             activity,
-            NexoSheets.column(activity, NexoSheets.header(activity, "Registro local de Nexo AI", "Saneado sin claves ni contraseñas"), body)
+            NexoSheets.column(activity, NexoSheets.header(activity, "Registro local de Nexo AI"), body)
         )
     }
 }

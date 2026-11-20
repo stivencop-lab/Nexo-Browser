@@ -112,6 +112,12 @@ class ScreenshotTest {
         listOf(R.id.backButton, R.id.forwardButton, R.id.homeButton, R.id.reloadButton)
             .forEach { ThemeManager.styleIconButton(activity, root.findViewById(it)) }
         ThemeManager.styleDockPrimaryIcon(activity, root.findViewById(R.id.newTabButton))
+        // Liquid Split Chrome: cristal en píldora y clúster; el dock clásico queda oculto.
+        root.findViewById<View>(R.id.browserDock).visibility = View.GONE
+        root.findViewById<View>(R.id.chromeCluster).apply { background = NexoGlassDrawable(activity, p, NexoUi.Tokens.RADIUS_PILL); NexoGlass.float(this, p) }
+        root.findViewById<android.widget.ImageButton>(R.id.pillReloadButton).apply {
+            ThemeManager.styleIconButton(activity, this); imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+        }
         root.findViewById<View>(R.id.pageView).setBackgroundColor(p.surfaceContainerLowest)
         activity.setContentView(root)
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
@@ -284,7 +290,7 @@ class ScreenshotTest {
             SheetAction(R.drawable.ic_menu_copy, "Copiar URL") {},
             SheetAction(R.drawable.ic_menu_share, "Compartir") {},
             SheetAction(R.drawable.ic_menu_find, "Buscar") {},
-            SheetAction(R.drawable.ic_nexo_ai_spark, "Nexo AI", subtitle = "Asistente de página, selección y pestañas") {},
+            SheetAction(R.drawable.ic_nexo_aperture, "Nexo AI", subtitle = "Asistente de página, selección y pestañas") {},
             SheetAction(R.drawable.ic_menu_settings, "Ajustes") {},
             SheetAction(R.drawable.ic_menu_update, "Buscar actualizaciones") {}
         )

@@ -33,23 +33,26 @@ data class SheetAction(
 )
 
 /**
- * Hojas inferiores Nexo UI 5.0:
- * superficies tonales limpias sin bordes excesivos, divisores inset alineados al texto,
- * cuadrícula de acciones equilibrada sin elementos huérfanos y soporte para hojas con
- * cabecera y barra inferior fijas (p. ej. Nexo AI).
+ * Hojas inferiores Nexo UI 7.0 «Liquid Craft»: lámina de radio superior continuo 34dp,
+ * desenfoque real de lo que hay detrás (API 31+), apertura con muelle, tarjetas agrupadas
+ * r:22 sin bordes, iconos desnudos y divisores inset. Soporta cabecera y pie fijos (Nexo AI).
  */
 object NexoSheets {
+    /** Listas agrupadas: tarjeta r:22 sin borde, iconos desnudos y divisores inset (sin rótulos). */
     fun actionGroups(activity: Activity, groups: List<MenuSections.Group>, dismiss: () -> Unit): View =
-        NexoUi.column(activity, horizontalDp = 16f).apply {
+        NexoUi.column(activity, horizontalDp = NexoUi.Tokens.SHEET_PADDING).apply {
             val p = ThemeManager.palette(activity)
-            val cardBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-            val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
-            groups.forEach { group ->
-                addView(NexoUi.section(activity, group.title))
+            val cardBg = groupFill(p)
+            groups.forEachIndexed { index, group ->
                 val card = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
-                    background = ThemeManager.rounded(activity, cardBg, NexoUi.Tokens.RADIUS_CARD, stroke)
+                    background = ThemeManager.rounded(activity, cardBg, NexoUi.Tokens.RADIUS_CARD)
                     clipToOutline = true
+                    contentDescription = group.title
+                    NexoGlass.paperShadow(this, p)
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        if (index > 0) topMargin = dp(activity, 10f)
+                    }
                 }
                 group.actions.forEachIndexed { idx, action ->
                     if (idx > 0) card.addView(NexoUi.insetDivider(activity))
@@ -64,28 +67,27 @@ object NexoSheets {
     private fun dp(activity: Activity, value: Float): Int =
         (value * activity.resources.displayMetrics.density).toInt()
 
+    /** Relleno de tarjetas agrupadas dentro de una hoja (un escalón sobre la hoja). */
+    fun groupFill(p: BrowserPalette): Int = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
+
+    /** Lámina de la hoja: radio superior continuo de 34dp, sin bordes. */
     private fun sheetBackground(activity: Activity): GradientDrawable {
         val p = ThemeManager.palette(activity)
         val radius = dp(activity, NexoUi.Tokens.RADIUS_SHEET).toFloat()
-        val sheetColor = when {
-            p.isAmoled -> 0xFF0C0E13.toInt()
-            p.isDark -> p.surfaceContainer
-            else -> p.surfaceContainerLow
-        }
+        val sheetColor = if (p.isDark) p.surfaceContainerLow else p.background
         return GradientDrawable().apply {
             setColor(sheetColor)
-            if (p.isAmoled) setStroke(dp(activity, 1f).coerceAtLeast(1), ThemeManager.hairline(p))
             cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
         }
     }
 
     private fun dragHandle(activity: Activity): View {
         val p = ThemeManager.palette(activity)
-        val handleColor = ColorUtils.setAlphaComponent(p.muted, 110)
+        val handleColor = ColorUtils.setAlphaComponent(p.muted, 96)
         return View(activity).apply {
             background = ThemeManager.rounded(activity, handleColor, 3f)
             contentDescription = "Arrastra hacia abajo para cerrar"
-            layoutParams = LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 4f)).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(activity, 36f), dp(activity, 5f)).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 bottomMargin = dp(activity, 10f)
             }
@@ -205,7 +207,7 @@ object NexoSheets {
             orientation = LinearLayout.VERTICAL
             background = sheetBackground(activity)
             setPadding(0, dp(activity, 10f), 0, dp(activity, 8f))
-            baseDim = if (p.isDark) 0.56f else 0.42f
+            baseDim = if (p.isDark) 0.5f else 0.28f
         }
         sheet.addView(dragHandle(activity))
         sheet.addView(headerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -237,12 +239,13 @@ object NexoSheets {
                 scroll.limitHeight(targetH, exact = true)
                 return
             }
-            heightAnimator = android.animation.ValueAnimator.ofInt(startH, targetH).apply {
-                duration = 210L
-                interpolator = android.view.animation.DecelerateInterpolator(1.5f)
-                addUpdateListener { anim ->
-                    scroll.limitHeight(anim.animatedValue as Int, exact = true)
-                }
+            // Muelle Liquid Craft sobre la altura (sin curvas accelerate/decelerate).
+            heightAnimator = null
+            val holder = androidx.dynamicanimation.animation.FloatValueHolder(startH.toFloat())
+            androidx.dynamicanimation.animation.SpringAnimation(holder).apply {
+                spring = androidx.dynamicanimation.animation.SpringForce(targetH.toFloat())
+                    .setStiffness(NexoMotion.STIFFNESS).setDampingRatio(NexoMotion.DAMPING)
+                addUpdateListener { _, value, _ -> scroll.limitHeight(value.toInt(), exact = true) }
                 start()
             }
         }
@@ -278,7 +281,7 @@ object NexoSheets {
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             setWindowAnimations(0)
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setDimAmount(if (p.isDark) 0.56f else 0.42f)
+            setDimAmount(if (p.isDark) 0.5f else 0.28f)
             @Suppress("DEPRECATION")
             navigationBarColor = Color.TRANSPARENT
             WindowCompat.getInsetsController(this, decorView).apply {
@@ -287,6 +290,7 @@ object NexoSheets {
             }
         }
         dialog.setCanceledOnTouchOutside(true)
+        NexoGlass.blurBehind(dialog, activity)
         dialog.show()
         dialog.window?.setLayout(sheetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
         ViewCompat.requestApplyInsets(sheet)
@@ -311,10 +315,11 @@ object NexoSheets {
             }
             topRow.addView(TextView(activity).apply {
                 text = title
-                textSize = 18.5f
-                letterSpacing = -0.01f
+                textSize = 20f
+                letterSpacing = -0.025f
                 setTextColor(p.text)
-                typeface = NexoUi.bold(activity)
+                typeface = NexoUi.semiBold(activity)
+                isAccessibilityHeading = true
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -338,60 +343,42 @@ object NexoSheets {
         }
     }
 
-    /** Tarjetas primarias superiores: limpias, tonales y sin exceso de contornos. */
+    /**
+     * Píldoras táctiles de sesión (Nueva · Privada · Burner): icono desnudo y una sola palabra,
+     * sin subtítulos. Radio concéntrico: 34 (hoja) − 12 (padding) = 22.
+     */
     fun primaryActions(activity: Activity, actions: List<SheetAction>, dismiss: () -> Unit): View {
         val p = ThemeManager.palette(activity)
-        val compactVertical = actions.size >= 3
-        val tileBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-        val tileStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
+        val tileBg = groupFill(p)
+        val radius = NexoUi.Tokens.inner(NexoUi.Tokens.RADIUS_SHEET, NexoUi.Tokens.SHEET_PADDING)
         return LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(activity, 16f), 0, dp(activity, 16f), dp(activity, 12f))
+            setPadding(dp(activity, NexoUi.Tokens.SHEET_PADDING), 0, dp(activity, NexoUi.Tokens.SHEET_PADDING), dp(activity, 10f))
             actions.forEachIndexed { index, action ->
                 val cell = LinearLayout(activity).apply {
-                    orientation = if (compactVertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-                    gravity = if (compactVertical) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
-                    minimumHeight = dp(activity, if (compactVertical) 80f else 72f)
-                    val hPad = dp(activity, if (compactVertical) 8f else 12f)
-                    val vPad = dp(activity, 11f)
-                    setPadding(hPad, vPad, hPad, vPad)
-                    background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, tileBg, 18f, tileStroke), 18f)
-                    isClickable = true; isFocusable = true; contentDescription = action.label
-                    setOnClickListener { dismiss(); action.onClick() }
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    minimumHeight = dp(activity, 76f)
+                    setPadding(dp(activity, 8f), dp(activity, 12f), dp(activity, 8f), dp(activity, 12f))
+                    background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, tileBg, radius), radius)
+                    NexoGlass.paperShadow(this, p)
+                    isClickable = true; isFocusable = true
+                    contentDescription = listOfNotNull(action.label, action.subtitle).joinToString(". ")
+                    setOnClickListener { NexoMotion.pulse(this, 0.96f); dismiss(); action.onClick() }
                     addView(ImageView(activity).apply {
                         setImageResource(action.icon)
-                        imageTintList = ColorStateList.valueOf(if (action.danger) p.error.onContainer else p.onAccentSoft)
-                        setPadding(dp(activity, 9f), dp(activity, 9f), dp(activity, 9f), dp(activity, 9f))
-                        background = ThemeManager.rounded(activity, if (action.danger) p.error.container else p.accentSoft, 13f)
-                    }, LinearLayout.LayoutParams(dp(activity, 38f), dp(activity, 38f)).apply {
-                        if (compactVertical) bottomMargin = dp(activity, 7f) else marginEnd = dp(activity, 10f)
-                    })
-                    addView(LinearLayout(activity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        gravity = if (compactVertical) Gravity.CENTER_HORIZONTAL else Gravity.START
-                        addView(TextView(activity).apply {
-                            text = action.label
-                            textSize = if (compactVertical) 12f else 12.5f
-                            gravity = if (compactVertical) Gravity.CENTER else Gravity.START
-                            typeface = NexoUi.semiBold(activity)
-                            setTextColor(p.text)
-                            maxLines = 2
-                            ellipsize = TextUtils.TruncateAt.END
-                        })
-                        addView(TextView(activity).apply {
-                            text = action.subtitle ?: if (index == 0) "Inicio rápido" else "Sin historial"
-                            textSize = 10.5f
-                            typeface = NexoUi.regular(activity)
-                            gravity = if (compactVertical) Gravity.CENTER else Gravity.START
-                            setTextColor(p.muted)
-                            maxLines = 1
-                            ellipsize = TextUtils.TruncateAt.END
-                            setPadding(0, dp(activity, 2f), 0, 0)
-                        })
-                    }, if (compactVertical) {
-                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    } else {
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        imageTintList = ColorStateList.valueOf(if (action.danger) p.danger else p.text)
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }, LinearLayout.LayoutParams(dp(activity, 20f), dp(activity, 20f)).apply { bottomMargin = dp(activity, 8f) })
+                    addView(TextView(activity).apply {
+                        text = action.label
+                        textSize = 13f
+                        gravity = Gravity.CENTER
+                        typeface = NexoUi.medium(activity)
+                        setTextColor(p.text)
+                        maxLines = 2
+                        ellipsize = TextUtils.TruncateAt.END
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                     })
                 }
                 addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -423,8 +410,7 @@ object NexoSheets {
             minOf(columns, computed)
         }
 
-        val idleBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-        val idleStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
+        val idleBg = groupFill(p)
 
         actions.chunked(count).forEach { rowActions ->
             val row = LinearLayout(activity).apply {
@@ -432,20 +418,20 @@ object NexoSheets {
                 weightSum = count.toFloat()
             }
             rowActions.forEach { action ->
+                // Activo = píldora de tinta sólida (máximo contraste), nunca un recuadro de color.
                 val tint = when {
                     action.danger -> p.danger
-                    action.active -> p.onAccentSoft
+                    action.active -> p.background
                     else -> p.text
                 }
-                val cellBg = if (action.active) p.accentSoft else idleBg
-                val cellStroke = if (action.active) ColorUtils.setAlphaComponent(p.accent, 110) else idleStroke
+                val cellBg = if (action.active) p.text else idleBg
 
                 val cell = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER_HORIZONTAL
-                    minimumHeight = dp(activity, 68f)
+                    minimumHeight = dp(activity, 64f)
                     setPadding(dp(activity, 4f), dp(activity, 11f), dp(activity, 4f), dp(activity, 10f))
-                    background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, cellBg, 16f, cellStroke), 16f)
+                    background = ThemeManager.ripple(activity, ThemeManager.rounded(activity, cellBg, 18f), 18f)
                     isClickable = true
                     isFocusable = true
                     contentDescription = action.label
@@ -468,17 +454,17 @@ object NexoSheets {
                     setImageResource(action.icon)
                     imageTintList = ColorStateList.valueOf(tint)
                     scaleType = ImageView.ScaleType.CENTER
-                    layoutParams = LinearLayout.LayoutParams(dp(activity, 22f), dp(activity, 22f))
+                    layoutParams = LinearLayout.LayoutParams(dp(activity, 20f), dp(activity, 20f))
                 })
                 cell.addView(TextView(activity).apply {
                     text = action.label
-                    textSize = 11.5f
-                    typeface = if (action.active) NexoUi.semiBold(activity) else NexoUi.medium(activity)
+                    textSize = 12f
+                    typeface = NexoUi.medium(activity)
                     gravity = Gravity.CENTER
                     setTextColor(when {
                         action.danger -> p.danger
-                        action.active -> p.onAccentSoft
-                        else -> p.text
+                        action.active -> p.background
+                        else -> p.muted
                     })
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
@@ -523,7 +509,7 @@ object NexoSheets {
             row.addView(ImageView(activity).apply {
                 setImageResource(action.icon)
                 imageTintList = ColorStateList.valueOf(if (action.danger) p.danger else if (action.active) p.accent else p.muted)
-                layoutParams = LinearLayout.LayoutParams(dp(activity, 22f), dp(activity, 22f)).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(activity, 20f), dp(activity, 20f)).apply {
                     marginEnd = dp(activity, 16f)
                 }
             })

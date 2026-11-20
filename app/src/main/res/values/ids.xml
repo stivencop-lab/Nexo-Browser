@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Etiquetas internas de Nexo UI 7.0 (muelles y estado de componentes). -->
+<resources>
+    <item name="nexo_spring_tx" type="id" />
+    <item name="nexo_spring_ty" type="id" />
+    <item name="nexo_spring_sx" type="id" />
+    <item name="nexo_spring_sy" type="id" />
+    <item name="nexo_spring_alpha" type="id" />
+    <item name="nexo_spring_switch" type="id" />
+    <item name="themeSegmented" type="id" />
+    <item name="accentSwatches" type="id" />
+    <item name="chromeStyleSegmented" type="id" />
+    <item name="nexo_glass_toast" type="id" />
+</resources>

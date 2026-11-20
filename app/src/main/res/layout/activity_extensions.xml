@@ -30,7 +30,7 @@
             android:layout_weight="1"
             android:text="Mis extensiones"
             android:textSize="22sp"
-            android:textStyle="bold" />
+            android:textFontWeight="600" />
 
         <Button
             android:id="@+id/updateAllButton"

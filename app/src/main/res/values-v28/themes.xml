@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Semantic native themes, matching BrowserColors HCT roles. -->
+<!-- Nexo UI 7.0 «Liquid Craft»: generado por tools/generate_native_themes.py. -->
 <resources>
   <style name="Theme.Nexo.Base.Light" parent="android:Theme.Material.Light.NoActionBar">
     <item name="android:windowBackground">@color/nexo_light_background</item>
     <item name="android:colorBackground">@color/nexo_light_background</item>
     <item name="android:colorBackgroundFloating">@color/nexo_light_surface</item>
     <item name="android:textColorPrimary">@color/nexo_light_text</item>
+    <item name="android:fontFamily">@font/plus_jakarta_sans</item>
     <item name="android:windowLightStatusBar">true</item>
     <item name="android:windowLightNavigationBar">true</item>
     <item name="android:popupMenuStyle">@style/Nexo.PopupMenu.Light</item>
@@ -14,15 +15,60 @@
   </style>
   <style name="Nexo.PopupMenu.Light" parent="android:Widget.Material.PopupMenu">
     <item name="android:popupBackground">@drawable/nexo_popup_bg_light</item>
-    <item name="android:popupElevation">4dp</item>
+    <item name="android:popupElevation">6dp</item>
   </style>
   <style name="Theme.Nexo.DialogBase.Light" parent="android:Theme.Material.Light.Dialog.Alert">
     <item name="android:windowBackground">@drawable/nexo_dialog_bg_light</item>
     <item name="android:colorBackgroundFloating">@color/nexo_light_surface</item>
     <item name="android:textColorPrimary">@color/nexo_light_text</item>
+    <item name="android:fontFamily">@font/plus_jakarta_sans</item>
     <item name="android:windowMinWidthMajor">88%</item>
     <item name="android:windowMinWidthMinor">88%</item>
     <item name="android:dialogCornerRadius">@dimen/shape_sheet</item>
+  </style>
+  <style name="Theme.Nexo.Dialog.Light.Mono" parent="Theme.Nexo.DialogBase.Light">
+    <item name="android:colorAccent">@color/nexo_light_mono_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_light_mono_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_light_mono_text</item>
+    <item name="android:textColorSecondary">@color/nexo_light_mono_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_light_mono_elevated</item>
+  </style>
+  <style name="Theme.Nexo.Light.Mono" parent="Theme.Nexo.Base.Light">
+    <item name="android:colorAccent">@color/nexo_light_mono_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_light_mono_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_light_mono_text</item>
+    <item name="android:textColorSecondary">@color/nexo_light_mono_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_light_mono_elevated</item>
+    <item name="android:colorPrimary">@color/nexo_light_mono_primary</item>
+    <item name="android:windowBackground">@color/nexo_light_mono_background</item>
+    <item name="android:colorBackground">@color/nexo_light_mono_background</item>
+    <item name="android:textColorHighlight">@color/nexo_light_mono_primary_container</item>
+    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Mono</item>
+    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Mono</item>
+    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Mono</item>
+    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Mono</item>
+  </style>
+  <style name="Theme.Nexo.Dialog.Light.Signal" parent="Theme.Nexo.DialogBase.Light">
+    <item name="android:colorAccent">@color/nexo_light_signal_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_light_signal_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_light_signal_text</item>
+    <item name="android:textColorSecondary">@color/nexo_light_signal_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_light_signal_elevated</item>
+  </style>
+  <style name="Theme.Nexo.Light.Signal" parent="Theme.Nexo.Base.Light">
+    <item name="android:colorAccent">@color/nexo_light_signal_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_light_signal_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_light_signal_text</item>
+    <item name="android:textColorSecondary">@color/nexo_light_signal_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_light_signal_elevated</item>
+    <item name="android:colorPrimary">@color/nexo_light_signal_primary</item>
+    <item name="android:windowBackground">@color/nexo_light_signal_background</item>
+    <item name="android:colorBackground">@color/nexo_light_signal_background</item>
+    <item name="android:textColorHighlight">@color/nexo_light_signal_primary_container</item>
+    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Signal</item>
+    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Signal</item>
+    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Signal</item>
+    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Signal</item>
   </style>
   <style name="Theme.Nexo.Dialog.Light.Cobalt" parent="Theme.Nexo.DialogBase.Light">
     <item name="android:colorAccent">@color/nexo_light_cobalt_primary</item>
@@ -46,72 +92,6 @@
     <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cobalt</item>
     <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cobalt</item>
   </style>
-  <style name="Theme.Nexo.Dialog.Light.Violet" parent="Theme.Nexo.DialogBase.Light">
-    <item name="android:colorAccent">@color/nexo_light_violet_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_violet_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_violet_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_violet_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_violet_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Light.Violet" parent="Theme.Nexo.Base.Light">
-    <item name="android:colorAccent">@color/nexo_light_violet_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_violet_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_violet_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_violet_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_violet_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_light_violet_primary</item>
-    <item name="android:windowBackground">@color/nexo_light_violet_background</item>
-    <item name="android:colorBackground">@color/nexo_light_violet_background</item>
-    <item name="android:textColorHighlight">@color/nexo_light_violet_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Violet</item>
-  </style>
-  <style name="Theme.Nexo.Dialog.Light.Cyan" parent="Theme.Nexo.DialogBase.Light">
-    <item name="android:colorAccent">@color/nexo_light_cyan_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_cyan_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_cyan_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_cyan_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_cyan_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Light.Cyan" parent="Theme.Nexo.Base.Light">
-    <item name="android:colorAccent">@color/nexo_light_cyan_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_cyan_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_cyan_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_cyan_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_cyan_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_light_cyan_primary</item>
-    <item name="android:windowBackground">@color/nexo_light_cyan_background</item>
-    <item name="android:colorBackground">@color/nexo_light_cyan_background</item>
-    <item name="android:textColorHighlight">@color/nexo_light_cyan_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Cyan</item>
-  </style>
-  <style name="Theme.Nexo.Dialog.Light.Lime" parent="Theme.Nexo.DialogBase.Light">
-    <item name="android:colorAccent">@color/nexo_light_lime_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_lime_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_lime_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_lime_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_lime_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Light.Lime" parent="Theme.Nexo.Base.Light">
-    <item name="android:colorAccent">@color/nexo_light_lime_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_lime_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_lime_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_lime_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_lime_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_light_lime_primary</item>
-    <item name="android:windowBackground">@color/nexo_light_lime_background</item>
-    <item name="android:colorBackground">@color/nexo_light_lime_background</item>
-    <item name="android:textColorHighlight">@color/nexo_light_lime_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Lime</item>
-  </style>
   <style name="Theme.Nexo.Dialog.Light.Orange" parent="Theme.Nexo.DialogBase.Light">
     <item name="android:colorAccent">@color/nexo_light_orange_primary</item>
     <item name="android:colorControlActivated">@color/nexo_light_orange_primary</item>
@@ -134,56 +114,34 @@
     <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
     <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Orange</item>
   </style>
-  <style name="Theme.Nexo.Dialog.Light.Pink" parent="Theme.Nexo.DialogBase.Light">
-    <item name="android:colorAccent">@color/nexo_light_pink_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_pink_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_pink_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_pink_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_pink_elevated</item>
+  <style name="Theme.Nexo.Dialog.Light.Sage" parent="Theme.Nexo.DialogBase.Light">
+    <item name="android:colorAccent">@color/nexo_light_sage_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_light_sage_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_light_sage_text</item>
+    <item name="android:textColorSecondary">@color/nexo_light_sage_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_light_sage_elevated</item>
   </style>
-  <style name="Theme.Nexo.Light.Pink" parent="Theme.Nexo.Base.Light">
-    <item name="android:colorAccent">@color/nexo_light_pink_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_pink_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_pink_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_pink_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_pink_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_light_pink_primary</item>
-    <item name="android:windowBackground">@color/nexo_light_pink_background</item>
-    <item name="android:colorBackground">@color/nexo_light_pink_background</item>
-    <item name="android:textColorHighlight">@color/nexo_light_pink_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Pink</item>
+  <style name="Theme.Nexo.Light.Sage" parent="Theme.Nexo.Base.Light">
+    <item name="android:colorAccent">@color/nexo_light_sage_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_light_sage_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_light_sage_text</item>
+    <item name="android:textColorSecondary">@color/nexo_light_sage_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_light_sage_elevated</item>
+    <item name="android:colorPrimary">@color/nexo_light_sage_primary</item>
+    <item name="android:windowBackground">@color/nexo_light_sage_background</item>
+    <item name="android:colorBackground">@color/nexo_light_sage_background</item>
+    <item name="android:textColorHighlight">@color/nexo_light_sage_primary_container</item>
+    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Sage</item>
+    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Sage</item>
+    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Sage</item>
+    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Sage</item>
   </style>
-  <style name="Theme.Nexo.Dialog.Light.Red" parent="Theme.Nexo.DialogBase.Light">
-    <item name="android:colorAccent">@color/nexo_light_red_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_red_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_red_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_red_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_red_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Light.Red" parent="Theme.Nexo.Base.Light">
-    <item name="android:colorAccent">@color/nexo_light_red_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_light_red_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_light_red_text</item>
-    <item name="android:textColorSecondary">@color/nexo_light_red_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_light_red_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_light_red_primary</item>
-    <item name="android:windowBackground">@color/nexo_light_red_background</item>
-    <item name="android:colorBackground">@color/nexo_light_red_background</item>
-    <item name="android:textColorHighlight">@color/nexo_light_red_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Light.Red</item>
-  </style>
-  <style name="Theme.Nexo.Light.Dynamic" parent="Theme.Nexo.Light.Cobalt" />
   <style name="Theme.Nexo.Base.Dark" parent="android:Theme.Material.NoActionBar">
     <item name="android:windowBackground">@color/nexo_dark_background</item>
     <item name="android:colorBackground">@color/nexo_dark_background</item>
     <item name="android:colorBackgroundFloating">@color/nexo_dark_surface</item>
     <item name="android:textColorPrimary">@color/nexo_dark_text</item>
+    <item name="android:fontFamily">@font/plus_jakarta_sans</item>
     <item name="android:windowLightStatusBar">false</item>
     <item name="android:windowLightNavigationBar">false</item>
     <item name="android:popupMenuStyle">@style/Nexo.PopupMenu.Dark</item>
@@ -198,9 +156,54 @@
     <item name="android:windowBackground">@drawable/nexo_dialog_bg_dark</item>
     <item name="android:colorBackgroundFloating">@color/nexo_dark_surface</item>
     <item name="android:textColorPrimary">@color/nexo_dark_text</item>
+    <item name="android:fontFamily">@font/plus_jakarta_sans</item>
     <item name="android:windowMinWidthMajor">88%</item>
     <item name="android:windowMinWidthMinor">88%</item>
     <item name="android:dialogCornerRadius">@dimen/shape_sheet</item>
+  </style>
+  <style name="Theme.Nexo.Dialog.Dark.Mono" parent="Theme.Nexo.DialogBase.Dark">
+    <item name="android:colorAccent">@color/nexo_dark_mono_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_dark_mono_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_dark_mono_text</item>
+    <item name="android:textColorSecondary">@color/nexo_dark_mono_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_dark_mono_elevated</item>
+  </style>
+  <style name="Theme.Nexo.Dark.Mono" parent="Theme.Nexo.Base.Dark">
+    <item name="android:colorAccent">@color/nexo_dark_mono_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_dark_mono_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_dark_mono_text</item>
+    <item name="android:textColorSecondary">@color/nexo_dark_mono_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_dark_mono_elevated</item>
+    <item name="android:colorPrimary">@color/nexo_dark_mono_primary</item>
+    <item name="android:windowBackground">@color/nexo_dark_mono_background</item>
+    <item name="android:colorBackground">@color/nexo_dark_mono_background</item>
+    <item name="android:textColorHighlight">@color/nexo_dark_mono_primary_container</item>
+    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Mono</item>
+    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Mono</item>
+    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Mono</item>
+    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Mono</item>
+  </style>
+  <style name="Theme.Nexo.Dialog.Dark.Signal" parent="Theme.Nexo.DialogBase.Dark">
+    <item name="android:colorAccent">@color/nexo_dark_signal_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_dark_signal_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_dark_signal_text</item>
+    <item name="android:textColorSecondary">@color/nexo_dark_signal_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_dark_signal_elevated</item>
+  </style>
+  <style name="Theme.Nexo.Dark.Signal" parent="Theme.Nexo.Base.Dark">
+    <item name="android:colorAccent">@color/nexo_dark_signal_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_dark_signal_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_dark_signal_text</item>
+    <item name="android:textColorSecondary">@color/nexo_dark_signal_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_dark_signal_elevated</item>
+    <item name="android:colorPrimary">@color/nexo_dark_signal_primary</item>
+    <item name="android:windowBackground">@color/nexo_dark_signal_background</item>
+    <item name="android:colorBackground">@color/nexo_dark_signal_background</item>
+    <item name="android:textColorHighlight">@color/nexo_dark_signal_primary_container</item>
+    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Signal</item>
+    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Signal</item>
+    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Signal</item>
+    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Signal</item>
   </style>
   <style name="Theme.Nexo.Dialog.Dark.Cobalt" parent="Theme.Nexo.DialogBase.Dark">
     <item name="android:colorAccent">@color/nexo_dark_cobalt_primary</item>
@@ -224,72 +227,6 @@
     <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cobalt</item>
     <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cobalt</item>
   </style>
-  <style name="Theme.Nexo.Dialog.Dark.Violet" parent="Theme.Nexo.DialogBase.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_violet_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_violet_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_violet_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_violet_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_violet_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Dark.Violet" parent="Theme.Nexo.Base.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_violet_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_violet_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_violet_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_violet_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_violet_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_dark_violet_primary</item>
-    <item name="android:windowBackground">@color/nexo_dark_violet_background</item>
-    <item name="android:colorBackground">@color/nexo_dark_violet_background</item>
-    <item name="android:textColorHighlight">@color/nexo_dark_violet_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Violet</item>
-  </style>
-  <style name="Theme.Nexo.Dialog.Dark.Cyan" parent="Theme.Nexo.DialogBase.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_cyan_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_cyan_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_cyan_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_cyan_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_cyan_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Dark.Cyan" parent="Theme.Nexo.Base.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_cyan_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_cyan_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_cyan_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_cyan_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_cyan_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_dark_cyan_primary</item>
-    <item name="android:windowBackground">@color/nexo_dark_cyan_background</item>
-    <item name="android:colorBackground">@color/nexo_dark_cyan_background</item>
-    <item name="android:textColorHighlight">@color/nexo_dark_cyan_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Cyan</item>
-  </style>
-  <style name="Theme.Nexo.Dialog.Dark.Lime" parent="Theme.Nexo.DialogBase.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_lime_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_lime_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_lime_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_lime_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_lime_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Dark.Lime" parent="Theme.Nexo.Base.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_lime_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_lime_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_lime_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_lime_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_lime_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_dark_lime_primary</item>
-    <item name="android:windowBackground">@color/nexo_dark_lime_background</item>
-    <item name="android:colorBackground">@color/nexo_dark_lime_background</item>
-    <item name="android:textColorHighlight">@color/nexo_dark_lime_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Lime</item>
-  </style>
   <style name="Theme.Nexo.Dialog.Dark.Orange" parent="Theme.Nexo.DialogBase.Dark">
     <item name="android:colorAccent">@color/nexo_dark_orange_primary</item>
     <item name="android:colorControlActivated">@color/nexo_dark_orange_primary</item>
@@ -312,51 +249,28 @@
     <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
     <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Orange</item>
   </style>
-  <style name="Theme.Nexo.Dialog.Dark.Pink" parent="Theme.Nexo.DialogBase.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_pink_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_pink_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_pink_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_pink_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_pink_elevated</item>
+  <style name="Theme.Nexo.Dialog.Dark.Sage" parent="Theme.Nexo.DialogBase.Dark">
+    <item name="android:colorAccent">@color/nexo_dark_sage_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_dark_sage_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_dark_sage_text</item>
+    <item name="android:textColorSecondary">@color/nexo_dark_sage_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_dark_sage_elevated</item>
   </style>
-  <style name="Theme.Nexo.Dark.Pink" parent="Theme.Nexo.Base.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_pink_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_pink_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_pink_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_pink_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_pink_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_dark_pink_primary</item>
-    <item name="android:windowBackground">@color/nexo_dark_pink_background</item>
-    <item name="android:colorBackground">@color/nexo_dark_pink_background</item>
-    <item name="android:textColorHighlight">@color/nexo_dark_pink_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Pink</item>
+  <style name="Theme.Nexo.Dark.Sage" parent="Theme.Nexo.Base.Dark">
+    <item name="android:colorAccent">@color/nexo_dark_sage_primary</item>
+    <item name="android:colorControlActivated">@color/nexo_dark_sage_primary</item>
+    <item name="android:textColorPrimary">@color/nexo_dark_sage_text</item>
+    <item name="android:textColorSecondary">@color/nexo_dark_sage_muted</item>
+    <item name="android:colorBackgroundFloating">@color/nexo_dark_sage_elevated</item>
+    <item name="android:colorPrimary">@color/nexo_dark_sage_primary</item>
+    <item name="android:windowBackground">@color/nexo_dark_sage_background</item>
+    <item name="android:colorBackground">@color/nexo_dark_sage_background</item>
+    <item name="android:textColorHighlight">@color/nexo_dark_sage_primary_container</item>
+    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Sage</item>
+    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Sage</item>
+    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Sage</item>
+    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Sage</item>
   </style>
-  <style name="Theme.Nexo.Dialog.Dark.Red" parent="Theme.Nexo.DialogBase.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_red_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_red_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_red_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_red_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_red_elevated</item>
-  </style>
-  <style name="Theme.Nexo.Dark.Red" parent="Theme.Nexo.Base.Dark">
-    <item name="android:colorAccent">@color/nexo_dark_red_primary</item>
-    <item name="android:colorControlActivated">@color/nexo_dark_red_primary</item>
-    <item name="android:textColorPrimary">@color/nexo_dark_red_text</item>
-    <item name="android:textColorSecondary">@color/nexo_dark_red_muted</item>
-    <item name="android:colorBackgroundFloating">@color/nexo_dark_red_elevated</item>
-    <item name="android:colorPrimary">@color/nexo_dark_red_primary</item>
-    <item name="android:windowBackground">@color/nexo_dark_red_background</item>
-    <item name="android:colorBackground">@color/nexo_dark_red_background</item>
-    <item name="android:textColorHighlight">@color/nexo_dark_red_primary_container</item>
-    <item name="android:alertDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
-    <item name="android:dialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
-    <item name="android:datePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
-    <item name="android:timePickerDialogTheme">@style/Theme.Nexo.Dialog.Dark.Red</item>
-  </style>
-  <style name="Theme.Nexo.Dark.Dynamic" parent="Theme.Nexo.Dark.Cobalt" />
   <style name="Nexo.DropDownItem" parent="android:Widget.Material.DropDownItem.Spinner">
     <item name="android:paddingStart">16dp</item>
     <item name="android:paddingEnd">16dp</item>

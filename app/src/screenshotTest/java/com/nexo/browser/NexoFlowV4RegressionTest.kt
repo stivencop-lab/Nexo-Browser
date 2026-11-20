@@ -24,19 +24,22 @@ class NexoFlowV4RegressionTest {
         val activity = controller.get()
         val root = activity.layoutInflater.inflate(R.layout.activity_main, null)
         val ai = root.findViewById<ImageButton>(R.id.aiButton)
-        assertNotNull("El botón ✨ debe existir en la barra superior", ai)
+        assertNotNull("El emblema Aperture debe existir en el cromo", ai)
         assertEquals(View.VISIBLE, ai?.visibility)
         assertTrue(ai!!.contentDescription.toString().contains("Nexo AI"))
+        // Liquid Split Chrome: el emblema vive en el clúster desacoplado, junto a la píldora de dirección.
         val omnibox = root.findViewById<View>(R.id.omnibox)
         assertNotNull(omnibox)
-        val omniIndex = (ai.parent as android.view.ViewGroup).indexOfChild(omnibox)
-        assertTrue(omniIndex >= 0)
+        val topBar = root.findViewById<android.view.ViewGroup>(R.id.topBar)
+        assertTrue((ai.parent as View).parent === topBar)
+        assertTrue((omnibox.parent as View).parent === topBar)
+        assertEquals(R.id.chromeCluster, (ai.parent as View).id)
         controller.pause().stop().destroy()
     }
 
     @Test fun menuLeadsWithNexoAiWithoutDroppingAnyExistingAction() {
         val ids = listOf(
-            R.drawable.ic_nexo_ai_spark,
+            R.drawable.ic_nexo_aperture,
             R.drawable.ic_menu_download, R.drawable.ic_menu_desktop,
             R.drawable.ic_menu_find, R.drawable.ic_menu_translate,
             R.drawable.ic_menu_reader, R.drawable.ic_menu_copy, R.drawable.ic_menu_share,
@@ -47,8 +50,8 @@ class NexoFlowV4RegressionTest {
         )
         val actions = ids.map { SheetAction(it, "Acción $it") {} }
         val layout = MenuSections.arrange(actions)
-        assertEquals("Nexo AI ✨", layout.groups.first().title)
-        assertTrue(layout.groups.first().actions.all { it.icon == R.drawable.ic_nexo_ai_spark })
+        assertEquals("Nexo AI", layout.groups.first().title)
+        assertTrue(layout.groups.first().actions.all { it.icon == R.drawable.ic_nexo_aperture })
         val seen = layout.quick + layout.groups.flatMap { it.actions }
         assertEquals(actions.toSet(), seen.toSet())
         assertEquals(actions.size, seen.size)
@@ -60,7 +63,7 @@ class NexoFlowV4RegressionTest {
         assertTrue(withAi.contains(NavConfig.Action.AI))
         assertEquals(5, withAi.size)
         val icon = NavConfig.iconFor(NavConfig.Action.AI)
-        assertEquals(R.drawable.ic_menu_ai, icon)
+        assertEquals(R.drawable.ic_nexo_aperture, icon)
         val modes = listOf(NavConfig.Mode.CLASSIC, NavConfig.Mode.COMPACT, NavConfig.Mode.CUSTOM)
         modes.forEach { mode ->
             assertTrue(NavConfig.Action.entries.any { it == NavConfig.Action.AI })

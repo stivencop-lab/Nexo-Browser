@@ -63,19 +63,25 @@ object ThemeManager {
     fun themeKey(activity: Activity): String =
         resolvedTheme(activity) + "|" + accentColor(activity)
 
-    private fun accentColor(activity: Activity): Int =
-        when (BrowserPrefs.accent(activity)) {
-            BrowserPrefs.ACCENT_DYNAMIC -> if (Build.VERSION.SDK_INT >= 31) {
-                activity.getColor(android.R.color.system_accent1_500)
-            } else BrowserColors.COBALT
-            BrowserPrefs.ACCENT_COBALT -> BrowserColors.COBALT
-            BrowserPrefs.ACCENT_CYAN -> BrowserColors.CYAN
-            BrowserPrefs.ACCENT_LIME -> BrowserColors.LIME
-            BrowserPrefs.ACCENT_ORANGE -> BrowserColors.ORANGE
-            BrowserPrefs.ACCENT_PINK -> BrowserColors.PINK
-            BrowserPrefs.ACCENT_RED -> BrowserColors.RED
-            else -> BrowserColors.VIOLET
-        }
+    private fun accentColor(activity: Activity): Int = accentSeed(BrowserPrefs.accent(activity))
+
+    /** Semilla de color de cada acento de UI 7.0 (Monocromo = tinta del tema). */
+    fun accentSeed(accent: String): Int = when (accent) {
+        BrowserPrefs.ACCENT_SIGNAL -> BrowserColors.SIGNAL
+        BrowserPrefs.ACCENT_COBALT -> BrowserColors.COBALT
+        BrowserPrefs.ACCENT_ORANGE -> BrowserColors.ORANGE
+        BrowserPrefs.ACCENT_SAGE -> BrowserColors.SAGE
+        else -> BrowserColors.MONOCHROME
+    }
+
+    /** Nombre visible de cada acento. */
+    fun accentLabel(accent: String): String = when (accent) {
+        BrowserPrefs.ACCENT_SIGNAL -> "Azul Señal"
+        BrowserPrefs.ACCENT_COBALT -> "Cobalto"
+        BrowserPrefs.ACCENT_ORANGE -> "Naranja Internacional"
+        BrowserPrefs.ACCENT_SAGE -> "Salvia"
+        else -> "Monocromo"
+    }
 
     // Palette generation is pure but nontrivial. Reuse tokens without retaining Activities.
     private data class PaletteKey(val mode: String, val seed: Int)
@@ -95,14 +101,11 @@ object ThemeManager {
     fun themeRes(activity: Activity): Int {
         val dark = isDark(activity)
         return when (BrowserPrefs.accent(activity)) {
-            BrowserPrefs.ACCENT_DYNAMIC -> if (dark) R.style.Theme_Nexo_Dark_Dynamic else R.style.Theme_Nexo_Light_Dynamic
+            BrowserPrefs.ACCENT_SIGNAL -> if (dark) R.style.Theme_Nexo_Dark_Signal else R.style.Theme_Nexo_Light_Signal
             BrowserPrefs.ACCENT_COBALT -> if (dark) R.style.Theme_Nexo_Dark_Cobalt else R.style.Theme_Nexo_Light_Cobalt
-            BrowserPrefs.ACCENT_CYAN -> if (dark) R.style.Theme_Nexo_Dark_Cyan else R.style.Theme_Nexo_Light_Cyan
-            BrowserPrefs.ACCENT_LIME -> if (dark) R.style.Theme_Nexo_Dark_Lime else R.style.Theme_Nexo_Light_Lime
             BrowserPrefs.ACCENT_ORANGE -> if (dark) R.style.Theme_Nexo_Dark_Orange else R.style.Theme_Nexo_Light_Orange
-            BrowserPrefs.ACCENT_PINK -> if (dark) R.style.Theme_Nexo_Dark_Pink else R.style.Theme_Nexo_Light_Pink
-            BrowserPrefs.ACCENT_RED -> if (dark) R.style.Theme_Nexo_Dark_Red else R.style.Theme_Nexo_Light_Red
-            else -> if (dark) R.style.Theme_Nexo_Dark_Violet else R.style.Theme_Nexo_Light_Violet
+            BrowserPrefs.ACCENT_SAGE -> if (dark) R.style.Theme_Nexo_Dark_Sage else R.style.Theme_Nexo_Light_Sage
+            else -> if (dark) R.style.Theme_Nexo_Dark_Mono else R.style.Theme_Nexo_Light_Mono
         }
     }
 
@@ -129,8 +132,12 @@ object ThemeManager {
         }
     }
 
+    /** Marca de Activity que reparte ella misma los insets (lienzo edge-to-edge). */
+    interface InsetsOwner
+
     /** One owner per window: combine IME and safe areas with max(), never add twice. */
     private fun installInsets(activity: Activity) {
+        if (activity is InsetsOwner) return
         val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
         ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -145,33 +152,57 @@ object ThemeManager {
     }
 
     // ---------------------------------------------------------------
-    // Primitivas y tokens UI 5.0
+    // Primitivas y tokens UI 7.0 «Liquid Craft»
     // ---------------------------------------------------------------
 
     private fun dp(activity: Activity, value: Float): Int =
         (value * activity.resources.displayMetrics.density).toInt()
 
-    /** Contorno hairline sutil: evita bordes pesados y mantiene definición limpia en OLED. */
-    fun hairline(p: BrowserPalette): Int = when {
-        p.isAmoled -> ColorUtils.setAlphaComponent(p.outlineVariant, 165)
-        p.isDark -> ColorUtils.setAlphaComponent(p.outlineVariant, 110)
-        else -> ColorUtils.setAlphaComponent(p.outlineVariant, 115)
+    /** Divisor translúcido (6 % de tinta): separa sin dibujar cajas dentro de cajas. */
+    fun hairline(p: BrowserPalette): Int = p.divider
+
+    private var sansCache: Typeface? = null
+    private val weighted = HashMap<Int, Typeface>(4)
+
+    /** Plus Jakarta Sans variable; se resuelve una sola vez por proceso. */
+    private fun sans(activity: Activity): Typeface =
+        sansCache ?: runCatching { activity.resources.getFont(R.font.plus_jakarta_sans) }
+            .getOrDefault(Typeface.SANS_SERIF).also { sansCache = it }
+
+    private fun weight(activity: Activity, w: Int): Typeface = synchronized(weighted) {
+        weighted.getOrPut(w) { Typeface.create(sans(activity), w, false) }
     }
 
-    fun fontRegular(activity: Activity): Typeface =
-        runCatching { activity.resources.getFont(R.font.inter_variable) }.getOrDefault(Typeface.SANS_SERIF)
+    /** 400 · cuerpo. */
+    fun fontRegular(activity: Activity): Typeface = weight(activity, 400)
 
-    fun fontMedium(activity: Activity): Typeface =
-        Typeface.create(fontRegular(activity), 500, false)
+    /** 500 · controles. */
+    fun fontMedium(activity: Activity): Typeface = weight(activity, 500)
 
-    fun fontSemiBold(activity: Activity): Typeface =
-        Typeface.create(fontRegular(activity), 600, false)
+    /** 600 · encabezados (con letterSpacing -0.025em). */
+    fun fontSemiBold(activity: Activity): Typeface = weight(activity, 600)
 
-    fun fontBold(activity: Activity): Typeface =
-        Typeface.create(fontRegular(activity), Typeface.BOLD)
+    /** UI 7.0 no grita: el antiguo «bold» se limita a SemiBold 600. */
+    fun fontBold(activity: Activity): Typeface = fontSemiBold(activity)
 
+    /** JetBrains Mono: solo métricas y latencias, siempre con cifras tabulares. */
     fun fontMono(activity: Activity): Typeface =
         runCatching { activity.resources.getFont(R.font.jetbrains_mono) }.getOrDefault(Typeface.MONOSPACE)
+
+    /** Encabezado editorial: SemiBold con tracking -0.025em. */
+    fun styleHeading(activity: Activity, text: TextView, sizeSp: Float) {
+        text.typeface = fontSemiBold(activity)
+        text.textSize = sizeSp
+        text.letterSpacing = -0.025f
+        text.setTextColor(palette(activity).text)
+    }
+
+    /** Cifras de métricas: JetBrains Mono con tnum. */
+    fun styleMetric(activity: Activity, text: TextView, muted: Boolean = true) {
+        text.typeface = fontMono(activity)
+        text.fontFeatureSettings = "tnum"
+        text.setTextColor(if (muted) palette(activity).muted else palette(activity).text)
+    }
 
     fun rounded(
         activity: Activity,
@@ -234,10 +265,9 @@ object ThemeManager {
             danger -> p.error.container
             else -> p.surfaceContainerHigh
         }
-        val stroke = if (!primary && p.isAmoled) hairline(p) else null
         val rippleColor = ColorUtils.setAlphaComponent(foreground, 36)
 
-        button.background = ripple(activity, rounded(activity, bgColor, 24f, stroke), 24f, rippleColor)
+        button.background = ripple(activity, rounded(activity, bgColor, NexoUi.Tokens.RADIUS_PILL), NexoUi.Tokens.RADIUS_PILL, rippleColor)
         button.setTextColor(tint(foreground))
         button.compoundDrawableTintList = tint(foreground)
         button.backgroundTintList = null
@@ -245,17 +275,17 @@ object ThemeManager {
         button.elevation = 0f
         button.minHeight = dp(activity, 48f)
         button.isAllCaps = false
-        button.letterSpacing = 0.005f
-        button.typeface = fontSemiBold(activity)
+        button.letterSpacing = 0f
+        button.typeface = fontMedium(activity)
     }
 
     /** Icono plano con ripple circular; [active] lo muestra en cápsula tonal suave. */
     fun styleIconButton(activity: Activity, button: ImageButton, active: Boolean = false) {
         val p = palette(activity)
         val inset = dp(activity, 4f)
-        val content = if (active) InsetDrawable(rounded(activity, p.accentSoft, 20f), inset) else null
-        button.background = ripple(activity, content, 24f)
-        button.imageTintList = tint(if (active) p.onAccentSoft else p.text)
+        val content = if (active) InsetDrawable(rounded(activity, p.surfaceContainerHighest, NexoUi.Tokens.RADIUS_PILL), inset) else null
+        button.background = ripple(activity, content, NexoUi.Tokens.RADIUS_PILL)
+        button.imageTintList = tint(p.text)
         button.backgroundTintList = null
         button.stateListAnimator = null
         button.alpha = if (button.isEnabled) 1f else 0.42f
@@ -281,47 +311,42 @@ object ThemeManager {
         text.setTextColor(if (muted) p.muted else p.text)
     }
 
-    /** Título de sección (pequeño, en el color de acento con tracking editorial). */
+    /** Etiqueta de grupo: frase en caja normal, 13sp Medium y tinta atenuada (nunca ALL-CAPS). */
     fun styleSectionLabel(activity: Activity, text: TextView) {
         val p = palette(activity)
-        text.setTextColor(p.accent)
-        text.textSize = 11.5f
-        text.isAllCaps = true
-        text.letterSpacing = 0.08f
-        text.typeface = fontBold(activity)
+        text.setTextColor(p.muted)
+        text.textSize = 13f
+        text.isAllCaps = false
+        text.letterSpacing = 0f
+        text.typeface = fontMedium(activity)
     }
 
-    /** Contenedor tipo tarjeta: superficie tonal redondeada con hairline discreto. */
-    fun styleCard(activity: Activity, view: View, radiusDp: Float = 20f) {
+    /** Tarjeta agrupada r:22 sin borde; en Paper flota con sombra difusa (0 2dp 14dp · 4.5 %). */
+    fun styleCard(activity: Activity, view: View, radiusDp: Float = NexoUi.Tokens.RADIUS_CARD) {
         val p = palette(activity)
-        val bg = if (p.isDark) p.surfaceContainerLow else p.surfaceContainerLowest
-        view.background = rounded(activity, bg, radiusDp, hairline(p))
+        view.background = rounded(activity, p.surface, radiusDp)
         view.clipToOutline = true
+        NexoGlass.paperShadow(view, p)
     }
 
-    /** Fondo de barra (superficie) con una línea hairline en el borde indicado. */
+    /** Fondo de barra: cristal translúcido con borde especular (sin líneas de 1dp). */
     fun barBackground(activity: Activity, lineOnTop: Boolean): Drawable {
         val p = palette(activity)
-        return LayerDrawable(
-            arrayOf(ColorDrawable(p.surfaceContainerLow), ColorDrawable(hairline(p)))
-        ).apply {
-            setLayerHeight(1, dp(activity, 1f).coerceAtLeast(1))
-            setLayerGravity(1, if (lineOnTop) Gravity.TOP else Gravity.BOTTOM)
-        }
+        return NexoGlassDrawable(activity, p, radiusDp = 0f, specularTop = lineOnTop)
     }
 
-    /** Contador de pestañas: cuadro redondeado limpio y proporcionado (24dp ópticos en 48dp). */
+    /** Contador de pestañas: cuadro de 20dp con trazo 1.6dp y cifras tabulares (48dp táctiles). */
     fun styleTabCounter(activity: Activity, button: Button) {
         val p = palette(activity)
-        val inset = dp(activity, 12f)
+        val inset = dp(activity, 14f)
         val box = InsetDrawable(
-            rounded(activity, Color.TRANSPARENT, 7f, p.text, 1.75f),
+            rounded(activity, Color.TRANSPARENT, 6f, p.text, 1.6f),
             inset
         )
         button.fontFeatureSettings = "tnum"
-        button.typeface = fontBold(activity)
-        button.textSize = 11.5f
-        button.background = ripple(activity, box, 24f)
+        button.typeface = fontMedium(activity)
+        button.textSize = 11f
+        button.background = ripple(activity, box, NexoUi.Tokens.RADIUS_PILL)
         button.setTextColor(p.text)
         button.backgroundTintList = null
         button.stateListAnimator = null
@@ -426,14 +451,10 @@ object ThemeManager {
 
             val label = row.badge.ifBlank { row.title.trim().take(1).uppercase() }.take(4)
             badge.text = label
-            badge.textSize = if (label.length > 2) 10.5f else 15f
-            val (badgeBg, badgeFg) = if (row.statusTone != null) {
-                NexoUi.toneColors(p, row.statusTone)
-            } else {
-                p.accentSoft to p.onAccentSoft
-            }
-            badge.setTextColor(badgeFg)
-            badge.background = rounded(activity, badgeBg, 14f)
+            badge.textSize = if (label.length > 2) 10.5f else 14f
+            // Monograma neutro y circular: sin cuadrados de color detrás de cada fila.
+            badge.setTextColor(p.text)
+            badge.background = rounded(activity, p.surfaceContainerHighest, NexoUi.Tokens.RADIUS_PILL)
 
             if (row.status.isBlank()) {
                 statusPill.visibility = View.GONE
@@ -441,7 +462,7 @@ object ThemeManager {
                 val (bg, fg) = NexoUi.toneColors(p, row.statusTone ?: NexoUi.Tone.NEUTRAL)
                 statusPill.text = row.status
                 statusPill.setTextColor(fg)
-                statusPill.background = rounded(activity, bg, 12f)
+                statusPill.background = rounded(activity, bg, NexoUi.Tokens.RADIUS_PILL)
                 statusPill.visibility = View.VISIBLE
             }
         }
@@ -450,17 +471,15 @@ object ThemeManager {
     private fun createRow(activity: Activity): RowHolder {
         val p = palette(activity)
         val d = activity.resources.displayMetrics.density
-        val cardSurface = if (p.isDark) p.surfaceContainerLow else p.surfaceContainerLowest
-
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding((16 * d).toInt(), (13 * d).toInt(), (16 * d).toInt(), (13 * d).toInt())
-            minimumHeight = (68 * d).toInt()
+            setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+            minimumHeight = (64 * d).toInt()
             background = ripple(
                 activity,
-                rounded(activity, cardSurface, 20f, hairline(p)),
-                20f
+                rounded(activity, p.surface, NexoUi.Tokens.RADIUS_CARD),
+                NexoUi.Tokens.RADIUS_CARD
             )
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -470,10 +489,10 @@ object ThemeManager {
 
         val badge = TextView(activity).apply {
             gravity = Gravity.CENTER
-            setTextColor(p.onAccentSoft)
-            typeface = fontBold(activity)
-            background = rounded(activity, p.accentSoft, 14f)
-            layoutParams = LinearLayout.LayoutParams((42 * d).toInt(), (42 * d).toInt()).apply {
+            setTextColor(p.text)
+            typeface = fontMedium(activity)
+            background = rounded(activity, p.surfaceContainerHighest, NexoUi.Tokens.RADIUS_PILL)
+            layoutParams = LinearLayout.LayoutParams((36 * d).toInt(), (36 * d).toInt()).apply {
                 marginEnd = (14 * d).toInt()
             }
         }
@@ -488,7 +507,7 @@ object ThemeManager {
             setTextColor(p.text)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            typeface = fontSemiBold(activity)
+            typeface = fontMedium(activity)
         }
         val subtitle = TextView(activity).apply {
             textSize = 13f
@@ -504,14 +523,15 @@ object ThemeManager {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             setPadding(0, (3 * d).toInt(), 0, 0)
-            alpha = 0.85f
+            typeface = fontMono(activity)
+            fontFeatureSettings = "tnum"
         }
 
         val statusPill = TextView(activity).apply {
-            textSize = 11f
+            textSize = 11.5f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            typeface = fontBold(activity)
+            typeface = fontMedium(activity)
             gravity = Gravity.CENTER
             setPadding((9 * d).toInt(), (4 * d).toInt(), (9 * d).toInt(), (4 * d).toInt())
             visibility = View.GONE
@@ -535,8 +555,8 @@ object ThemeManager {
     fun styleSpinner(activity: Activity, spinner: Spinner) {
         val p = palette(activity)
         val fill = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
-        val field = rounded(activity, fill, 14f, if (p.isAmoled) hairline(p) else null)
-        val chevron = ChevronDrawable(p.muted, dp(activity, 1.8f).toFloat())
+        val field = rounded(activity, fill, NexoUi.Tokens.RADIUS_CONTROL)
+        val chevron = ChevronDrawable(p.muted, dp(activity, 1.6f).toFloat())
 
         spinner.background = LayerDrawable(arrayOf(field, chevron)).apply {
             val size = dp(activity, 11f)
@@ -546,7 +566,7 @@ object ThemeManager {
         }
         spinner.backgroundTintList = null
         spinner.setPopupBackgroundDrawable(
-            LayerDrawable(arrayOf(rounded(activity, p.surfaceContainerHigh, 18f, hairline(p)))).apply {
+            LayerDrawable(arrayOf(rounded(activity, p.surfaceContainerHigh, NexoUi.Tokens.RADIUS_CARD))).apply {
                 setPadding(dp(activity, 6f), dp(activity, 8f), dp(activity, 6f), dp(activity, 8f))
             }
         )
@@ -556,17 +576,27 @@ object ThemeManager {
         val p = palette(activity)
         toggle.setTextColor(p.text)
         toggle.typeface = fontMedium(activity)
+        // Interruptor Liquid: pista sólida del acento (Monocromo = tinta) y pulgar del lienzo.
+        val track = if (p.isMonochrome) p.text else p.accentSwatch
         toggle.thumbTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-            intArrayOf(p.accent, p.muted)
+            intArrayOf(if (p.isMonochrome) p.background else Color.WHITE, p.muted)
         )
         toggle.trackTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-            intArrayOf(
-                ColorUtils.setAlphaComponent(p.accent, 115),
-                ColorUtils.setAlphaComponent(p.outline, if (p.isDark) 115 else 95)
-            )
+            intArrayOf(track, p.surfaceContainerHighest)
         )
+        toggle.setOnCheckedChangeListenerSpring()
+    }
+
+    /** Rebote físico del pulgar al cambiar (SpringAnimation 380 / 0.82). */
+    private fun Switch.setOnCheckedChangeListenerSpring() {
+        if (getTag(R.id.nexo_spring_switch) != null) return
+        setTag(R.id.nexo_spring_switch, true)
+        setOnTouchListener { v, e ->
+            if (e.actionMasked == android.view.MotionEvent.ACTION_UP) NexoMotion.pulse(v, 0.94f)
+            false
+        }
     }
 
     /**
@@ -577,8 +607,8 @@ object ThemeManager {
         val p = palette(activity)
         val normalBg = if (p.isDark) p.surfaceContainerLow else p.surfaceContainer
         val focusedBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
-        val normal = rounded(activity, normalBg, 24f, hairline(p))
-        val focused = rounded(activity, focusedBg, 24f, p.accent, 1.6f)
+        val normal = rounded(activity, normalBg, NexoUi.Tokens.RADIUS_CONTROL)
+        val focused = rounded(activity, focusedBg, NexoUi.Tokens.RADIUS_CONTROL, ColorUtils.setAlphaComponent(p.text, 70), 1.2f)
 
         edit.background = StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_focused), focused)
@@ -600,19 +630,16 @@ object ThemeManager {
         }
     }
 
-    /** Cápsula unificada de dirección + estado del sitio + Nexo AI (UI 5.0). */
+    /** Píldora de dirección de cristal líquido (Liquid Split Chrome). */
     fun styleOmniboxCapsule(activity: Activity, capsule: View, focused: Boolean = false) {
         val p = palette(activity)
-        val fill = when {
-            focused && p.isDark -> p.surfaceContainerHighest
-            p.isAmoled -> 0xFF13161E.toInt()
-            p.isDark -> p.surfaceContainerHigh
-            else -> p.surfaceContainerLowest
+        if (focused) {
+            // Al escribir, el cristal se solidifica para máxima legibilidad.
+            capsule.background = rounded(activity, p.surfaceContainerHigh, NexoUi.Tokens.RADIUS_PILL)
+        } else {
+            capsule.background = NexoGlassDrawable(activity, p, NexoUi.Tokens.RADIUS_PILL)
         }
-        val stroke = if (focused) p.accent else hairline(p)
-        val strokeWidth = if (focused) 1.75f else 1f
-        capsule.background = rounded(activity, fill, 24f, stroke, strokeWidth)
-        capsule.elevation = if (p.isDark) 0f else dp(activity, 2f).toFloat()
+        NexoGlass.float(capsule, p)
     }
 
     /** Estiliza el campo de texto dentro de la cápsula unificada (sin fondo propio). */
@@ -623,72 +650,39 @@ object ThemeManager {
         edit.setTextColor(p.text)
         edit.setHintTextColor(p.muted)
         edit.typeface = fontMedium(activity)
-        edit.highlightColor = ColorUtils.setAlphaComponent(p.accent, 75)
+        edit.highlightColor = ColorUtils.setAlphaComponent(p.accentSwatch, 75)
         edit.gravity = Gravity.CENTER_VERTICAL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             edit.textCursorDrawable = GradientDrawable().apply {
-                setColor(p.accent)
+                setColor(if (p.isMonochrome) p.text else p.accent)
                 setSize(dp(activity, 2f), dp(activity, 20f))
             }
         }
     }
 
-    /** Botón permanente ✨ de Nexo AI 5.1 integrado en la cápsula de direcciones con estados visuales reales. */
+    /**
+     * Emblema Nexo Aperture (dos arcos concéntricos y punto central). Sin bordes de color:
+     * el estado se comunica con un punto discreto y con la respiración del núcleo.
+     */
     fun styleAiSparkButton(
         activity: Activity,
         button: ImageButton,
         state: com.nexo.browser.ai.NexoAiModels.IndicatorState = com.nexo.browser.ai.NexoAiModels.IndicatorState.IDLE
     ) {
         val p = palette(activity)
-        val hInset = dp(activity, 3f)
-        val vInset = dp(activity, 5f)
-        val (fillColor, strokeColor, iconColor, dotColor) = when (state) {
-            com.nexo.browser.ai.NexoAiModels.IndicatorState.GENERATING -> AiSparkStyle(
-                fill = p.primary.container,
-                stroke = ColorUtils.setAlphaComponent(p.accent, 170),
-                icon = p.primary.onContainer,
-                dot = p.accent
-            )
-            com.nexo.browser.ai.NexoAiModels.IndicatorState.READY -> AiSparkStyle(
-                fill = p.primary.container,
-                stroke = ColorUtils.setAlphaComponent(p.success.color, 185),
-                icon = p.primary.onContainer,
-                dot = p.success.color
-            )
-            com.nexo.browser.ai.NexoAiModels.IndicatorState.ERROR -> AiSparkStyle(
-                fill = p.error.container,
-                stroke = ColorUtils.setAlphaComponent(p.danger, 175),
-                icon = p.error.onContainer,
-                dot = p.danger
-            )
-            com.nexo.browser.ai.NexoAiModels.IndicatorState.IDLE -> AiSparkStyle(
-                fill = if (p.isAmoled) ColorUtils.setAlphaComponent(p.accent, 34) else p.accentSoft,
-                stroke = ColorUtils.setAlphaComponent(p.accent, if (p.isDark) 78 else 54),
-                icon = if (p.isDark) p.onAccentSoft else p.accent,
-                dot = null
-            )
+        val aperture = (button.drawable as? NexoApertureDrawable)
+            ?: NexoApertureDrawable(activity).also { button.setImageDrawable(it) }
+        aperture.setColor(p.text)
+        val dot = when (state) {
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.GENERATING -> if (p.isMonochrome) p.success.color else p.accent
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.READY -> p.success.color
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.ERROR -> p.danger
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.IDLE -> null
         }
-
-        val pill = InsetDrawable(rounded(activity, fillColor, 18f, strokeColor), hInset, vInset, hInset, vInset)
-        val baseDrawable: android.graphics.drawable.Drawable = if (dotColor != null) {
-            val dotSize = dp(activity, 7f)
-            val dotDrawable = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(dotColor)
-                setStroke(dp(activity, 1.5f).coerceAtLeast(1), p.surfaceContainer)
-                setSize(dotSize, dotSize)
-            }
-            android.graphics.drawable.LayerDrawable(arrayOf(pill, dotDrawable)).apply {
-                setLayerGravity(1, Gravity.TOP or Gravity.END)
-                setLayerInset(1, 0, dp(activity, 6f), dp(activity, 5f), 0)
-            }
-        } else {
-            pill
-        }
-
-        val rippleColor = ColorUtils.setAlphaComponent(iconColor, 44)
-        button.background = ripple(activity, baseDrawable, 20f, rippleColor)
-        button.imageTintList = ColorStateList.valueOf(iconColor)
+        aperture.setStatusDot(dot)
+        aperture.setBreathing(state == com.nexo.browser.ai.NexoAiModels.IndicatorState.GENERATING && !NexoUi.reducedMotion(activity))
+        button.imageTintList = null
+        button.background = ripple(activity, null, NexoUi.Tokens.RADIUS_PILL)
         button.backgroundTintList = null
         button.stateListAnimator = null
         button.elevation = 0f
@@ -700,34 +694,16 @@ object ThemeManager {
         }
     }
 
-    /** Microanimación breve al pulsar ✨ (respeta reducción de movimiento del sistema). */
-    fun animateAiSparkTap(button: View) {
-        if (!android.animation.ValueAnimator.areAnimatorsEnabled()) return
-        button.animate().cancel()
-        button.animate()
-            .scaleX(0.88f)
-            .scaleY(0.88f)
-            .setDuration(75L)
-            .withEndAction {
-                button.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(130L)
-                    .setInterpolator(android.view.animation.DecelerateInterpolator())
-                    .start()
-            }
-            .start()
-    }
+    /** Respuesta física breve al pulsar el emblema (respeta reducción de movimiento). */
+    fun animateAiSparkTap(button: View) = NexoMotion.pulse(button, 0.9f)
 
-    private data class AiSparkStyle(val fill: Int, val stroke: Int?, val icon: Int, val dot: Int?)
-
-    /** Botón menú ⋮ centrado con precisión óptica junto al contador de pestañas. */
+    /** Botón «•••» horizontal centrado ópticamente junto al contador de pestañas. */
     fun styleMenuIconButton(activity: Activity, button: Button) {
         val p = palette(activity)
-        val dots = MenuDotsDrawable(p.text, dp(activity, 2f).toFloat())
+        val dots = MenuDotsDrawable(p.text, dp(activity, 1.7f).toFloat())
         button.backgroundTintList = null
         button.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null, null, null)
-        button.background = ripple(activity, dots, 24f)
+        button.background = ripple(activity, dots, NexoUi.Tokens.RADIUS_PILL)
         button.setTextColor(tint(p.text))
         button.stateListAnimator = null
         button.elevation = 0f
@@ -735,26 +711,20 @@ object ThemeManager {
         button.isAllCaps = false
     }
 
-    /** Dock inferior flotante con pista discreta de gestos (UI 5.0). */
+    /** Dock clásico refinado: lámina de cristal con radio concéntrico (sin hairline). */
     fun styleFloatingDock(activity: Activity, dock: View, gesturePill: View? = null) {
         val p = palette(activity)
-        val fill = when {
-            p.isAmoled -> 0xFF0E1118.toInt()
-            p.isDark -> p.surfaceContainer
-            else -> p.surfaceContainerLowest
-        }
-        dock.background = rounded(activity, fill, 26f, hairline(p))
-        dock.elevation = if (p.isDark) 0f else dp(activity, 4f).toFloat()
+        dock.background = NexoGlassDrawable(activity, p, 28f)
+        NexoGlass.float(dock, p)
         gesturePill?.background = rounded(activity, ColorUtils.setAlphaComponent(p.muted, 90), 2f)
     }
 
-    /** Acento tonal suave para la acción principal (+) del dock inferior. */
+    /** Acción principal (+) del dock: círculo tonal sin color de marca. */
     fun styleDockPrimaryIcon(activity: Activity, button: ImageButton) {
         val p = palette(activity)
-        val hInset = dp(activity, 10f)
-        val vInset = dp(activity, 6f)
-        val well = InsetDrawable(rounded(activity, p.surfaceContainerHighest, 18f), hInset, vInset, hInset, vInset)
-        button.background = ripple(activity, well, 22f)
+        val inset = dp(activity, 6f)
+        val well = InsetDrawable(rounded(activity, p.surfaceContainerHighest, NexoUi.Tokens.RADIUS_PILL), inset)
+        button.background = ripple(activity, well, NexoUi.Tokens.RADIUS_PILL)
         button.imageTintList = tint(p.text)
         button.backgroundTintList = null
         button.stateListAnimator = null
@@ -801,10 +771,10 @@ private class MenuDotsDrawable(color: Int, private val radius: Float) : Drawable
     override fun draw(canvas: android.graphics.Canvas) {
         val cx = bounds.exactCenterX()
         val cy = bounds.exactCenterY()
-        val step = radius * 3.1f
-        canvas.drawCircle(cx, cy - step, radius, paint)
+        val step = radius * 3.6f
+        canvas.drawCircle(cx - step, cy, radius, paint)
         canvas.drawCircle(cx, cy, radius, paint)
-        canvas.drawCircle(cx, cy + step, radius, paint)
+        canvas.drawCircle(cx + step, cy, radius, paint)
     }
 
     override fun setAlpha(alpha: Int) { paint.alpha = alpha }

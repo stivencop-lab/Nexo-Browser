@@ -27,6 +27,12 @@ class GestureDock @JvmOverloads constructor(
     /** false mientras se escribe en la barra de dirección. */
     var gesturesEnabled: () -> Boolean = { true }
 
+    /**
+     * Liquid Split Chrome: el gesto también nace sobre la píldora y sus botones; un toque sigue
+     * llegando al hijo y solo un deslizamiento claro (horizontal o hacia arriba) se intercepta.
+     */
+    var interceptOverChildren: Boolean = false
+
     private val config = ViewConfiguration.get(context)
     private val slop = config.scaledTouchSlop
     private val density = resources.displayMetrics.density
@@ -76,7 +82,7 @@ class GestureDock @JvmOverloads constructor(
                 startX = event.rawX
                 startY = event.rawY
                 intercepted = false
-                tracking = gesturesEnabled() && !hasInteractiveChild(event.x, event.y)
+                tracking = gesturesEnabled() && (interceptOverChildren || !hasInteractiveChild(event.x, event.y))
                 tracker?.recycle()
                 tracker = if (tracking) VelocityTracker.obtain().apply { addMovement(event) } else null
             }
@@ -118,7 +124,13 @@ class GestureDock @JvmOverloads constructor(
         }
         tracker?.addMovement(event)
         when (event.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                // Seguimiento elástico: el cristal acompaña al dedo con resistencia.
+                val dx = event.rawX - startX
+                if (abs(dx) > abs(event.rawY - startY)) translationX = (dx * 0.22f).coerceIn(-distance * 0.6f, distance * 0.6f)
+            }
             MotionEvent.ACTION_UP -> {
+                if (translationX != 0f) NexoMotion.spring(this, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, 0f)
                 val dx = event.rawX - startX
                 val dy = event.rawY - startY
                 val velocity = tracker?.let { it.computeCurrentVelocity(1000); it.xVelocity to it.yVelocity } ?: (0f to 0f)
@@ -137,7 +149,10 @@ class GestureDock @JvmOverloads constructor(
                 if (!handled) performClick()
                 recycle()
             }
-            MotionEvent.ACTION_CANCEL -> recycle()
+            MotionEvent.ACTION_CANCEL -> {
+                if (translationX != 0f) NexoMotion.spring(this, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, 0f)
+                recycle()
+            }
         }
         return true
     }
