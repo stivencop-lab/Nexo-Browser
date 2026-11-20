@@ -87,21 +87,27 @@ class BookmarksActivity : Activity() {
         val p = ThemeManager.palette(this)
         val root = findViewById<LinearLayout>(R.id.listRoot)
 
-        // Barra de búsqueda
+        // Barra de búsqueda tipo píldora
+        val searchBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
+        val searchStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(NexoUi.dp(this@BookmarksActivity, 16f), NexoUi.dp(this@BookmarksActivity, 2f), NexoUi.dp(this@BookmarksActivity, 16f), NexoUi.dp(this@BookmarksActivity, 8f))
         }
         search = EditText(this).apply {
-            hint = "Buscar en favoritos"
+            hint = "Buscar en favoritos…"
             setSingleLine(true)
             textSize = 14.5f
+            typeface = NexoUi.regular(this@BookmarksActivity)
+            setTextColor(p.text)
+            setHintTextColor(p.muted)
             minHeight = NexoUi.dp(this@BookmarksActivity, 48f)
             imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
             inputType = InputType.TYPE_CLASS_TEXT
-            ThemeManager.styleEdit(this@BookmarksActivity, this)
+            background = ThemeManager.rounded(this@BookmarksActivity, searchBg, 24f, searchStroke)
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
+            compoundDrawablesRelative.firstOrNull()?.mutate()?.setTint(p.muted)
             compoundDrawablePadding = NexoUi.dp(this@BookmarksActivity, 10f)
             setPadding(NexoUi.dp(this@BookmarksActivity, 16f), NexoUi.dp(this@BookmarksActivity, 8f), NexoUi.dp(this@BookmarksActivity, 48f), NexoUi.dp(this@BookmarksActivity, 8f))
             addTextChangedListener(object : TextWatcher {

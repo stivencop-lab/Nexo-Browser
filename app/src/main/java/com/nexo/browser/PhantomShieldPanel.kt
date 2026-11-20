@@ -78,7 +78,12 @@ object PhantomShieldPanel {
         val p = ThemeManager.palette(activity)
         val density = activity.resources.displayMetrics.density
         fun dp(value: Float) = (value * density).toInt()
-        val radius = 24f * density
+        val radius = NexoUi.Tokens.RADIUS_SHEET * density
+        val sheetBg = when {
+            p.isAmoled -> 0xFF0C0E13.toInt()
+            p.isDark -> p.surfaceContainer
+            else -> p.surfaceContainerLow
+        }
         val dialog = Dialog(activity)
         var recoveries = 0
         var lastRecovery = 0L
@@ -88,7 +93,7 @@ object PhantomShieldPanel {
             .onFailure { EngineDiagnostics.log("panel de PhantomShield: no se pudo crear el navegador", it) }
             .getOrNull() ?: return false
         EngineDiagnostics.log("panel de PhantomShield abierto")
-        web.setBackgroundColor(p.surface)
+        web.setBackgroundColor(sheetBg)
         web.setDarkMode(ThemeManager.isDark(activity))
         web.setNavigationClient(object : CefriumNavigationClient {
             override fun onBeforeNavigate(browser: CefriumBrowser, request: CefriumNavigationRequest): Boolean {
@@ -139,11 +144,22 @@ object PhantomShieldPanel {
         })
         PhantomShield.attachPanel(web) { dialog.dismiss() }
 
+        val dragHandle = View(activity).apply {
+            val handleColor = androidx.core.graphics.ColorUtils.setAlphaComponent(p.muted, 110)
+            background = ThemeManager.rounded(activity, handleColor, 3f)
+            contentDescription = "Arrastra hacia abajo para cerrar"
+            layoutParams = LinearLayout.LayoutParams(dp(36f), dp(4f)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(10f)
+                bottomMargin = dp(8f)
+            }
+        }
         val sheet = DragDismissLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            dragZonePx = dp(30f)
+            dragZonePx = dp(36f)
             background = GradientDrawable().apply {
-                setColor(p.surface)
+                setColor(sheetBg)
+                if (p.isAmoled) setStroke(dp(1f).coerceAtLeast(1), ThemeManager.hairline(p))
                 cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
             }
             outlineProvider = object : ViewOutlineProvider() {
@@ -152,6 +168,7 @@ object PhantomShieldPanel {
                 }
             }
             clipToOutline = true
+            addView(dragHandle)
             addView(web.surfaceContainer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             dimWindow = dialog.window
             onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }

@@ -102,15 +102,21 @@ class HistoryActivity : Activity() {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(dp(16f), dp(2f), dp(16f), dp(10f))
         }
+        val searchBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
+        val searchStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         search = EditText(this).apply {
-            hint = "Buscar en el historial"
+            hint = "Buscar en el historial…"
             setSingleLine(true)
             textSize = 14.5f
+            typeface = NexoUi.regular(this@HistoryActivity)
+            setTextColor(p.text)
+            setHintTextColor(p.muted)
             minHeight = dp(48f)
             imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
-            ThemeManager.styleEdit(this@HistoryActivity, this)
+            background = ThemeManager.rounded(this@HistoryActivity, searchBg, 24f, searchStroke)
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
+            compoundDrawablesRelative.firstOrNull()?.mutate()?.setTint(p.muted)
             compoundDrawablePadding = dp(10f)
             setPadding(dp(16f), dp(8f), dp(48f), dp(8f))
             contentDescription = "Buscar en el historial"

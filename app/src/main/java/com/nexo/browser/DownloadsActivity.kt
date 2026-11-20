@@ -96,8 +96,10 @@ class DownloadsActivity : Activity() {
                 ListRow(
                     title = job.fileName,
                     subtitle = DownloadStore.progressText(this, job).ifBlank { "Iniciando…" },
-                    meta = "Descargando · toca para cancelar",
-                    badge = if (job.percent >= 0) "${job.percent}%" else "↓"
+                    meta = "Toca para cancelar",
+                    badge = if (job.percent >= 0) "${job.percent}%" else "↓",
+                    status = "Descargando",
+                    statusTone = NexoUi.Tone.INFO
                 )
             } + entries.map {
                 val ext = it.fileName.substringAfterLast('.', "").uppercase().take(4)

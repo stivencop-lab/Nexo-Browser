@@ -58,7 +58,7 @@ class ExtensionsActivity : Activity() {
     private lateinit var listView: ListView
     private lateinit var queryInput: EditText
     private lateinit var filterBar: LinearLayout
-    private lateinit var summaryBanner: TextView
+    private lateinit var metricsRow: LinearLayout
     private var activeFilter = Filter.ALL
     private var displayedIds: List<String?> = emptyList()
     private val availableUpdates = ConcurrentHashMap<String, ExtensionUpdateManager.UpdateCheckResult>()
@@ -69,7 +69,11 @@ class ExtensionsActivity : Activity() {
         setContentView(R.layout.activity_list)
         NxrRuntime.initialize(this)
 
-        findViewById<TextView>(R.id.listTitle).text = "Extension Hub · NXR"
+        findViewById<TextView>(R.id.listTitle).apply {
+            text = "Extension Hub"
+            typeface = NexoUi.bold(this@ExtensionsActivity)
+            letterSpacing = -0.015f
+        }
         findViewById<Button>(R.id.listAction).apply {
             text = "Archivo local"
             setOnClickListener { pickPackage() }
@@ -116,22 +120,30 @@ class ExtensionsActivity : Activity() {
         val root = findViewById<LinearLayout>(R.id.listRoot)
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16f), dp(4f), dp(16f), dp(8f))
+            setPadding(dp(16f), dp(4f), dp(16f), dp(6f))
         }
 
-        // Buscador universal de tiendas / URL / ID de 32 letras
+        // Buscador universal tipo píldora (tiendas / URL / ID de 32 letras)
+        val searchBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainer
+        val searchStroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
         val searchRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         queryInput = EditText(this).apply {
-            hint = "Buscar, pegar URL de tienda o ID de extensión…"
+            hint = "Buscar, pegar URL de tienda o ID…"
             setSingleLine(true)
-            textSize = 13.5f
+            textSize = 14f
+            typeface = NexoUi.regular(this@ExtensionsActivity)
+            setTextColor(p.text)
+            setHintTextColor(p.muted)
             minHeight = dp(48f)
             imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_EXTRACT_UI
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            ThemeManager.styleEdit(this@ExtensionsActivity, this)
+            background = ThemeManager.rounded(this@ExtensionsActivity, searchBg, 24f, searchStroke)
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0)
+            compoundDrawablesRelative.firstOrNull()?.mutate()?.setTint(p.muted)
+            compoundDrawablePadding = dp(10f)
             setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
             contentDescription = "Buscar extensión o pegar enlace de Chrome Web Store o Edge Add-ons"
             setOnEditorActionListener { _, actionId, event ->
@@ -144,7 +156,7 @@ class ExtensionsActivity : Activity() {
         val goBtn = Button(this).apply {
             text = "Ir"
             isAllCaps = false
-            textSize = 13.5f
+            textSize = 14f
             minWidth = dp(56f)
             minHeight = dp(48f)
             ThemeManager.styleButton(this@ExtensionsActivity, this, primary = true)
@@ -156,34 +168,46 @@ class ExtensionsActivity : Activity() {
         searchRow.addView(goBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         header.addView(searchRow)
 
-        // Acciones rápidas: tiendas oficiales, actualizaciones y matriz de 20 APIs
-        val quickScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(0, dp(8f), 0, dp(4f))
+        // Tarjetas de tiendas oficiales lado a lado (Chrome Web Store + Edge Add-ons)
+        val storesRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10f), 0, dp(8f))
         }
-        val quickRow = LinearLayout(this).apply {
+        storesRow.addView(storeSourceCard("Chrome Store", "Catálogo .crx oficial", p.primary.container, p.primary.onContainer) {
+            openInBrowser(ExtensionStoreResolver.CWS_HOME_URL)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
+        storesRow.addView(storeSourceCard("Edge Add-ons", "Tienda Microsoft Edge", p.info.container, p.info.onContainer) {
+            openInBrowser(ExtensionStoreResolver.EDGE_HOME_URL)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(storesRow)
+
+        // Métricas compactas de estado
+        metricsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(6f))
+        }
+        header.addView(metricsRow)
+
+        // Acciones secundarias (actualizaciones y matriz de 20 APIs)
+        val toolsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+        }
+        val toolsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        quickRow.addView(NexoUi.chip(this, "Chrome Web Store", false) {
-            openInBrowser(ExtensionStoreResolver.CWS_HOME_URL)
-        }, chipMargin())
-        quickRow.addView(NexoUi.chip(this, "Edge Add-ons", false) {
-            openInBrowser(ExtensionStoreResolver.EDGE_HOME_URL)
-        }, chipMargin())
-        quickRow.addView(NexoUi.chip(this, "Buscar actualizaciones", false) {
+        toolsRow.addView(NexoUi.chip(this, "Buscar actualizaciones", false) {
             checkAllUpdates()
         }, chipMargin())
-        quickRow.addView(NexoUi.chip(this, "Matriz 20 APIs", false) {
+        toolsRow.addView(NexoUi.chip(this, "Matriz 20 APIs", false) {
             ExtensionHubSheets.showCompatibilityMatrixSheet(this)
         }, chipMargin())
-        quickScroll.addView(quickRow)
-        header.addView(quickScroll)
+        toolsScroll.addView(toolsRow)
+        header.addView(toolsScroll)
 
         // Filtros de lista
         val filterScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            setPadding(0, dp(4f), 0, dp(4f))
         }
         filterBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -192,15 +216,58 @@ class ExtensionsActivity : Activity() {
         filterScroll.addView(filterBar)
         header.addView(filterScroll)
 
-        summaryBanner = TextView(this).apply {
-            textSize = 12f
-            setTextColor(p.muted)
-            setPadding(dp(2f), dp(4f), dp(2f), dp(2f))
-        }
-        header.addView(summaryBanner)
-
         root.addView(header, 1)
         renderFilterChips()
+    }
+
+    private fun storeSourceCard(
+        title: String,
+        subtitle: String,
+        badgeBg: Int,
+        badgeFg: Int,
+        onClick: () -> Unit
+    ): LinearLayout {
+        val p = ThemeManager.palette(this)
+        val surface = if (p.isDark) p.surfaceContainer else p.surfaceContainerLowest
+        val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(60f)
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            background = ThemeManager.ripple(this@ExtensionsActivity, ThemeManager.rounded(this@ExtensionsActivity, surface, 18f, stroke), 18f)
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Abrir $title"
+            setOnClickListener { onClick() }
+            addView(android.widget.ImageView(this@ExtensionsActivity).apply {
+                setImageResource(R.drawable.ic_menu_store)
+                imageTintList = android.content.res.ColorStateList.valueOf(badgeFg)
+                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+                background = ThemeManager.rounded(this@ExtensionsActivity, badgeBg, 12f)
+            }, LinearLayout.LayoutParams(dp(36f), dp(36f)).apply { marginEnd = dp(10f) })
+            addView(LinearLayout(this@ExtensionsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@ExtensionsActivity).apply {
+                    text = title
+                    textSize = 13.5f
+                    typeface = NexoUi.semiBold(this@ExtensionsActivity)
+                    setTextColor(p.text)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                addView(TextView(this@ExtensionsActivity).apply {
+                    text = subtitle
+                    textSize = 11.5f
+                    typeface = NexoUi.regular(this@ExtensionsActivity)
+                    setTextColor(p.muted)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
     }
 
     private fun chipMargin() = LinearLayout.LayoutParams(
@@ -321,23 +388,35 @@ class ExtensionsActivity : Activity() {
 
         val installed = NxrRuntime.installed(this)
         val runningCount = installed.count { NxrRuntime.lifecycleState(it.id, this) == ExtensionCompatibility.LifecycleState.RUNNING }
-        val enabledCount = installed.count { NxrRuntime.policyFor(it.id).enabled }
-        summaryBanner.text = "Instaladas: ${installed.size} · Habilitadas: $enabledCount · Funcionando: $runningCount · Actualizaciones: ${availableUpdates.size}"
+        val updatesCount = availableUpdates.size
+
+        metricsRow.removeAllViews()
+        metricsRow.addView(NexoUi.metricTile(this, "${installed.size}", "Instaladas", NexoUi.Tone.NEUTRAL),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
+        metricsRow.addView(NexoUi.metricTile(this, "$runningCount", "Activas", if (runningCount > 0) NexoUi.Tone.SUCCESS else NexoUi.Tone.NEUTRAL),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
+        metricsRow.addView(NexoUi.metricTile(this, "$updatesCount", "Actualizaciones", if (updatesCount > 0) NexoUi.Tone.INFO else NexoUi.Tone.NEUTRAL),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         if (activeFilter == Filter.ALL) {
+            val shieldOn = com.nexo.browser.shield.PhantomShield.isEnabled()
             rows += ListRow(
-                "PhantomShield",
-                "Bloqueo nativo de anuncios y rastreadores integrado en Chromium; IA opcional con tu API",
-                if (com.nexo.browser.shield.PhantomShield.isEnabled()) "Funcionando · integrado · toca para abrir panel" else "Desactivado desde el menú",
-                "✓"
+                title = "PhantomShield",
+                subtitle = "Bloqueo nativo de anuncios y rastreadores integrado en Chromium",
+                meta = if (shieldOn) "Integrada · toca para abrir el panel" else "Desactivado desde el menú",
+                badge = "PS",
+                status = if (shieldOn) "Activa" else "Pausada",
+                statusTone = if (shieldOn) NexoUi.Tone.SUCCESS else NexoUi.Tone.NEUTRAL
             )
             ids += ExtensionManager.PHANTOMSHIELD_ID
 
             rows += ListRow(
-                "Puente de Nexo",
-                "Nexo Media Engine, Nexo Dark Engine, Nexo Reader y Subtítulos en vivo",
-                "Funcionando · integrado en Cefrium 0.21.0",
-                "✓"
+                title = "Puente de Nexo",
+                subtitle = "Media Engine, Dark Engine, Reader y Subtítulos en vivo",
+                meta = "Integrado en Cefrium 0.21.0",
+                badge = "NX",
+                status = "Integrado",
+                statusTone = NexoUi.Tone.SUCCESS
             )
             ids += null
         }
@@ -357,14 +436,16 @@ class ExtensionsActivity : Activity() {
 
         if (filtered.isEmpty()) {
             rows += ListRow(
-                if (installed.isEmpty()) "Nexo Extension Hub listo" else "Sin extensiones en «${activeFilter.label}»",
-                if (installed.isEmpty()) {
-                    "Abre Chrome Web Store o Edge Add-ons arriba, pega una URL/ID o elige un archivo .crx, .zip o .xpi."
+                title = if (installed.isEmpty()) "Nexo Extension Hub listo" else "Sin extensiones en «${activeFilter.label}»",
+                subtitle = if (installed.isEmpty()) {
+                    "Abre Chrome Store o Edge Add-ons arriba, pega una URL/ID o elige un paquete .crx, .zip o .xpi."
                 } else {
                     "Cambia el filtro superior o instala nuevas extensiones desde las tiendas compatibles."
                 },
-                "Cefrium 0.21.0 · NXR verifica firmas CRX y permisos por sitio",
-                "HUB"
+                meta = "NXR verifica firmas CRX y permisos por sitio",
+                badge = "HUB",
+                status = "Listo",
+                statusTone = NexoUi.Tone.ACCENT
             )
             ids += null
         } else {
@@ -373,29 +454,31 @@ class ExtensionsActivity : Activity() {
                 val errCount = NxrRuntime.diagnostics(ext.id).size
                 val upd = availableUpdates[ext.id]
                 val sourceShort = when (ext.sourceOrigin) {
-                    NxrPackageInstaller.ORIGIN_CHROME_WEB_STORE -> "CWS"
-                    NxrPackageInstaller.ORIGIN_EDGE_ADDONS -> "Edge"
+                    NxrPackageInstaller.ORIGIN_CHROME_WEB_STORE -> "Chrome Store"
+                    NxrPackageInstaller.ORIGIN_EDGE_ADDONS -> "Edge Add-ons"
                     NxrPackageInstaller.ORIGIN_DIRECT_URL -> "HTTPS"
                     else -> "Local"
                 }
-                val status = buildString {
-                    append(state.label)
-                    append(" · $sourceShort · v${ext.version} · MV${ext.manifestVersion}")
+                val meta = buildString {
+                    append("$sourceShort · v${ext.version} · MV${ext.manifestVersion}")
                     if (upd != null && upd.hasUpdate) append(" · ↑ v${upd.remoteVersion}")
                     if (ext.unsupportedApis.isNotEmpty()) append(" · ${ext.unsupportedApis.size} API(s) sin soporte")
                     if (errCount > 0) append(" · $errCount aviso(s)")
                 }
-                val badge = when {
-                    upd != null && upd.hasUpdate -> "UPD"
-                    state == ExtensionCompatibility.LifecycleState.RUNNING -> "RUN"
-                    state == ExtensionCompatibility.LifecycleState.ENABLED -> "ON"
-                    else -> "OFF"
+                val (statusLabel, statusTone) = when {
+                    upd != null && upd.hasUpdate -> "Actualización" to NexoUi.Tone.INFO
+                    ext.unsupportedApis.isNotEmpty() -> "Con límites" to NexoUi.Tone.WARNING
+                    state == ExtensionCompatibility.LifecycleState.RUNNING -> "Funcionando" to NexoUi.Tone.SUCCESS
+                    state == ExtensionCompatibility.LifecycleState.ENABLED -> "Habilitada" to NexoUi.Tone.ACCENT
+                    else -> state.label to NexoUi.Tone.NEUTRAL
                 }
                 rows += ListRow(
-                    ext.name,
-                    ext.description.ifBlank { "Sitios: ${ext.hostPermissions.take(3).joinToString(", ").ifBlank { "sin hosts" }}" },
-                    status,
-                    badge
+                    title = ext.name,
+                    subtitle = ext.description.ifBlank { "Sitios: ${ext.hostPermissions.take(3).joinToString(", ").ifBlank { "sin hosts" }}" },
+                    meta = meta,
+                    badge = ext.name.take(2).uppercase().ifBlank { "EX" },
+                    status = statusLabel,
+                    statusTone = statusTone
                 )
                 ids += ext.id
             }

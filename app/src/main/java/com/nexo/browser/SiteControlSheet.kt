@@ -49,24 +49,20 @@ object SiteControlSheet {
         // 1. SITIO Y CONEXIÓN
         // =====================================================================
         body.addView(NexoUi.section(activity, "Sitio y conexión"))
-        val connCard = NexoUi.card(activity)
-        connCard.addView(LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(TextView(activity).apply {
-                text = conn.headline
-                textSize = 14.5f
-                typeface = NexoUi.bold(activity)
-                setTextColor(p.text)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(NexoUi.statusPill(activity, conn.badge, conn.tone))
+        val connCard = NexoUi.card(activity, paddingDp = 16f)
+        connCard.addView(TextView(activity).apply {
+            text = conn.headline
+            textSize = 14.5f
+            typeface = NexoUi.semiBold(activity)
+            setTextColor(p.text)
         })
         connCard.addView(TextView(activity).apply {
             text = conn.explanation
             textSize = 12.5f
+            typeface = NexoUi.regular(activity)
             setTextColor(p.muted)
-            setLineSpacing(0f, 1.18f)
-            setPadding(0, NexoUi.dp(activity, 6f), 0, 0)
+            setLineSpacing(0f, 1.22f)
+            setPadding(0, NexoUi.dp(activity, 5f), 0, 0)
         })
         val metaParts = mutableListOf<String>()
         if (isWeb && origin != null) metaParts += "Origen: $origin"
@@ -81,7 +77,9 @@ object SiteControlSheet {
             connCard.addView(TextView(activity).apply {
                 text = metaParts.joinToString("\n")
                 textSize = 12f
+                typeface = NexoUi.regular(activity)
                 setTextColor(p.muted)
+                setLineSpacing(0f, 1.2f)
                 setPadding(0, NexoUi.dp(activity, 8f), 0, 0)
             })
         }
@@ -91,6 +89,7 @@ object SiteControlSheet {
         // 2. PRIVACIDAD
         // =====================================================================
         body.addView(NexoUi.section(activity, "Privacidad"))
+        val privacyCard = NexoUi.card(activity, paddingDp = 4f)
         val shieldGlobalOn = PhantomShield.isEnabled()
         val siteDisabled = isWeb && PhantomShield.isSiteDisabled(host)
         val blockedHere = session?.let { PhantomShield.tabBlockedCount(it.shield) } ?: 0
@@ -99,9 +98,9 @@ object SiteControlSheet {
                 !shieldGlobalOn -> "PhantomShield está desactivado globalmente."
                 siteDisabled -> "Pausado en $host (excepción activa)."
                 blockedHere > 0 -> "$blockedHere bloqueos en esta carga en $host."
-                else -> "Activo en $host (bloqueo de anuncios y rastreadores)."
+                else -> "Activo en $host (anuncios y rastreadores)."
             }
-            body.addView(NexoUi.switchRow(
+            privacyCard.addView(NexoUi.switchRow(
                 activity,
                 "PhantomShield en $host",
                 shieldSub,
@@ -111,8 +110,9 @@ object SiteControlSheet {
                 PhantomShield.setSiteDisabled(host, disabled = !on)
                 Toastish.show(activity, if (on) "PhantomShield activado en $host" else "PhantomShield pausado en $host")
             })
+            privacyCard.addView(NexoUi.insetDivider(activity))
         }
-        body.addView(NexoUi.actionRow(
+        privacyCard.addView(NexoUi.actionRow(
             activity,
             R.drawable.ic_menu_shield,
             "Panel completo de PhantomShield",
@@ -128,9 +128,10 @@ object SiteControlSheet {
         if (isWeb && origin != null && session != null) {
             val cookieStatus = TextView(activity).apply {
                 text = "Consultando cookies de $host…"
-                textSize = 12.5f
+                textSize = 12f
+                typeface = NexoUi.regular(activity)
                 setTextColor(p.muted)
-                setPadding(NexoUi.dp(activity, 4f), NexoUi.dp(activity, 4f), NexoUi.dp(activity, 4f), NexoUi.dp(activity, 6f))
+                setPadding(NexoUi.dp(activity, 14f), NexoUi.dp(activity, 8f), NexoUi.dp(activity, 14f), NexoUi.dp(activity, 2f))
             }
             session.countSiteCookies(url) { count ->
                 cookieStatus.text = when (count) {
@@ -140,8 +141,9 @@ object SiteControlSheet {
                     else -> "$count cookies almacenadas para $host."
                 }
             }
-            body.addView(cookieStatus)
-            body.addView(NexoUi.actionRow(
+            privacyCard.addView(NexoUi.divider(activity, 14f))
+            privacyCard.addView(cookieStatus)
+            privacyCard.addView(NexoUi.actionRow(
                 activity,
                 R.drawable.ic_menu_close,
                 "Borrar cookies y datos de $host",
@@ -159,6 +161,10 @@ object SiteControlSheet {
                         }
                     }.show()
             })
+        }
+        body.addView(privacyCard)
+
+        if (isWeb && origin != null && session != null) {
 
             // Permisos del motor (sincronizados con CefriumBrowser.setContentSetting)
             val permsCard = NexoUi.card(activity)
@@ -204,9 +210,16 @@ object SiteControlSheet {
         // 3. EXPERIENCIA
         // =====================================================================
         body.addView(NexoUi.section(activity, "Experiencia"))
+        val expCard = NexoUi.card(activity, paddingDp = 4f)
+        var expHasPrev = false
+        fun expDivider() {
+            if (expHasPrev) expCard.addView(NexoUi.insetDivider(activity))
+            expHasPrev = true
+        }
         if (isWeb && host.isNotBlank()) {
             val excluded = BrowserPrefs.isNightException(activity, host)
-            body.addView(NexoUi.switchRow(
+            expDivider()
+            expCard.addView(NexoUi.switchRow(
                 activity,
                 "Tema oscuro en $host",
                 if (excluded) "Excluido: muestra los colores originales del sitio."
@@ -216,49 +229,10 @@ object SiteControlSheet {
                 NightMode.toggleSite(activity, host, excluded = !on)
             })
 
-            // Zoom por sitio (75% - 200%)
             if (session != null) {
-                var zoomPct = SiteZoomStore.effectivePercent(activity, url)
-                val zoomCard = NexoUi.card(activity)
-                val zoomLabel = TextView(activity).apply {
-                    text = "Zoom en $host: $zoomPct%"
-                    textSize = 14f
-                    typeface = NexoUi.bold(activity)
-                    setTextColor(p.text)
-                }
-                val zoomSub = TextView(activity).apply {
-                    text = "Se guarda solo para este dominio (predeterminado: ${BrowserPrefs.textScale(activity)}%)."
-                    textSize = 12f
-                    setTextColor(p.muted)
-                    setPadding(0, NexoUi.dp(activity, 2f), 0, NexoUi.dp(activity, 8f))
-                }
-                fun applyZoom(next: Int) {
-                    zoomPct = SiteControlModel.clampZoomPercent(next)
-                    zoomLabel.text = "Zoom en $host: $zoomPct%"
-                    session.setSiteZoom(url, zoomPct)
-                }
-                val zoomRow = LinearLayout(activity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(NexoUi.button(activity, "−") {
-                        applyZoom(SiteControlModel.nextZoomStep(zoomPct, -1))
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = NexoUi.dp(activity, 6f) })
-                    addView(NexoUi.button(activity, "100%") {
-                        applyZoom(100)
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = NexoUi.dp(activity, 6f) })
-                    addView(NexoUi.button(activity, "+") {
-                        applyZoom(SiteControlModel.nextZoomStep(zoomPct, +1))
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                }
-                zoomCard.addView(zoomLabel)
-                zoomCard.addView(zoomSub)
-                zoomCard.addView(zoomRow)
-                body.addView(zoomCard, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = NexoUi.dp(activity, 6f); bottomMargin = NexoUi.dp(activity, 6f) })
-
                 val mutedNow = session.isAudioMuted()
-                body.addView(NexoUi.switchRow(
+                expDivider()
+                expCard.addView(NexoUi.switchRow(
                     activity,
                     "Silenciar audio de esta pestaña",
                     if (mutedNow) "El sonido de esta pestaña está silenciado." else "Reproducción de audio normal.",
@@ -269,7 +243,8 @@ object SiteControlSheet {
                 })
             }
 
-            body.addView(NexoUi.actionRow(
+            expDivider()
+            expCard.addView(NexoUi.actionRow(
                 activity,
                 R.drawable.ic_menu_translate,
                 if (TranslatorManager.isTranslated(tab.session)) "Restaurar idioma original" else "Traducir esta página",
@@ -280,7 +255,8 @@ object SiteControlSheet {
                     activity.runOnUiThread { Toast.makeText(activity, message, Toast.LENGTH_LONG).show() }
                 }
             })
-            body.addView(NexoUi.actionRow(
+            expDivider()
+            expCard.addView(NexoUi.actionRow(
                 activity,
                 R.drawable.ic_menu_reader,
                 "Modo lectura (Nexo Reader)",
@@ -290,30 +266,83 @@ object SiteControlSheet {
                 com.nexo.browser.reader.NexoReader.openActiveTab(activity)
             })
         }
-        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Nexo Dark Engine", DarkEngine.summary(activity)) {
+        expDivider()
+        expCard.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_settings, "Nexo Dark Engine", DarkEngine.summary(activity)) {
             sheet.dismiss()
             DarkEngine.showSheet(activity, host)
         })
-        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Nexo Media Engine", "Velocidad, salto rápido, gestos y subtítulos") {
+        expDivider()
+        expCard.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Nexo Media Engine", "Velocidad, salto rápido, gestos y subtítulos") {
             sheet.dismiss()
             NexoMediaEngine.showSheet(activity)
         })
-        body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_translate, "Subtítulos en vivo", CaptionsUi.summary(activity)) {
+        expDivider()
+        expCard.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_translate, "Subtítulos en vivo", CaptionsUi.summary(activity)) {
             sheet.dismiss()
             CaptionsUi.showSheet(activity)
         })
+        body.addView(expCard)
+
+        // Zoom por sitio (75% - 200%)
+        if (isWeb && host.isNotBlank() && session != null) {
+            var zoomPct = SiteZoomStore.effectivePercent(activity, url)
+            val zoomCard = NexoUi.card(activity, paddingDp = 16f)
+            val zoomLabel = TextView(activity).apply {
+                text = "Zoom en $host: $zoomPct%"
+                textSize = 14f
+                typeface = NexoUi.semiBold(activity)
+                setTextColor(p.text)
+            }
+            val zoomSub = TextView(activity).apply {
+                text = "Se guarda solo para este dominio (predeterminado: ${BrowserPrefs.textScale(activity)}%)."
+                textSize = 12f
+                typeface = NexoUi.regular(activity)
+                setTextColor(p.muted)
+                setPadding(0, NexoUi.dp(activity, 2f), 0, NexoUi.dp(activity, 10f))
+            }
+            fun applyZoom(next: Int) {
+                zoomPct = SiteControlModel.clampZoomPercent(next)
+                zoomLabel.text = "Zoom en $host: $zoomPct%"
+                session.setSiteZoom(url, zoomPct)
+            }
+            val zoomRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(NexoUi.button(activity, "−") {
+                    applyZoom(SiteControlModel.nextZoomStep(zoomPct, -1))
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = NexoUi.dp(activity, 6f) })
+                addView(NexoUi.button(activity, "100%") {
+                    applyZoom(100)
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = NexoUi.dp(activity, 6f) })
+                addView(NexoUi.button(activity, "+") {
+                    applyZoom(SiteControlModel.nextZoomStep(zoomPct, +1))
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            zoomCard.addView(zoomLabel)
+            zoomCard.addView(zoomSub)
+            zoomCard.addView(zoomRow)
+            body.addView(zoomCard, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = NexoUi.dp(activity, 10f) })
+        }
 
         // =====================================================================
         // 4. EXTENSIONES
         // =====================================================================
         body.addView(NexoUi.section(activity, "Extensiones en este sitio"))
+        val extCard = NexoUi.card(activity, paddingDp = 4f)
         val installedExts = NxrRuntime.installed(activity)
+        var extHasPrev = false
         if (!isWeb || installedExts.isEmpty()) {
-            body.addView(NexoUi.note(
-                activity,
-                if (!isWeb) "Las extensiones no se ejecutan en páginas internas de Nexo."
+            extCard.addView(TextView(activity).apply {
+                text = if (!isWeb) "Las extensiones no se ejecutan en páginas internas de Nexo."
                 else "No hay extensiones NXR de terceros instaladas."
-            ))
+                textSize = 12.5f
+                typeface = NexoUi.regular(activity)
+                setTextColor(p.muted)
+                setPadding(NexoUi.dp(activity, 14f), NexoUi.dp(activity, 10f), NexoUi.dp(activity, 14f), NexoUi.dp(activity, 6f))
+            })
+            extHasPrev = true
         } else {
             val matching = installedExts.filter { ext ->
                 val policy = NxrRuntime.policyFor(ext.id)
@@ -321,16 +350,25 @@ object SiteControlSheet {
                     NxrPermissions.isAuthorizedForUrl(policy.copy(enabled = true, allowInPrivate = true, deniedHosts = emptySet()), url, false)
             }
             if (matching.isEmpty()) {
-                body.addView(NexoUi.note(activity, "Ninguna extensión instalada solicita acceso a $host."))
+                extCard.addView(TextView(activity).apply {
+                    text = "Ninguna extensión instalada solicita acceso a $host."
+                    textSize = 12.5f
+                    typeface = NexoUi.regular(activity)
+                    setTextColor(p.muted)
+                    setPadding(NexoUi.dp(activity, 14f), NexoUi.dp(activity, 10f), NexoUi.dp(activity, 14f), NexoUi.dp(activity, 6f))
+                })
+                extHasPrev = true
             } else {
                 matching.forEach { ext ->
+                    if (extHasPrev) extCard.addView(NexoUi.insetDivider(activity))
+                    extHasPrev = true
                     val policy = NxrRuntime.policyFor(ext.id)
                     val activeHere = NxrPermissions.isAuthorizedForUrl(policy, url, tab.isPrivate)
                     val permText = if (ext.permissions.isEmpty()) "Sin permisos adicionales" else ext.permissions.take(4).joinToString(", ")
-                    body.addView(NexoUi.switchRow(
+                    extCard.addView(NexoUi.switchRow(
                         activity,
                         ext.name,
-                        "v${ext.version} · $permText" + if (!policy.enabled) " · (extensión desactivada)" else "",
+                        "v${ext.version} · $permText" + if (!policy.enabled) " · (desactivada)" else "",
                         activeHere
                     ) { allow ->
                         if (allow && !policy.enabled) NxrRuntime.setEnabled(activity, ext.id, true)
@@ -344,7 +382,8 @@ object SiteControlSheet {
                 }
             }
         }
-        body.addView(NexoUi.actionRow(
+        if (extHasPrev) extCard.addView(NexoUi.divider(activity, 14f))
+        extCard.addView(NexoUi.actionRow(
             activity,
             R.drawable.ic_menu_extensions,
             "Administrar extensiones",
@@ -353,19 +392,21 @@ object SiteControlSheet {
             sheet.dismiss()
             activity.startActivity(Intent(activity, ExtensionsActivity::class.java))
         })
+        body.addView(extCard)
 
         // =====================================================================
         // 5. IA (NEXO AI)
         // =====================================================================
-        body.addView(NexoUi.section(activity, "IA (Nexo AI)"))
+        body.addView(NexoUi.section(activity, "Nexo AI"))
+        val aiCard = NexoUi.card(activity, paddingDp = 4f)
         val aiSettings = NexoAiConfig.read(activity)
         val aiState = if (aiSettings.enabled) "Activa (${aiSettings.provider})" else "Desactivada"
         if (isWeb && host.isNotBlank()) {
             val aiAllowedHere = NexoAiConfig.isHostAllowed(activity, host)
-            body.addView(NexoUi.switchRow(
+            aiCard.addView(NexoUi.switchRow(
                 activity,
-                "Permitir análisis de Nexo AI en $host",
-                if (aiAllowedHere) "Estado global: $aiState. Solo envía contenido cuando tú lo pides."
+                "Permitir análisis en $host",
+                if (aiAllowedHere) "Estado global: $aiState. Solo envía contenido bajo demanda."
                 else "Bloqueado en $host: Nexo AI no puede leer esta página.",
                 aiAllowedHere
             ) { allowed ->
@@ -375,30 +416,34 @@ object SiteControlSheet {
                     if (allowed) "Nexo AI permitido en $host" else "Nexo AI bloqueado en $host"
                 )
             })
+            aiCard.addView(NexoUi.insetDivider(activity))
         }
-        body.addView(NexoUi.actionRow(
+        aiCard.addView(NexoUi.actionRow(
             activity,
-            R.drawable.ic_menu_ai,
+            R.drawable.ic_nexo_ai_spark,
             "Abrir Nexo AI",
             "Estado: $aiState · resumir, analizar y configurar"
         ) {
             sheet.dismiss()
             NexoAiSheet.show(activity)
         })
+        body.addView(aiCard)
 
         // =====================================================================
         // HERRAMIENTAS AVANZADAS DE PESTAÑA (BURNER / PROXY / DNS / GRUPOS)
         // =====================================================================
         body.addView(NexoUi.section(activity, "Red, identidad y grupos"))
-        body.addView(NexoUi.actionRow(
+        val netCard = NexoUi.card(activity, paddingDp = 4f)
+        netCard.addView(NexoUi.actionRow(
             activity,
             R.drawable.ic_tab_tools,
-            "Herramientas de pestaña (Burner, Proxy, DNS, Grupos)",
+            "Herramientas de pestaña",
             "Ruta: ${tab.networkState}" + (tab.groupName?.let { " · Grupo: $it" } ?: "")
         ) {
             sheet.dismiss()
             TabTools.show(activity)
         })
+        body.addView(netCard)
 
         sheet = NexoSheets.show(
             activity,
