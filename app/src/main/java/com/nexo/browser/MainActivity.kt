@@ -57,6 +57,7 @@ class MainActivity :
     /** Vista de la página (la del motor activo) y su interfaz de motor. */
     private lateinit var pageView: View
     private lateinit var engineView: EngineView
+    private lateinit var omniboxCapsule: LinearLayout
     private lateinit var omnibox: EditText
     private lateinit var suggestions: OmniboxSuggestions
     private lateinit var progress: ProgressBar
@@ -69,6 +70,7 @@ class MainActivity :
     private lateinit var reloadButton: ImageButton
     private lateinit var newTabButton: ImageButton
     private lateinit var browserDock: GestureDock
+    private lateinit var dockGesturePill: View
     private lateinit var clearOmniboxButton: Button
     private lateinit var privateBanner: TextView
     private lateinit var extensionInstallBanner: LinearLayout
@@ -257,6 +259,7 @@ class MainActivity :
         topBar = findViewById(R.id.topBar)
         navBar = findViewById(R.id.navBar)
         browserDock = findViewById(R.id.browserDock)
+        dockGesturePill = findViewById(R.id.dockGesturePill)
         pageView = installPageView()
         engineView = pageView as EngineView
         browserFrame = findViewById(R.id.browserFrame)
@@ -291,6 +294,7 @@ class MainActivity :
             hostContainer = browserFrame,
             onOpenPanel = { com.nexo.browser.media.NexoMediaEngine.showSheet(this) { refreshCaptionsUi() } }
         )
+        omniboxCapsule = findViewById(R.id.omniboxCapsule)
         omnibox = findViewById(R.id.omnibox)
         progress = findViewById(R.id.pageProgress)
         tabButton = findViewById(R.id.tabButton)
@@ -448,6 +452,7 @@ class MainActivity :
 
         omnibox.setOnFocusChangeListener { _, focused ->
             val tab = TabManager.activeTab()
+            ThemeManager.styleOmniboxCapsule(this, omniboxCapsule, focused)
             if (focused) {
                 setDockScrollHidden(false)
                 // Al editar se muestra la URL completa, seleccionada.
@@ -1186,13 +1191,39 @@ class MainActivity :
 
     private fun styleTabToolsButton(tab: BrowserTab?) {
         val btn = findViewById<ImageButton>(R.id.tabToolsButton)
-        val muted = (tab?.session as? com.nexo.browser.engine.cefrium.CefriumEngineSession)?.isAudioMuted() == true
-        val active = tab != null && (tab.burnerId != null || tab.networkProfile != null || muted)
-        ThemeManager.styleIconButton(this, btn, active)
+        val p = ThemeManager.palette(this)
+        val session = tab?.session as? com.nexo.browser.engine.cefrium.CefriumEngineSession
+        val muted = session?.isAudioMuted() == true
+        val home = tab == null || BrowserPrefs.isNexoHome(tab.url)
+        val sslBlocked = !home && !session?.lastBlockedSslHost().isNullOrBlank()
+        val scheme = if (tab != null) UrlSafety.scheme(tab.url) else ""
+
+        val iconRes = when {
+            tab?.burnerId != null -> R.drawable.ic_menu_burner
+            muted -> R.drawable.ic_menu_volume_off
+            tab?.networkProfile != null -> R.drawable.ic_tab_tools
+            home -> R.drawable.ic_search
+            scheme == "https" && !sslBlocked -> R.drawable.ic_lock
+            else -> R.drawable.ic_tab_tools
+        }
+        btn.setImageResource(iconRes)
+
+        val highlight = tab != null && (tab.burnerId != null || tab.networkProfile != null || muted || sslBlocked)
+        ThemeManager.styleIconButton(this, btn, highlight)
+        when {
+            sslBlocked -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.danger)
+            tab?.burnerId != null -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
+            !home && scheme == "http" -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
+            !home && scheme == "https" && !highlight -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+            home -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+        }
         btn.contentDescription = when {
+            sslBlocked -> "Control del sitio (certificado TLS bloqueado)"
             muted -> "Control del sitio (audio silenciado)"
             tab?.burnerId != null -> "Control del sitio (identidad Burner)"
             tab?.networkProfile != null -> "Control del sitio (ruta de red personalizada)"
+            !home && scheme == "https" -> "Control del sitio (conexión HTTPS)"
+            !home && scheme == "http" -> "Control del sitio (conexión sin cifrar)"
             else -> "Control del sitio"
         }
     }
@@ -1200,44 +1231,45 @@ class MainActivity :
     private fun applyTheme() {
         val p = ThemeManager.palette(this)
         root.setBackgroundColor(p.background)
-        browserDock.apply {
-            background = ThemeManager.rounded(this@MainActivity, p.surface, 28f, p.outline)
-            elevation = if (p.isDark) 0f else 4f * resources.displayMetrics.density
-        }
+        ThemeManager.styleFloatingDock(this, browserDock, dockGesturePill)
         topBar.background = null
         navBar.background = null
-        browserFrame.applyPalette(p.surface, p.accent, p.outlineVariant)
+        browserFrame.applyPalette(p.surfaceContainerHigh, p.accent, ThemeManager.hairline(p))
         pageView.setBackgroundColor(p.background)
-        ThemeManager.styleEdit(this, omnibox)
+        ThemeManager.styleOmniboxCapsule(this, omniboxCapsule, omnibox.hasFocus())
+        ThemeManager.styleOmniboxInput(this, omnibox)
         ThemeManager.styleIconButton(this, compactBackButton)
         styleTabToolsButton(TabManager.activeTab())
         styleMiniPlayerChip()
-        // Botón permanente ✨ de Nexo AI: siempre visible, resaltado con el acento del tema.
-        ThemeManager.styleIconButton(this, aiButton, active = true)
+        // Botón permanente ✨ de Nexo AI: integrado dentro de la cápsula de direcciones.
+        ThemeManager.styleAiSparkButton(this, aiButton)
         aiButton.setOnClickListener { com.nexo.browser.ai.NexoAiSheet.show(this) }
         ThemeManager.styleTabCounter(this, tabButton)
-        ThemeManager.styleFlatButton(this, findViewById(R.id.menuButton))
+        ThemeManager.styleMenuIconButton(this, findViewById(R.id.menuButton))
         ThemeManager.styleFlatButton(this, clearOmniboxButton)
 
         listOf(
             backButton,
             forwardButton,
             homeButton,
-            reloadButton,
-            newTabButton
+            reloadButton
         ).forEach { ThemeManager.styleIconButton(this, it) }
+        ThemeManager.styleDockPrimaryIcon(this, newTabButton)
 
-        findBar.background = ThemeManager.barBackground(this, lineOnTop = false)
-        ThemeManager.styleEdit(this, findInput)
+        val floatingBg = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
+        findBar.background = ThemeManager.rounded(this, floatingBg, 20f, ThemeManager.hairline(p))
+        findBar.elevation = if (p.isDark) 0f else NexoUi.dp(this, 3f).toFloat()
+        ThemeManager.styleOmniboxInput(this, findInput)
         findCount.setTextColor(p.muted)
+        findCount.typeface = ThemeManager.fontMono(this)
         listOf(R.id.findPrev, R.id.findNext, R.id.findClose).forEach {
             ThemeManager.styleIconButton(this, findViewById(it))
         }
 
-        privateBanner.setBackgroundColor(p.accentSoft)
-        privateBanner.setTextColor(p.onAccentSoft)
-        extensionInstallBanner.background = ThemeManager.barBackground(this, lineOnTop = false)
+        stylePrivateBanner(TabManager.activeTab())
+        extensionInstallBanner.background = ThemeManager.rounded(this, floatingBg, 18f, ThemeManager.hairline(p))
         extensionBannerText.setTextColor(p.text)
+        extensionBannerText.typeface = ThemeManager.fontSemiBold(this)
         ThemeManager.styleButton(this, extensionBannerAction, primary = true)
         ThemeManager.styleIconButton(this, extensionBannerDismiss)
         progress.progressTintList = android.content.res.ColorStateList.valueOf(p.accent)
@@ -1248,13 +1280,23 @@ class MainActivity :
         themeKey = ThemeManager.themeKey(this)
     }
 
+    private fun stylePrivateBanner(tab: BrowserTab?) {
+        val p = ThemeManager.palette(this)
+        val isBurner = tab?.burnerId != null
+        val bg = if (isBurner) p.warning.container else p.accentSoft
+        val fg = if (isBurner) p.warning.onContainer else p.onAccentSoft
+        privateBanner.background = ThemeManager.rounded(this, bg, 16f, ThemeManager.hairline(p))
+        privateBanner.setTextColor(fg)
+        privateBanner.typeface = ThemeManager.fontSemiBold(this)
+    }
+
     /** Aplica el modo de navegación elegido (Clásico, Compacto o Personalizado) sin perder los controles esenciales. */
     private fun applyNavigationMode() {
         val mode = NavConfig.mode(this)
         val hideChrome = immersive
         compactBackButton.visibility = if (mode == NavConfig.Mode.COMPACT && !hideChrome) View.VISIBLE else View.GONE
         compactBackButton.isEnabled = TabManager.canGoBackOrPrevious()
-        compactBackButton.alpha = if (compactBackButton.isEnabled) 1f else 0.45f
+        compactBackButton.alpha = if (compactBackButton.isEnabled) 1f else 0.36f
 
         val targetActions = when (mode) {
             NavConfig.Mode.CLASSIC -> NavConfig.DEFAULT_ACTIONS
@@ -1288,13 +1330,14 @@ class MainActivity :
                 }
             }
             (btn.parent as? android.view.ViewGroup)?.removeView(btn)
-            ThemeManager.styleIconButton(this, btn)
+            if (action == NavConfig.Action.NEW_TAB) ThemeManager.styleDockPrimaryIcon(this, btn)
+            else ThemeManager.styleIconButton(this, btn)
             navBar.addView(btn, LinearLayout.LayoutParams(0, touchTarget, 1f))
         }
         backButton.isEnabled = TabManager.canGoBackOrPrevious()
-        backButton.alpha = if (backButton.isEnabled) 1f else 0.45f
+        backButton.alpha = if (backButton.isEnabled) 1f else 0.36f
         forwardButton.isEnabled = TabManager.activeTab()?.canGoForward == true
-        forwardButton.alpha = if (forwardButton.isEnabled) 1f else 0.45f
+        forwardButton.alpha = if (forwardButton.isEnabled) 1f else 0.36f
 
         if (hideChrome) {
             browserDock.visibility = View.GONE
@@ -1606,20 +1649,14 @@ class MainActivity :
         startPage.visibility = if (show) View.VISIBLE else View.GONE
     }
 
-    /** Muestra el dominio (como Chrome/Firefox) y un candado si es HTTPS. */
+    /** Muestra el dominio limpio dentro de la cápsula (el icono de estado vive en tabToolsButton). */
     private fun renderOmnibox(tab: BrowserTab) {
+        setOmniboxIcon(null)
         if (BrowserPrefs.isNexoHome(tab.url)) {
             omnibox.setText("")
-            setOmniboxIcon(R.drawable.ic_search)
             return
         }
         omnibox.setText(displayUrl(tab.url))
-        setOmniboxIcon(
-            when (UrlSafety.scheme(tab.url)) {
-                "https" -> R.drawable.ic_lock
-                else -> R.drawable.ic_search
-            }
-        )
     }
 
     private fun setOmniboxIcon(icon: Int?) {
@@ -1635,22 +1672,23 @@ class MainActivity :
 
     private fun renderTab(tab: BrowserTab) {
         WindowPrivacy.apply(window, tab.isPrivate)
-        // Burner: la franja muestra el correo temporal y abre su buzón.
+        // Burner: la píldora flotante muestra el correo temporal y abre su buzón.
         privateBanner.text = if (tab.burnerId != null) {
             BurnerMailbox.address(tab.burnerId)?.let { "Burner · $it  ›" } ?: "Burner · identidad efímera · buzón  ›"
         } else "Navegación privada"
         privateBanner.isClickable = tab.burnerId != null
         privateBanner.contentDescription = if (tab.burnerId != null) "Abrir el buzón de esta identidad Burner" else null
+        stylePrivateBanner(tab)
         styleTabToolsButton(tab)
         if (!omnibox.hasFocus()) renderOmnibox(tab)
         updateStartPage(tab)
         val canBack = TabManager.canGoBackOrPrevious()
         backButton.isEnabled = canBack
-        backButton.alpha = if (canBack) 1f else 0.45f
+        backButton.alpha = if (canBack) 1f else 0.36f
         compactBackButton.isEnabled = canBack
-        compactBackButton.alpha = if (canBack) 1f else 0.45f
+        compactBackButton.alpha = if (canBack) 1f else 0.36f
         forwardButton.isEnabled = tab.canGoForward
-        forwardButton.alpha = if (tab.canGoForward) 1f else 0.45f
+        forwardButton.alpha = if (tab.canGoForward) 1f else 0.36f
         privateBanner.visibility =
             if (!immersive && tab.isPrivate) View.VISIBLE else View.GONE
         updateExtensionInstallBanner(tab)
