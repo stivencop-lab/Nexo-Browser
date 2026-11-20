@@ -21,55 +21,113 @@ object PlaybackAudioCapture {
     private var grant: Grant? = null
     internal var service: PlaybackCaptureService? = null
     fun awaitingConsent(): Boolean = pending != null
+
     /** [reason]: la página no pudo dar su audio; se explica antes de proponer la captura de Android. */
     fun request(activity: MainActivity, reason: String? = null) {
         if (Build.VERSION.SDK_INT < 29) {
             ToastMessage.show(activity, "La captura de reproducción requiere Android 10 o posterior."); return
         }
         val session = TabManager.activeSession()
-        val token = session?.let { LiveCaptions.captureToken(it) }
-        if (session == null || token == null) {
-            ToastMessage.show(activity, "Activa primero CC en la pestaña del video y vuelve a intentarlo."); return
+        if (session == null) {
+            ToastMessage.show(activity, "Abre una pestaña con video o audio primero."); return
         }
-        if (LiveCaptions.usingDeviceAudio(session)) { ToastMessage.show(activity,"La captura de Android ya está activa. Apaga CC para detenerla."); return }
+        if (LiveCaptions.usingDeviceAudio(session)) {
+            ToastMessage.show(activity, "La captura universal de Android ya está activa. Apaga CC para detenerla."); return
+        }
         if (BrowserPrefs.deepgramKey(activity).isBlank()) {
-            ToastMessage.show(activity, "Configura Deepgram para reconocer el audio. Google o IA solo traducen texto."); return
+            ToastMessage.show(activity, "Configura tu clave de Deepgram para transcribir cualquier audio.")
+            CaptionsUi.showSheet(activity, askKey = true)
+            return
+        }
+        // Si CC todavía no estaba activo en esta pestaña, activarlo automáticamente en un toque.
+        if (!LiveCaptions.isActive(session)) {
+            LiveCaptions.toggle(activity, session)
+        }
+        val token = LiveCaptions.captureToken(session)
+        if (token == null) {
+            ToastMessage.show(activity, "No se pudo preparar los subtítulos en esta pestaña."); return
         }
         // Una solicitud anterior sin respuesta (diálogo cerrado por Android) no bloquea para siempre.
         pending?.let { if (SystemClock.uptimeMillis() - it.at < 60_000L) return else pending = null }
-        AlertDialog.Builder(activity).setTitle(if (reason != null) "La página no da su audio: ¿lo escucha Android?" else "Capturar el audio con Android")
-            .setMessage((reason?.let { "Motivo: $it\n\nAndroid puede escuchar el video directamente, sin pasar por la página.\n\n" } ?: "") +
-                "Android pedirá permiso de grabación de audio y de captura de pantalla (solo se usa el audio). Nexo escuchará el audio multimedia que suene en el teléfono, que puede incluir otras apps: pausa la música u otras pestañas. Nunca usa el micrófono. El audio se envía a Deepgram para transcribirlo. Se detiene al apagar CC, cambiar de página o de pestaña, o salir de Nexo (salvo en ventana flotante). DRM y algunos reproductores pueden impedirlo.")
-            .setNegativeButton(if (reason != null) "Ahora no" else "Cancelar", null)
-            .setPositiveButton(if (reason != null) "Usar captura de Android" else "Continuar") { _, _ ->
-                if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session ||
-                    !LiveCaptions.beginDeviceRequest(session, token)) {
-                    ToastMessage.show(activity, "Los subtítulos de esta pestaña cambiaron. Vuelve a elegir la captura de Android desde CC."); return@setPositiveButton
+
+        lateinit var sheet: Dialog
+        val body = NexoUi.column(activity)
+        val pills = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, NexoUi.dp(activity, 8f))
+        }
+        pills.addView(NexoUi.statusPill(activity, "Todo el audio", NexoUi.Tone.ACCENT))
+        pills.addView(
+            NexoUi.statusPill(activity, "Sin micrófono", NexoUi.Tone.SUCCESS),
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = NexoUi.dp(activity, 6f) }
+        )
+        body.addView(pills)
+
+        if (!reason.isNullOrBlank()) {
+            body.addView(NexoUi.note(activity, "Motivo detectado: $reason"))
+        }
+        body.addView(NexoUi.note(
+            activity,
+            "Android capturará directamente el audio multimedia que suene en el teléfono (videos protegidos por CORS, " +
+                "iframes, reproductores web, streams y podcasts) sin depender de la página ni usar el micrófono.\n\n" +
+                "Android pedirá autorización de audio y proyección de pantalla (Nexo solo lee el audio). " +
+                "Se detiene automáticamente al apagar CC o cambiar de pestaña."
+        ))
+
+        body.addView(NexoUi.button(activity, "Activar captura universal", primary = true) {
+            sheet.dismiss()
+            if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session ||
+                !LiveCaptions.beginDeviceRequest(session, token)) {
+                ToastMessage.show(activity, "Los subtítulos de esta pestaña cambiaron. Vuelve a elegir la captura desde CC.")
+                return@button
+            }
+            val request = Request(session, token)
+            pending = request
+            activity.requestAndroidPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) { allowed ->
+                if (pending !== request) return@requestAndroidPermissions
+                if (activity.isFinishing || activity.isDestroyed) { abort(activity, request, null); return@requestAndroidPermissions }
+                if (!allowed) {
+                    abort(activity, request, "Sin el permiso de audio Android no deja capturar la reproducción. Actívalo en Ajustes › Apps › Nexo › Permisos.")
+                    return@requestAndroidPermissions
                 }
-                val request = Request(session, token)
-                pending = request
-                activity.requestAndroidPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) { allowed ->
-                    if (pending !== request) return@requestAndroidPermissions
-                    if (activity.isFinishing || activity.isDestroyed) { abort(activity, request, null); return@requestAndroidPermissions }
-                    if (!allowed) {
-                        abort(activity, request, "Sin el permiso de audio Android no deja capturar la reproducción. Actívalo en Ajustes de Android › Apps › Nexo › Permisos.")
-                        return@requestAndroidPermissions
-                    }
-                    if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session) {
-                        abort(activity, request, "Los subtítulos de esta pestaña cambiaron. Vuelve a elegir la captura de Android desde CC.")
-                        return@requestAndroidPermissions
-                    }
-                    try {
-                        val manager = activity.getSystemService(MediaProjectionManager::class.java)
-                        // Android 14+: pantalla completa directamente. Con "Una sola app" el usuario
-                        // podía elegir otra app y la captura quedaba sin el audio del video.
-                        val intent = if (Build.VERSION.SDK_INT >= 34)
-                            manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
-                        else manager.createScreenCaptureIntent()
-                        activity.startActivityForResult(intent, REQUEST)
-                    } catch (_: Exception) { abort(activity, request, "Android no pudo abrir la autorización de captura.") }
+                if (!LiveCaptions.matchesCapture(session, token) || TabManager.activeSession() !== session) {
+                    abort(activity, request, "Los subtítulos de esta pestaña cambiaron. Vuelve a intentarlo desde CC.")
+                    return@requestAndroidPermissions
                 }
-            }.show()
+                try {
+                    val manager = activity.getSystemService(MediaProjectionManager::class.java)
+                    // Android 14+: pantalla completa directamente para capturar audio de cualquier proceso de Chromium.
+                    val intent = if (Build.VERSION.SDK_INT >= 34)
+                        manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+                    else manager.createScreenCaptureIntent()
+                    @Suppress("DEPRECATION")
+                    activity.startActivityForResult(intent, REQUEST)
+                } catch (_: Exception) {
+                    abort(activity, request, "Android no pudo abrir la autorización de captura.")
+                }
+            }
+        }, NexoUi.buttonParams(activity, 10f))
+
+        body.addView(NexoUi.button(activity, if (reason != null) "Ahora no" else "Cancelar", primary = false) {
+            sheet.dismiss()
+        }, NexoUi.buttonParams(activity, 6f))
+
+        sheet = NexoSheets.show(
+            activity,
+            NexoSheets.column(
+                activity,
+                NexoSheets.header(
+                    activity,
+                    if (reason != null) "Capturar audio con Android" else "Captura universal de audio",
+                    "Escucha cualquier video, stream o reproductor"
+                ),
+                body
+            )
+        )
     }
 
     /** La solicitud termina sin captura: se explica en pantalla y la página vuelve a buscar texto. */
@@ -110,6 +168,8 @@ private object ToastMessage {
 
 /** Foreground lifetime is bound to one caption stream, not to a saved permission token. */
 class PlaybackCaptureService : Service() {
+    private data class CaptureSpec(val sampleRate: Int, val channelMask: Int, val channels: Int)
+
     internal var session: EngineSession? = null
         private set
     private var projection: MediaProjection? = null
@@ -130,6 +190,67 @@ class PlaybackCaptureService : Service() {
         override fun onStop() { fail("Android detuvo la autorización de captura. Puedes volver a activarla desde CC.") }
     }
     override fun onBind(intent: Intent?) = null
+
+    /**
+     * Abre [AudioRecord] probando primero el formato nativo del mezclador de Android
+     * (48 kHz estéreo → 44.1 kHz estéreo → 48 kHz mono → 16 kHz mono).
+     * En muchos teléfonos Android 11–16 solicitar 16 kHz mono directo falla o entrega ceros.
+     */
+    private fun openBestRecorder(config: AudioPlaybackCaptureConfiguration): Pair<AudioRecord, CaptureSpec> {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Permiso RECORD_AUDIO no concedido para la captura de reproducción")
+        }
+        val candidates = listOf(
+            CaptureSpec(48000, AudioFormat.CHANNEL_IN_STEREO, 2),
+            CaptureSpec(44100, AudioFormat.CHANNEL_IN_STEREO, 2),
+            CaptureSpec(48000, AudioFormat.CHANNEL_IN_MONO, 1),
+            CaptureSpec(PlaybackPcm.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, 1)
+        )
+        var lastErr: Throwable? = null
+        for (spec in candidates) {
+            val min = AudioRecord.getMinBufferSize(spec.sampleRate, spec.channelMask, AudioFormat.ENCODING_PCM_16BIT)
+            if (min <= 0) continue
+            val chunkBytes = (spec.sampleRate / 10) * spec.channels * 2 // 100 ms
+            val bufBytes = maxOf(min * 2, chunkBytes * 4)
+            var audio: AudioRecord? = null
+            try {
+                val format = AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(spec.sampleRate)
+                    .setChannelMask(spec.channelMask)
+                    .build()
+                audio = AudioRecord.Builder()
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(bufBytes)
+                    .setAudioPlaybackCaptureConfig(config)
+                    .build()
+                if (audio.state != AudioRecord.STATE_INITIALIZED) {
+                    runCatching { audio.release() }
+                    continue
+                }
+                audio.startRecording()
+                if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    runCatching { audio.stop() }
+                    runCatching { audio.release() }
+                    continue
+                }
+                com.nexo.browser.engine.cefrium.EngineDiagnostics.log(
+                    "captura Android iniciada: ${spec.sampleRate} Hz · ${if (spec.channels == 2) "estéreo" else "mono"}"
+                )
+                return audio to spec
+            } catch (se: SecurityException) {
+                runCatching { audio?.stop() }
+                runCatching { audio?.release() }
+                throw se
+            } catch (t: Throwable) {
+                lastErr = t
+                runCatching { audio?.stop() }
+                runCatching { audio?.release() }
+            }
+        }
+        throw IllegalStateException("Ningún formato de AudioRecord fue aceptado", lastErr)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "stop") {
             session?.let { LiveCaptions.stop(it) }
@@ -160,37 +281,33 @@ class PlaybackCaptureService : Service() {
             return START_NOT_STICKY
         }
         try {
-            val consent = getSystemService(MediaProjectionManager::class.java).getMediaProjection(Activity.RESULT_OK,grant.data) ?: error("Projection denied")
+            // Reafirmar política de captura permitida antes de abrir la pista.
+            runCatching {
+                getSystemService(AudioManager::class.java)
+                    ?.setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_ALL)
+            }
+            val consent = getSystemService(MediaProjectionManager::class.java).getMediaProjection(Activity.RESULT_OK, grant.data)
+                ?: error("Projection denied")
             projection = consent
             consent.registerCallback(callback, main)
-            // Sin filtro por UID: el audio del motor puede salir de un proceso hijo con otro
-            // UID y Android lo descartaba entero. Se capta el audio multimedia del teléfono.
+            // Sin filtro por UID: el audio de Chromium puede salir de un proceso hijo con otro
+            // UID y Android lo descartaba entero. Se capta todo el audio multimedia permitido.
             val config = AudioPlaybackCaptureConfiguration.Builder(consent)
                 .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                 .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build()
-            val format = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setSampleRate(PlaybackPcm.SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
-            val min = AudioRecord.getMinBufferSize(PlaybackPcm.SAMPLE_RATE,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT)
-            check(min > 0)
-            // Búfer de ~250 ms: suficiente para evitar pérdidas sin retener un segundo de captura.
-            val audio = AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(maxOf(min * 2, PlaybackPcm.SAMPLE_RATE / 2))
-                .setAudioPlaybackCaptureConfig(config).build()
+                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                .build()
+            val (audio, spec) = openBestRecorder(config)
             recorder = audio
-            check(audio.state == AudioRecord.STATE_INITIALIZED)
-            audio.startRecording()
-            check(audio.recordingState == AudioRecord.RECORDSTATE_RECORDING)
-            check(LiveCaptions.startDeviceAudio(grant.session,grant.token))
+            check(LiveCaptions.startDeviceAudio(grant.session, grant.token))
             running = true
             main.post(playbackWatch)
             Thread({
-                // Prioridad de audio: lecturas puntuales con poco trabajo cada vez, sin competir
-                // con la decodificación del video por ráfagas grandes.
                 runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) }
-                // Bloques de 100 ms (antes 250): Deepgram recibe la voz antes y los subtítulos
-                // llegan ~150 ms antes; el trabajo por bloque es mínimo.
-                val buffer = ByteArray(3200) // 100 ms, mono PCM16 at 16 kHz
-                val gain = PlaybackPcm.Gain()
+                // Bloques de 100 ms en el formato nativo del mezclador, remuestreados a 16 kHz mono PCM16.
+                val rawChunkBytes = (spec.sampleRate / 10) * spec.channels * 2
+                val buffer = ByteArray(rawChunkBytes)
+                val gain = PlaybackPcm.Gain(target = 16000, maxGain = 12f, floor = 48)
                 val queued = java.util.concurrent.atomic.AtomicInteger()
                 var signal = false
                 var playingSilenceMs = 0L
@@ -200,63 +317,90 @@ class PlaybackCaptureService : Service() {
                 var levelBytes = 0
                 try {
                     while (running) {
-                        val size = audio.read(buffer,0,buffer.size,AudioRecord.READ_BLOCKING)
-                        if (size < 0) error("AudioRecord read failed")
+                        val size = audio.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                        if (size < 0) error("AudioRecord read failed ($size)")
                         if (size == 0) continue
-                        val bytes = buffer.copyOf(size)
-                        levelPeak = maxOf(levelPeak, PlaybackPcm.peak(bytes))
-                        levelBytes += size
+                        val pcm16k = PlaybackPcm.to16kMono(buffer, size, spec.sampleRate, spec.channels)
+                        if (pcm16k.isEmpty()) continue
+                        val chunkPeak = PlaybackPcm.peak(pcm16k)
+                        levelPeak = maxOf(levelPeak, chunkPeak)
+                        levelBytes += pcm16k.size
                         if (levelBytes >= PlaybackPcm.SAMPLE_RATE * 2) {
-                            val peak = levelPeak; val playing = mediaPlaying
-                            levelPeak = 0; levelBytes = 0
-                            main.post { if (running && LiveCaptions.matchesCapture(grant.session,grant.token)) LiveCaptions.onDeviceLevel(grant.session, peak, playing) }
+                            val peak = levelPeak
+                            val playing = mediaPlaying
+                            levelPeak = 0
+                            levelBytes = 0
+                            main.post {
+                                if (running && LiveCaptions.matchesCapture(grant.session, grant.token)) {
+                                    LiveCaptions.onDeviceLevel(grant.session, peak, playing)
+                                }
+                            }
                         }
-                        val heard = PlaybackPcm.hasSignal(bytes)
+                        val heard = PlaybackPcm.hasWeakSignal(pcm16k, floor = 24)
                         signal = signal || heard
-                        if (heard) gain.apply(bytes)
+                        if (chunkPeak > 16) gain.apply(pcm16k)
                         // Cola acotada: con el hilo principal ocupado se descarta audio en vez de acumularlo.
                         if (queued.incrementAndGet() > 80) queued.decrementAndGet()
                         else main.post {
                             queued.decrementAndGet()
-                            if (running && LiveCaptions.matchesCapture(grant.session,grant.token)) LiveCaptions.onDeviceAudio(grant.session,bytes)
+                            if (running && LiveCaptions.matchesCapture(grant.session, grant.token)) {
+                                LiveCaptions.onDeviceAudio(grant.session, pcm16k)
+                            }
                         }
-                        // La señal se mide siempre, no solo hasta oír algo una vez.
-                        if (heard) { playingSilenceMs = 0L; quietReported = false; continue }
-                        // El silencio solo cuenta con el video sonando: en pausa no se da por perdido.
-                        if (mediaPlaying) playingSilenceMs += size * 1000L / (PlaybackPcm.SAMPLE_RATE * 2)
-                        if (!quietReported && playingSilenceMs > (if (signal) 30000L else 6000L)) {
+                        if (heard) {
+                            playingSilenceMs = 0L
+                            quietReported = false
+                            continue
+                        }
+                        if (mediaPlaying) playingSilenceMs += pcm16k.size * 1000L / (PlaybackPcm.SAMPLE_RATE * 2)
+                        if (!quietReported && playingSilenceMs > (if (signal) 30_000L else 8_000L)) {
                             quietReported = true
                             val code = if (signal) "quiet" else "device_quiet"
                             main.post { if (running) LiveCaptions.onStatus(grant.session, code) }
                         }
-                        if (!signal && playingSilenceMs > 25000) {
-                            main.post { if (running) fail("Android solo recibió silencio aunque el video suena (nivel 0 %). El video puede estar silenciado, protegido (DRM) o sonar por una vía que Android no deja capturar. Prueba a adelantarlo unos segundos, otro servidor o los subtítulos instantáneos de Android.") }; break
+                        if (!signal && playingSilenceMs > 45_000L) {
+                            main.post {
+                                if (running) fail(
+                                    "Android solo recibió silencio (nivel 0 %). Sube el volumen multimedia, " +
+                                        "comprueba que el video no esté silenciado ni protegido con DRM, " +
+                                        "o activa Subtítulos instantáneos de Android."
+                                )
+                            }
+                            break
                         }
                     }
-                } catch (_: Exception) { main.post { if(running) fail("Android no pudo seguir capturando el audio del reproductor.") } }
-            },"NexoPlaybackCapture").start()
-        } catch (_: Exception) { fail("No se pudo iniciar la captura de reproducción. Comprueba permisos y vuelve a autorizar con Nexo visible.") }
+                } catch (err: Exception) {
+                    com.nexo.browser.engine.cefrium.EngineDiagnostics.log("captura Android interrumpida", err)
+                    main.post { if (running) fail("Android no pudo seguir capturando el audio del reproductor.") }
+                }
+            }, "NexoPlaybackCapture").start()
+        } catch (err: Exception) {
+            com.nexo.browser.engine.cefrium.EngineDiagnostics.log("captura Android falló al iniciar", err)
+            fail("No se pudo iniciar la captura de reproducción. Comprueba permisos y vuelve a autorizar con Nexo visible.")
+        }
         return START_NOT_STICKY
     }
+
     /** Notificación de captura con "Detener"; false si Android no deja pasar a primer plano. */
     private fun promote(): Boolean = runCatching {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("caption-capture", "Captura para subtítulos", NotificationManager.IMPORTANCE_LOW))
-        val stop = PendingIntent.getService(this, 0, Intent(this,PlaybackCaptureService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val notification = Notification.Builder(this,"caption-capture")
-            .setSmallIcon(R.drawable.ic_stat_nexo).setContentTitle("Nexo · captura de audio activa")
-            .setContentText("Audio multimedia del teléfono · transcripción con Deepgram")
-            .setOngoing(true).addAction(Notification.Action.Builder(null,"Detener",stop).build()).build()
-        if (Build.VERSION.SDK_INT >= 29) startForeground(947,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        else startForeground(947,notification)
+        val stop = PendingIntent.getService(this, 0, Intent(this, PlaybackCaptureService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val notification = Notification.Builder(this, "caption-capture")
+            .setSmallIcon(R.drawable.ic_stat_nexo).setContentTitle("Nexo · captura universal de audio")
+            .setContentText("Audio multimedia del dispositivo · transcripción en vivo")
+            .setOngoing(true).addAction(Notification.Action.Builder(null, "Detener", stop).build()).build()
+        if (Build.VERSION.SDK_INT >= 29) startForeground(947, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        else startForeground(947, notification)
     }.isSuccess
 
     private fun fail(message: String) {
         if (closing) return // ignore a revocation already queued before explicit stop
         val current = session
         finishCapture()
-        if (current != null) LiveCaptions.onPageError(this,current,"android_capture",message)
+        if (current != null) LiveCaptions.onPageError(this, current, "android_capture", message)
     }
+
     internal fun finishCapture() {
         if (closing) return
         closing = true; running = false
@@ -268,5 +412,6 @@ class PlaybackCaptureService : Service() {
         if (PlaybackAudioCapture.service === this) PlaybackAudioCapture.service = null
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
     }
+
     override fun onDestroy() { finishCapture(); super.onDestroy() }
 }

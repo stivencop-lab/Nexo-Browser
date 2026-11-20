@@ -1742,7 +1742,8 @@ class MainActivity :
                 .trim()
                 .takeIf { it.isNotBlank() && !it.startsWith("http", ignoreCase = true) }
                 ?: target.store.label
-            extensionBannerText.text = "$label · ${target.store.label}"
+            val modeNote = if (tab.desktopMode) "Modo escritorio · " else ""
+            extensionBannerText.text = "$label · $modeNote${target.store.label}"
             extensionBannerAction.text = "Instalar en Nexo"
         }
         extensionInstallBanner.visibility = View.VISIBLE
@@ -1934,7 +1935,7 @@ class MainActivity :
 
     private fun toggleCaptions() {
         val session = attachedSession ?: return
-        // Activos: la hoja rápida permite elegir idioma y modo, o apagarlos.
+        // Activos: la hoja rápida permite elegir idioma, captura universal y modo, o apagarlos.
         if (LiveCaptions.isActive(session)) {
             CaptionsUi.showQuick(this, session, onChange = { refreshCaptionsUi() }) {
                 LiveCaptions.stop(session)
@@ -1946,9 +1947,17 @@ class MainActivity :
         // Sin clave también funciona con videos que traen subtítulos propios; si no, la página lo avisa.
         lastCaptionMessage = null
         LiveCaptions.toggle(this, session)
+        if (Build.VERSION.SDK_INT >= 29 &&
+            BrowserPrefs.captionPreferDeviceAudio(this) &&
+            BrowserPrefs.deepgramKey(this).isNotBlank()
+        ) {
+            PlaybackAudioCapture.request(this)
+            refreshCaptionsUi()
+            return
+        }
         val target = BrowserPrefs.captionTranslateTo(this)
         Toast.makeText(this,
-            if (target.isBlank()) "Subtítulos activados · toca CC para traducir"
+            if (target.isBlank()) "Subtítulos activados · toca CC para captura universal o traducción"
             else "Subtítulos activados · traducción: ${CaptionProtocol.languageLabel(target)}",
             Toast.LENGTH_SHORT).show()
         refreshCaptionsUi()

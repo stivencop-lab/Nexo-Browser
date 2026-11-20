@@ -51,6 +51,7 @@
     -->
     <application
         android:name="com.nexo.browser.NexoApplication"
+        android:allowAudioPlaybackCapture="true"
         android:allowBackup="false"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"

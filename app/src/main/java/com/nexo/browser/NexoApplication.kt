@@ -3,6 +3,9 @@ package com.nexo.browser
 import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.os.Build
 import android.os.StrictMode
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -29,6 +32,13 @@ class NexoApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Permitir AudioPlaybackCapture también desde procesos hijos de audio de Chromium (Android 10+).
+        if (Build.VERSION.SDK_INT >= 29) {
+            runCatching {
+                getSystemService(AudioManager::class.java)
+                    ?.setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_ALL)
+            }
+        }
         if (!isMainProcess()) return
         AppContext.initialize(this)
         CrashLog.install(this)

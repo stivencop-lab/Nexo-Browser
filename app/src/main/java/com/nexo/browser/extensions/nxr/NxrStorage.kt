@@ -14,7 +14,7 @@ import java.security.MessageDigest
  * - Para impedir que un sitio malicioso (`evil.com`) lea o corrompa datos guardados por la misma
  *   extensión en otro sitio (`bank.com`), las operaciones procedentes de content scripts se
  *   particionan estrictamente por `(extId, originHost)` bajo `origins/<sha256(host)>.json`.
- * - Cuota agregada estricta (512 KB totales por extensión entre todos sus orígenes, máximo 512 claves).
+ * - Cuota agregada estricta (4 MB totales por extensión entre todos sus orígenes, máximo 2048 claves).
  * - Nunca accede a `SecretStore`, `BrowserPrefs` ni al almacenamiento de otras extensiones.
  * Puro sobre [File]: probado en la JVM.
  */
@@ -146,9 +146,9 @@ class NxrStorage(private val rootDir: File) {
     companion object {
         internal const val STORAGE_FILE = "storage_local.json"
         internal const val ORIGINS_DIR = "origins"
-        const val MAX_STORAGE_BYTES = 512 * 1024
-        const val MAX_VALUE_BYTES = 128 * 1024
-        const val MAX_KEYS = 512
+        const val MAX_STORAGE_BYTES = 4 * 1024 * 1024
+        const val MAX_VALUE_BYTES = 512 * 1024
+        const val MAX_KEYS = 2048
         const val MAX_KEY_LENGTH = 128
 
         fun sanitizeId(extId: String): String {

@@ -1,7 +1,6 @@
 package com.nexo.browser
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -304,44 +303,55 @@ class ExtensionsActivity : Activity() {
                 ExtensionHubSheets.openDirectUrlInstallFlow(this, resolved.url) { refreshList() }
             }
             is ExtensionStoreResolver.ResolvedTarget.RawExtensionId -> {
-                AlertDialog.Builder(this)
-                    .setTitle("Elegir tienda para ${resolved.extensionId.take(12)}…")
-                    .setMessage("¿Desde qué tienda oficial deseas descargar y verificar el paquete CRX?")
-                    .setPositiveButton("Chrome Web Store") { _, _ ->
-                        ExtensionHubSheets.openStoreInstallFlow(
-                            this,
-                            ExtensionStoreResolver.ResolvedTarget.StoreExtension(
-                                ExtensionStoreResolver.StoreKind.CHROME_WEB_STORE,
-                                resolved.extensionId,
-                                ExtensionStoreResolver.cwsDetailUrl(resolved.extensionId)
-                            )
-                        ) { refreshList() }
-                    }
-                    .setNeutralButton("Edge Add-ons") { _, _ ->
-                        ExtensionHubSheets.openStoreInstallFlow(
-                            this,
-                            ExtensionStoreResolver.ResolvedTarget.StoreExtension(
-                                ExtensionStoreResolver.StoreKind.EDGE_ADDONS,
-                                resolved.extensionId,
-                                ExtensionStoreResolver.edgeDetailUrl(resolved.extensionId)
-                            )
-                        ) { refreshList() }
-                    }
-                    .setNegativeButton("Cancelar", null)
-                    .show()
+                lateinit var picker: android.app.Dialog
+                val body = NexoUi.column(this)
+                body.addView(NexoUi.note(this, "ID detectado: ${resolved.extensionId}\nElige desde qué tienda oficial deseas descargar y verificar el paquete CRX:"))
+                body.addView(NexoUi.button(this, "Chrome Web Store", primary = true) {
+                    picker.dismiss()
+                    ExtensionHubSheets.openStoreInstallFlow(
+                        this,
+                        ExtensionStoreResolver.ResolvedTarget.StoreExtension(
+                            ExtensionStoreResolver.StoreKind.CHROME_WEB_STORE,
+                            resolved.extensionId,
+                            ExtensionStoreResolver.cwsDetailUrl(resolved.extensionId)
+                        )
+                    ) { refreshList() }
+                }, NexoUi.buttonParams(this, 10f))
+                body.addView(NexoUi.button(this, "Microsoft Edge Add-ons", primary = false) {
+                    picker.dismiss()
+                    ExtensionHubSheets.openStoreInstallFlow(
+                        this,
+                        ExtensionStoreResolver.ResolvedTarget.StoreExtension(
+                            ExtensionStoreResolver.StoreKind.EDGE_ADDONS,
+                            resolved.extensionId,
+                            ExtensionStoreResolver.edgeDetailUrl(resolved.extensionId)
+                        )
+                    ) { refreshList() }
+                }, NexoUi.buttonParams(this, 6f))
+                picker = NexoSheets.show(
+                    this,
+                    NexoSheets.column(this, NexoSheets.header(this, "Elegir tienda oficial", resolved.extensionId.take(16) + "…"), body)
+                )
             }
             is ExtensionStoreResolver.ResolvedTarget.StoreSearch -> {
-                AlertDialog.Builder(this)
-                    .setTitle("Buscar «${resolved.query}»")
-                    .setMessage("Al abrir la ficha de cualquier extensión en Nexo aparecerá automáticamente la barra «Instalar en Nexo».")
-                    .setPositiveButton("Chrome Web Store") { _, _ ->
-                        openInBrowser(ExtensionStoreResolver.cwsSearchUrl(resolved.query))
-                    }
-                    .setNeutralButton("Edge Add-ons") { _, _ ->
-                        openInBrowser(ExtensionStoreResolver.edgeSearchUrl(resolved.query))
-                    }
-                    .setNegativeButton("Cancelar", null)
-                    .show()
+                lateinit var searchSheet: android.app.Dialog
+                val body = NexoUi.column(this)
+                body.addView(NexoUi.note(
+                    this,
+                    "La tienda se abrirá automáticamente en modo escritorio y aparecerá la barra «Instalar en Nexo» al entrar en cualquier extensión."
+                ))
+                body.addView(NexoUi.button(this, "Buscar en Chrome Web Store", primary = true) {
+                    searchSheet.dismiss()
+                    openInBrowser(ExtensionStoreResolver.cwsSearchUrl(resolved.query))
+                }, NexoUi.buttonParams(this, 10f))
+                body.addView(NexoUi.button(this, "Buscar en Edge Add-ons", primary = false) {
+                    searchSheet.dismiss()
+                    openInBrowser(ExtensionStoreResolver.edgeSearchUrl(resolved.query))
+                }, NexoUi.buttonParams(this, 6f))
+                searchSheet = NexoSheets.show(
+                    this,
+                    NexoSheets.column(this, NexoSheets.header(this, "Buscar «${resolved.query}»", "Catálogos oficiales de escritorio"), body)
+                )
             }
         }
     }
@@ -382,8 +392,30 @@ class ExtensionsActivity : Activity() {
         }
     }
 
+    private data class HubItem(
+        val id: String?,
+        val title: String,
+        val subtitle: String,
+        val meta: String,
+        val badge: String,
+        val status: String,
+        val statusTone: NexoUi.Tone,
+        val toggleable: Boolean = false,
+        val enabled: Boolean = false,
+        val hasPopup: Boolean = false
+    )
+
+    private val iconCache = HashMap<String, android.graphics.Bitmap?>()
+
+    private fun cachedIcon(extId: String): android.graphics.Bitmap? {
+        if (iconCache.containsKey(extId)) return iconCache[extId]
+        val bmp = NxrRuntime.loadIcon(this, extId, dp(42f))
+        iconCache[extId] = bmp
+        return bmp
+    }
+
     private fun refreshList() {
-        val rows = mutableListOf<ListRow>()
+        val items = mutableListOf<HubItem>()
         val ids = mutableListOf<String?>()
 
         val installed = NxrRuntime.installed(this)
@@ -400,7 +432,8 @@ class ExtensionsActivity : Activity() {
 
         if (activeFilter == Filter.ALL) {
             val shieldOn = com.nexo.browser.shield.PhantomShield.isEnabled()
-            rows += ListRow(
+            items += HubItem(
+                id = ExtensionManager.PHANTOMSHIELD_ID,
                 title = "PhantomShield",
                 subtitle = "Bloqueo nativo de anuncios y rastreadores integrado en Chromium",
                 meta = if (shieldOn) "Integrada · toca para abrir el panel" else "Desactivado desde el menú",
@@ -410,7 +443,8 @@ class ExtensionsActivity : Activity() {
             )
             ids += ExtensionManager.PHANTOMSHIELD_ID
 
-            rows += ListRow(
+            items += HubItem(
+                id = null,
                 title = "Puente de Nexo",
                 subtitle = "Media Engine, Dark Engine, Reader y Subtítulos en vivo",
                 meta = "Integrado en Cefrium 0.21.0",
@@ -435,22 +469,26 @@ class ExtensionsActivity : Activity() {
         }
 
         if (filtered.isEmpty()) {
-            rows += ListRow(
+            items += HubItem(
+                id = null,
                 title = if (installed.isEmpty()) "Nexo Extension Hub listo" else "Sin extensiones en «${activeFilter.label}»",
                 subtitle = if (installed.isEmpty()) {
-                    "Abre Chrome Store o Edge Add-ons arriba, pega una URL/ID o elige un paquete .crx, .zip o .xpi."
+                    "Abre Chrome Store o Edge Add-ons arriba (modo escritorio automático), pega una URL/ID o elige un .crx/.zip/.xpi."
                 } else {
                     "Cambia el filtro superior o instala nuevas extensiones desde las tiendas compatibles."
                 },
-                meta = "NXR verifica firmas CRX y permisos por sitio",
+                meta = "NXR verifica firmas CRX · extracción en streaming · sin tope de 10 MB",
                 badge = "HUB",
                 status = "Listo",
                 statusTone = NexoUi.Tone.ACCENT
             )
             ids += null
         } else {
+            val rootDir = NxrRuntime.rootDirectory(this)
             for (ext in filtered) {
                 val state = NxrRuntime.lifecycleState(ext.id, this)
+                val policy = NxrRuntime.policyFor(ext.id)
+                val manifest = NxrPackageInstaller.readManifest(rootDir, ext.id)
                 val errCount = NxrRuntime.diagnostics(ext.id).size
                 val upd = availableUpdates[ext.id]
                 val sourceShort = when (ext.sourceOrigin) {
@@ -462,30 +500,147 @@ class ExtensionsActivity : Activity() {
                 val meta = buildString {
                     append("$sourceShort · v${ext.version} · MV${ext.manifestVersion}")
                     if (upd != null && upd.hasUpdate) append(" · ↑ v${upd.remoteVersion}")
+                    if (manifest?.action?.popup != null) append(" · Popup UI")
                     if (ext.unsupportedApis.isNotEmpty()) append(" · ${ext.unsupportedApis.size} API(s) sin soporte")
                     if (errCount > 0) append(" · $errCount aviso(s)")
                 }
                 val (statusLabel, statusTone) = when {
                     upd != null && upd.hasUpdate -> "Actualización" to NexoUi.Tone.INFO
-                    ext.unsupportedApis.isNotEmpty() -> "Con límites" to NexoUi.Tone.WARNING
                     state == ExtensionCompatibility.LifecycleState.RUNNING -> "Funcionando" to NexoUi.Tone.SUCCESS
                     state == ExtensionCompatibility.LifecycleState.ENABLED -> "Habilitada" to NexoUi.Tone.ACCENT
+                    ext.unsupportedApis.isNotEmpty() -> "Con límites" to NexoUi.Tone.WARNING
                     else -> state.label to NexoUi.Tone.NEUTRAL
                 }
-                rows += ListRow(
+                items += HubItem(
+                    id = ext.id,
                     title = ext.name,
                     subtitle = ext.description.ifBlank { "Sitios: ${ext.hostPermissions.take(3).joinToString(", ").ifBlank { "sin hosts" }}" },
                     meta = meta,
                     badge = ext.name.take(2).uppercase().ifBlank { "EX" },
                     status = statusLabel,
-                    statusTone = statusTone
+                    statusTone = statusTone,
+                    toggleable = true,
+                    enabled = policy.enabled,
+                    hasPopup = !manifest?.action?.popup.isNullOrBlank()
                 )
                 ids += ext.id
             }
         }
 
         displayedIds = ids
-        listView.adapter = ThemeManager.rowsAdapter(this, rows)
+        listView.divider = null
+        listView.dividerHeight = 0
+        listView.adapter = buildHubAdapter(items)
+    }
+
+    private fun buildHubAdapter(items: List<HubItem>): android.widget.BaseAdapter {
+        val p = ThemeManager.palette(this)
+        val surface = if (p.isDark) p.surfaceContainer else p.surfaceContainerLowest
+        val stroke = if (p.isAmoled || !p.isDark) ThemeManager.hairline(p) else null
+        return object : android.widget.BaseAdapter() {
+            override fun getCount(): Int = items.size
+            override fun getItem(position: Int): HubItem = items[position]
+            override fun getItemId(position: Int): Long = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val item = items[position]
+                val wrapper = LinearLayout(this@ExtensionsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(16f), dp(4f), dp(16f), dp(4f))
+                }
+                val card = LinearLayout(this@ExtensionsActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(14f), dp(12f), dp(14f), dp(12f))
+                    background = ThemeManager.ripple(
+                        this@ExtensionsActivity,
+                        ThemeManager.rounded(this@ExtensionsActivity, surface, NexoUi.Tokens.RADIUS_CARD, stroke),
+                        NexoUi.Tokens.RADIUS_CARD
+                    )
+                }
+
+                // Icono real de la extensión (o monograma elegante de respaldo)
+                val iconBitmap = item.id?.takeIf { item.toggleable }?.let { cachedIcon(it) }
+                if (iconBitmap != null) {
+                    card.addView(android.widget.ImageView(this@ExtensionsActivity).apply {
+                        setImageBitmap(iconBitmap)
+                        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                        background = ThemeManager.rounded(this@ExtensionsActivity, p.surfaceContainerHigh, 12f)
+                        clipToOutline = true
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }, LinearLayout.LayoutParams(dp(42f), dp(42f)).apply { marginEnd = dp(12f) })
+                } else {
+                    card.addView(TextView(this@ExtensionsActivity).apply {
+                        text = item.badge
+                        textSize = 13f
+                        typeface = NexoUi.bold(this@ExtensionsActivity)
+                        gravity = Gravity.CENTER
+                        setTextColor(p.primary.onContainer)
+                        background = ThemeManager.rounded(this@ExtensionsActivity, p.primary.container, 12f)
+                        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    }, LinearLayout.LayoutParams(dp(42f), dp(42f)).apply { marginEnd = dp(12f) })
+                }
+
+                val textCol = LinearLayout(this@ExtensionsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+                val titleRow = LinearLayout(this@ExtensionsActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                titleRow.addView(TextView(this@ExtensionsActivity).apply {
+                    text = item.title
+                    textSize = 14.5f
+                    typeface = NexoUi.semiBold(this@ExtensionsActivity)
+                    setTextColor(p.text)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6f) })
+                titleRow.addView(NexoUi.statusPill(this@ExtensionsActivity, item.status, item.statusTone))
+                textCol.addView(titleRow)
+
+                textCol.addView(TextView(this@ExtensionsActivity).apply {
+                    text = item.subtitle
+                    textSize = 12.5f
+                    typeface = NexoUi.regular(this@ExtensionsActivity)
+                    setTextColor(p.muted)
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, dp(3f), 0, 0)
+                })
+                textCol.addView(TextView(this@ExtensionsActivity).apply {
+                    text = item.meta
+                    textSize = 11f
+                    typeface = NexoUi.regular(this@ExtensionsActivity)
+                    setTextColor(p.muted)
+                    alpha = 0.85f
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, dp(4f), 0, 0)
+                })
+
+                card.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+                if (item.toggleable && item.id != null) {
+                    val sw = android.widget.Switch(this@ExtensionsActivity).apply {
+                        isChecked = item.enabled
+                        isFocusable = false
+                        isFocusableInTouchMode = false
+                        contentDescription = "Activar o desactivar ${item.title}"
+                        setOnCheckedChangeListener { _, checked ->
+                            NxrRuntime.setEnabled(this@ExtensionsActivity, item.id, checked)
+                            if (checked) NxrRuntime.injectActiveTabIfMatching(item.id)
+                            refreshList()
+                        }
+                    }
+                    card.addView(sw, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        marginStart = dp(8f)
+                    })
+                }
+
+                wrapper.addView(card)
+                return wrapper
+            }
+        }
     }
 
     private fun pickPackage() {
@@ -530,11 +685,15 @@ class ExtensionsActivity : Activity() {
                 temp.delete()
                 main.post {
                     if (!isFinishing && !isDestroyed) {
-                        AlertDialog.Builder(this)
-                            .setTitle("Paquete rechazado")
-                            .setMessage("No se pudo validar la extensión: ${err.message ?: "archivo no válido"}")
-                            .setPositiveButton("Aceptar", null)
-                            .show()
+                        lateinit var errSheet: android.app.Dialog
+                        val body = NexoUi.column(this)
+                        body.addView(NexoUi.statusPill(this, "Paquete rechazado", NexoUi.Tone.DANGER))
+                        body.addView(NexoUi.note(this, "No se pudo validar la extensión: ${err.message ?: "archivo no válido"}"))
+                        body.addView(NexoUi.button(this, "Entendido", primary = true) { errSheet.dismiss() }, NexoUi.buttonParams(this, 10f))
+                        errSheet = NexoSheets.show(
+                            this,
+                            NexoSheets.column(this, NexoSheets.header(this, "No se pudo abrir el paquete", "Verificación NXR"), body)
+                        )
                     }
                 }
             }

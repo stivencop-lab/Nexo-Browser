@@ -654,4 +654,64 @@ class NxrRuntimeTest {
         assertTrue(extStart > 0)
         assertFalse(bundle.substring(extStart).contains("'use strict'"))
     }
+
+    @Test
+    fun panelTokenAuthorizesIsolatedStorageAndRevokesCleanly() {
+        val root = temp.newFolder("nxr_panel")
+        NxrRuntime.initializeForTest(root, "/* shim */")
+        val pkg = buildZip(
+            "popup_ext.zip",
+            mapOf(
+                "manifest.json" to sampleManifest(name = "Popup Ext", geckoId = "popup@ext.test").toByteArray(),
+                "content.js" to "void 0;".toByteArray(),
+                "style.css" to "body{}".toByteArray()
+            )
+        )
+        val installed = NxrPackageInstaller.install(root, pkg, listOf("https://example.com/*"), enableAfterInstall = true)
+        val token = NxrRuntime.issuePanelToken(installed.id)
+
+        // Token válido de panel permite leer/escribir storage de la extensión
+        val setReply = NxrRuntime.onPanelMessage(
+            extId = installed.id,
+            panelToken = token,
+            kind = "nxr_storage",
+            payload = JSONObject()
+                .put("extId", installed.id)
+                .put("token", token)
+                .put("op", "set")
+                .put("values", JSONObject().put("mode", "compact"))
+        )
+        assertNull(setReply.error)
+
+        val getReply = NxrRuntime.onPanelMessage(
+            extId = installed.id,
+            panelToken = token,
+            kind = "nxr_storage",
+            payload = JSONObject()
+                .put("extId", installed.id)
+                .put("token", token)
+                .put("op", "get")
+                .put("keys", "mode")
+        )
+        assertNull(getReply.error)
+        assertEquals("compact", (getReply.result as JSONObject).getString("mode"))
+
+        // Token inválido o revocado debe rechazarse
+        val badToken = NxrRuntime.onPanelMessage(
+            extId = installed.id,
+            panelToken = "invalid-panel-token",
+            kind = "nxr_storage",
+            payload = JSONObject().put("extId", installed.id).put("token", "invalid-panel-token").put("op", "get")
+        )
+        assertNotNull(badToken.error)
+
+        NxrRuntime.revokePanelToken(token)
+        val revoked = NxrRuntime.onPanelMessage(
+            extId = installed.id,
+            panelToken = token,
+            kind = "nxr_storage",
+            payload = JSONObject().put("extId", installed.id).put("token", token).put("op", "get")
+        )
+        assertNotNull(revoked.error)
+    }
 }

@@ -183,6 +183,9 @@ object BrowserPrefs {
     /** false (por defecto): sin subtítulos de texto, Nexo pregunta antes de enviar el audio a Deepgram. */
     fun captionAudioAuto(c: Context) = p(c).getBoolean("caption_audio_auto", false)
     fun setCaptionAudioAuto(c: Context, v: Boolean) = p(c).edit().putBoolean("caption_audio_auto", v).apply()
+    /** Priorizar captura universal de audio con Android (MediaProjection) al activar CC con Deepgram. */
+    fun captionPreferDeviceAudio(c: Context) = p(c).getBoolean("caption_prefer_device_audio", false)
+    fun setCaptionPreferDeviceAudio(c: Context, v: Boolean) = p(c).edit().putBoolean("caption_prefer_device_audio", v).apply()
     /** Sitios (host principal) donde el modo nocturno de Nexo no se aplica. */
     fun nightExceptions(c: Context): Set<String> = p(c).getStringSet("night_exceptions", emptySet()).orEmpty()
     fun setNightException(c: Context, host: String, excluded: Boolean) {

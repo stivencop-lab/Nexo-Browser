@@ -196,4 +196,49 @@ test('nxr-runtime-shim provides storage.sync/session/onChanged, runtime.connect,
   assert.equal(scope.chrome.i18n.getMessage('@@extension_id'), 'pc-ext@nxr.test');
 });
 
+test('nxr-runtime-shim supports baseUrl, storage quotas, platform/browser info, permissions, action and accept languages', async () => {
+  const mock = makeMockQuery();
+  const scope = createNxrScope({
+    extId: 'ui-ext@nxr.test',
+    token: 'tok-ui',
+    baseUrl: 'https://nxr-ui.nexo.invalid/',
+    manifest: {
+      name: 'UI Ext',
+      version: '1.2',
+      permissions: ['storage', 'activeTab'],
+      host_permissions: ['https://example.com/*']
+    },
+    query: mock.query
+  });
+
+  // Real baseUrl resolves relative extension paths for popup/options pages
+  assert.equal(scope.chrome.runtime.getURL('/popup/app.js'), 'https://nxr-ui.nexo.invalid/popup/app.js');
+  assert.equal(scope.chrome.storage.local.QUOTA_BYTES, 4 * 1024 * 1024);
+  assert.equal(scope.chrome.storage.sync.QUOTA_BYTES_PER_ITEM, 8192);
+
+  const platform = await scope.chrome.runtime.getPlatformInfo();
+  assert.equal(platform.os, 'android');
+
+  const browserInfo = await scope.chrome.runtime.getBrowserInfo();
+  assert.equal(browserInfo.name, 'Nexo');
+
+  const hasStorage = await scope.chrome.permissions.contains({ permissions: ['storage'] });
+  const hasDebugger = await scope.chrome.permissions.contains({ permissions: ['debugger'] });
+  assert.equal(hasStorage, true);
+  assert.equal(hasDebugger, false);
+
+  const allPerms = await scope.chrome.permissions.getAll();
+  assert.ok(allPerms.permissions.includes('storage'));
+  assert.ok(allPerms.origins.includes('https://example.com/*'));
+
+  // action & browserAction safe stubs don't crash popup/content code
+  await scope.chrome.action.setBadgeText({ text: '3' });
+  await scope.chrome.browserAction.setTitle({ title: 'Activo' });
+  const badge = await scope.chrome.action.getBadgeText({});
+  assert.equal(badge, '3');
+
+  const langs = await scope.chrome.i18n.getAcceptLanguages();
+  assert.ok(Array.isArray(langs) && langs.length > 0);
+});
+
 

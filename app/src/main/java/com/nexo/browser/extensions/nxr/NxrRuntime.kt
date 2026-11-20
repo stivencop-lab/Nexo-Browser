@@ -1,7 +1,6 @@
 package com.nexo.browser.extensions.nxr
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
 import android.graphics.Bitmap
@@ -81,6 +80,7 @@ object NxrRuntime {
     private val errors = ConcurrentHashMap<String, CopyOnWriteArrayList<DiagnosticEntry>>()
     private val runtimeStatsMap = ConcurrentHashMap<String, RuntimeStats>()
     private val grants = ConcurrentHashMap<String, CapabilityGrant>()
+    private val panelTokens = ConcurrentHashMap<String, String>() // token -> extId
     private val actionNonces = ConcurrentHashMap<Pair<Int, String>, Pair<Long, String>>()
     private val injectedStages = ConcurrentHashMap<Int, Pair<Long, MutableSet<String>>>()
     private val rateWindows = ConcurrentHashMap<Pair<Int, String>, RateWindow>()
@@ -116,6 +116,7 @@ object NxrRuntime {
         errors.clear()
         runtimeStatsMap.clear()
         grants.clear()
+        panelTokens.clear()
         actionNonces.clear()
         injectedStages.clear()
         rateWindows.clear()
@@ -413,6 +414,8 @@ object NxrRuntime {
                 .put("name", ext.name)
                 .put("version", manifest.version)
                 .put("description", ext.description)
+                .put("permissions", JSONArray(manifest.permissions))
+                .put("host_permissions", JSONArray(manifest.hostPermissions))
             val hasStoragePerm = "storage" in manifest.permissions || "unlimitedStorage" in manifest.permissions
 
             val host = NxrPermissions.extractHost(url)
@@ -641,7 +644,86 @@ object NxrRuntime {
         }
     }
 
-    private fun handleStorage(extId: String, originHost: String, payload: JSONObject): MessageReply {
+    /** Emite un token efímero para la interfaz HTML (`popup`/`options`) de [extId] en [NxrExtensionPanel]. */
+    internal fun issuePanelToken(extId: String): String {
+        val token = nextSecretHex(32)
+        panelTokens[token] = extId
+        return token
+    }
+
+    internal fun revokePanelToken(token: String) {
+        panelTokens.remove(token)
+    }
+
+    /** Construye el script `document_start` que expone `chrome`/`browser` dentro de [NxrExtensionPanel]. */
+    internal fun buildExtensionUiBootScript(
+        context: Context,
+        extId: String,
+        panelToken: String,
+        baseUrl: String
+    ): String? {
+        initialize(context)
+        val dir = rootDir ?: return null
+        val shim = shimSource ?: return null
+        val ext = NxrPackageInstaller.listInstalled(dir).firstOrNull { it.id == extId } ?: return null
+        val manifest = NxrPackageInstaller.readManifest(dir, extId) ?: return null
+        val localeMap = buildLocaleJson(dir, extId, manifest)
+        val manifestSummary = JSONObject()
+            .put("manifest_version", manifest.manifestVersion)
+            .put("name", ext.name)
+            .put("version", manifest.version)
+            .put("description", ext.description)
+            .put("permissions", org.json.JSONArray(manifest.permissions.sorted()))
+            .put("host_permissions", org.json.JSONArray(NxrPermissions.requestedHostPatterns(manifest)))
+        return buildString {
+            append("(function(){\n'use strict';\n")
+            append(shim).append("\n")
+            append("var __scope = createNxrScope({")
+                .append("extId:").append(JSONObject.quote(extId))
+                .append(",token:").append(JSONObject.quote(panelToken))
+                .append(",baseUrl:").append(JSONObject.quote(baseUrl))
+                .append(",manifest:").append(manifestSummary.toString())
+                .append(",messages:").append(localeMap.toString())
+                .append("});\n")
+            append("window.chrome = __scope.chrome; window.browser = __scope.browser;\n")
+            append("})();")
+        }
+    }
+
+    /** Maneja mensajes `nxr_storage`, `nxr_message` y `nxr_error` provenientes de [NxrExtensionPanel]. */
+    internal fun onPanelMessage(
+        extId: String,
+        panelToken: String,
+        kind: String,
+        payload: JSONObject?,
+        originHost: String? = null
+    ): MessageReply {
+        if (payload == null) return MessageReply(error = "Carga útil vacía.")
+        val token = payload.optString("token")
+        if (token != panelToken || panelTokens[token] != extId) {
+            return MessageReply(error = "Token de panel NXR no válido.")
+        }
+        val activeHost = originHost ?: runCatching {
+            TabManager.activeTab()?.url
+                ?.takeIf { NxrPermissions.isWebHttpUrl(it) }
+                ?.let { NxrPermissions.extractHost(it) }
+        }.getOrNull()
+        return when (kind) {
+            "nxr_storage" -> handleStorage(extId, activeHost, payload)
+            "nxr_error" -> {
+                recordError(extId, payload.optString("source", "panel"), payload.optString("message", "Error"))
+                MessageReply(result = true)
+            }
+            "nxr_message" -> {
+                val msg = payload.opt("message")
+                val delivered = dispatchMessageToActiveTab(extId, msg)
+                MessageReply(result = JSONObject().put("ok", true).put("nxr", true).put("delivered", delivered))
+            }
+            else -> MessageReply(error = "Operación NXR desconocida.")
+        }
+    }
+
+    private fun handleStorage(extId: String, originHost: String?, payload: JSONObject): MessageReply {
         val store = storage ?: return MessageReply(error = "Almacenamiento NXR no inicializado.")
         return runCatching {
             when (payload.optString("op")) {
@@ -668,8 +750,8 @@ object NxrRuntime {
         }
     }
 
-    /** Envía un evento de acción al content script de [extId] en la pestaña activa mediante `CustomEvent` efímero. */
-    fun dispatchActionToActiveTab(extId: String): Boolean {
+    /** Reenvía un mensaje JSON desde el popup/opciones de [extId] a sus content scripts en la pestaña activa. */
+    fun dispatchMessageToActiveTab(extId: String, message: Any?): Boolean {
         val tab = TabManager.activeTab() ?: return false
         val session = tab.session as? CefriumEngineSession ?: return false
         val policy = policyFor(extId)
@@ -679,14 +761,28 @@ object NxrRuntime {
         val slot = actionNonces[sessionKey to extId] ?: return false
         if (slot.first != docGen) return false
         val eventName = JSONObject.quote("nxr-act:${slot.second}")
-        val payload = JSONObject()
-            .put("type", "NXR_ACTION_CLICKED")
-            .put("url", tab.url)
-            .put("title", tab.title)
-            .toString()
-        val script = "(function(){try{window.dispatchEvent(new CustomEvent($eventName,{detail:$payload}));}catch(_){}})();"
+        val detailJson = when (message) {
+            is JSONObject -> message.toString()
+            is org.json.JSONArray -> message.toString()
+            is String -> JSONObject.quote(message)
+            is Number, is Boolean -> message.toString()
+            else -> JSONObject().put("type", "NXR_MESSAGE").toString()
+        }
+        val script = "(function(){try{window.dispatchEvent(new CustomEvent($eventName,{detail:$detailJson}));}catch(_){}})();"
         session.evaluateInMainFrame(script) {}
         return true
+    }
+
+    /** Envía un evento de acción al content script de [extId] en la pestaña activa mediante `CustomEvent` efímero. */
+    fun dispatchActionToActiveTab(extId: String): Boolean {
+        val tab = TabManager.activeTab() ?: return false
+        return dispatchMessageToActiveTab(
+            extId,
+            JSONObject()
+                .put("type", "NXR_ACTION_CLICKED")
+                .put("url", tab.url)
+                .put("title", tab.title)
+        )
     }
 
     /** Hoja nativa de gestión y diagnóstico para una extensión instalada en NXR. */
@@ -698,6 +794,7 @@ object NxrRuntime {
     ) {
         val dir = rootDirectory(activity)
         val ext = NxrPackageInstaller.listInstalled(dir).firstOrNull { it.id == extId } ?: return
+        val manifest = NxrPackageInstaller.readManifest(dir, ext.id)
         val policy = NxrPermissions.readPolicy(NxrPackageInstaller.extensionDir(dir, ext.id))
         val state = lifecycleState(ext.id, activity)
         val stats = runtimeStats(ext.id)
@@ -741,8 +838,28 @@ object NxrRuntime {
         } else if (policy.enabled) {
             body.addView(NexoUi.note(
                 activity,
-                "Habilitada y en espera: aún no se ha inyectado en ninguna página coincidente en esta sesión."
+                "Habilitada y lista: se inyectará automáticamente al abrir o recargar páginas coincidentes."
             ))
+        }
+
+        // Interfaces HTML reales de la extensión (popup y opciones en visor Cefrium aislado)
+        val popupPage = manifest?.action?.popup
+        val optionsPage = manifest?.optionsPage
+        if (!popupPage.isNullOrBlank()) {
+            body.addView(NexoUi.button(activity, "Abrir interfaz de ${ext.name}", primary = true) {
+                sheet.dismiss()
+                if (!NxrExtensionPanel.show(activity, ext.id, ext.name, popupPage)) {
+                    Toastish.show(activity, "No se pudo abrir la interfaz HTML de ${ext.name}.")
+                }
+            }, NexoUi.buttonParams(activity, 6f))
+        }
+        if (!optionsPage.isNullOrBlank()) {
+            body.addView(NexoUi.button(activity, "Abrir opciones de la extensión", primary = popupPage.isNullOrBlank()) {
+                sheet.dismiss()
+                if (!NxrExtensionPanel.show(activity, ext.id, "${ext.name} · Opciones", optionsPage)) {
+                    Toastish.show(activity, "No se pudo abrir la página de opciones.")
+                }
+            }, NexoUi.buttonParams(activity, 6f))
         }
 
         body.addView(NexoUi.switchRow(
@@ -766,8 +883,8 @@ object NxrRuntime {
             onChanged()
         })
 
-        if (!activeHost.isNullOrEmpty()) {
-            val allowedHere = activeTab != null && NxrPermissions.isAuthorizedForUrl(policy, activeTab.url, activeTab.isPrivate)
+        if (activeTab != null && !activeHost.isNullOrEmpty()) {
+            val allowedHere = NxrPermissions.isAuthorizedForUrl(policy, activeTab.url, activeTab.isPrivate)
             body.addView(NexoUi.switchRow(
                 activity,
                 "Permitir en $activeHost",
@@ -775,14 +892,15 @@ object NxrRuntime {
                 allowedHere
             ) { allow ->
                 setHostAllowed(activity, ext.id, activeHost, allow)
+                if (allow) injectActiveTabIfMatching(ext.id)
                 onChanged()
             })
 
             if (allowedHere) {
-                body.addView(NexoUi.button(activity, "Ejecutar acción en esta pestaña", primary = true) {
+                body.addView(NexoUi.button(activity, "Ejecutar acción en esta pestaña", primary = popupPage.isNullOrBlank() && optionsPage.isNullOrBlank()) {
                     val sent = dispatchActionToActiveTab(ext.id)
                     sheet.dismiss()
-                    Toastish.show(activity, if (sent) "Acción enviada a ${ext.name}." else "Esta pestaña no admite acciones.")
+                    Toastish.show(activity, if (sent) "Acción enviada a ${ext.name}." else "Recarga la pestaña para inicializar la extensión.")
                 }, NexoUi.buttonParams(activity, 8f))
             }
         }
@@ -843,16 +961,23 @@ object NxrRuntime {
         body.addView(NexoUi.note(activity, "Almacenamiento aislado: $usedKb KB / ${NxrStorage.MAX_STORAGE_BYTES / 1024} KB"))
 
         body.addView(NexoUi.button(activity, "Desinstalar extensión", danger = true) {
-            AlertDialog.Builder(activity)
-                .setTitle("¿Desinstalar ${ext.name}?")
-                .setMessage("Se borrarán sus archivos, permisos y todo su almacenamiento local.")
-                .setNegativeButton("Cancelar", null)
-                .setPositiveButton("Desinstalar") { _, _ ->
-                    uninstall(activity, ext.id)
-                    sheet.dismiss()
-                    onChanged()
-                    Toastish.show(activity, "${ext.name} desinstalada.")
-                }.show()
+            lateinit var confirmSheet: Dialog
+            val confirmBody = NexoUi.column(activity)
+            confirmBody.addView(NexoUi.note(activity, "Se borrarán sus archivos extraídos, permisos y todo su almacenamiento aislado en Nexo."))
+            confirmBody.addView(NexoUi.button(activity, "Sí, desinstalar", danger = true) {
+                uninstall(activity, ext.id)
+                confirmSheet.dismiss()
+                sheet.dismiss()
+                onChanged()
+                Toastish.show(activity, "${ext.name} desinstalada.")
+            }, NexoUi.buttonParams(activity, 10f))
+            confirmBody.addView(NexoUi.button(activity, "Cancelar", primary = false) {
+                confirmSheet.dismiss()
+            }, NexoUi.buttonParams(activity, 6f))
+            confirmSheet = NexoSheets.show(
+                activity,
+                NexoSheets.column(activity, NexoSheets.header(activity, "¿Desinstalar ${ext.name}?", "Esta acción no se puede deshacer"), confirmBody)
+            )
         }, NexoUi.buttonParams(activity, 12f))
 
         sheet = NexoSheets.show(
