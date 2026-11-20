@@ -135,6 +135,26 @@ object NexoSheets {
         return dialog
     }
 
+    /** Controlador de hoja adaptable de 3 estados (Minimizado / Parcial / Expandido) sin reconstruir vistas. */
+    class AdaptiveSheetHandle(
+        val dialog: Dialog,
+        val scrollView: ScrollView,
+        private val sheetLayout: DragDismissLayout,
+        private val applyRatio: (Float, Boolean) -> Unit
+    ) {
+        var isExpanded: Boolean = false
+            private set
+
+        fun setExpanded(expanded: Boolean, animated: Boolean = true) {
+            isExpanded = expanded
+            applyRatio(if (expanded) 0.94f else 0.66f, animated)
+        }
+
+        fun dismissAnimated() {
+            sheetLayout.dismissAnimated()
+        }
+    }
+
     /**
      * Hoja moderna con cabecera fija, cuerpo desplazable y pie fijo (adaptada al teclado),
      * ideal para experiencias conversacionales como Nexo AI.
@@ -146,60 +166,120 @@ object NexoSheets {
         footerView: View? = null,
         heightRatio: Float = 0.86f
     ): Pair<Dialog, ScrollView> {
+        val handle = showAdaptiveFixed(
+            activity = activity,
+            headerView = headerView,
+            bodyContent = bodyContent,
+            footerView = footerView,
+            initialExpanded = heightRatio >= 0.85f
+        )
+        return handle.dialog to handle.scrollView
+    }
+
+    /**
+     * Hoja adaptable de 3 estados (Minimizado → Panel parcial → Pantalla expandida) con gestos
+     * bidireccionales y animaciones suaves que respetan la reducción de movimiento.
+     */
+    fun showAdaptiveFixed(
+        activity: Activity,
+        headerView: View,
+        bodyContent: View,
+        footerView: View? = null,
+        initialExpanded: Boolean = false,
+        onExpandGesture: (() -> Unit)? = null
+    ): AdaptiveSheetHandle {
         val p = ThemeManager.palette(activity)
         val dialog = Dialog(activity)
         WindowPrivacy.inherit(dialog.window, activity.window)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
-        val maxBodyPx = (activity.resources.displayMetrics.heightPixels * heightRatio).toInt()
+        var activeRatio = if (initialExpanded) 0.94f else 0.66f
+        var lastSafeTop = 0
+        var lastBottom = 0
+        var heightAnimator: android.animation.ValueAnimator? = null
+
+        val screenH = activity.resources.displayMetrics.heightPixels.coerceAtLeast(dp(activity, 520f))
+        val initialBodyPx = ((screenH * activeRatio).toInt() - dp(activity, 150f)).coerceAtLeast(dp(activity, 200f))
+
         val sheet = DragDismissLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = sheetBackground(activity)
             setPadding(0, dp(activity, 10f), 0, dp(activity, 8f))
+            baseDim = if (p.isDark) 0.56f else 0.42f
         }
         sheet.addView(dragHandle(activity))
         sheet.addView(headerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        val scroll = MaxHeightScrollView(activity, maxBodyPx).apply {
+        val scroll = MaxHeightScrollView(activity, initialBodyPx).apply {
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            isFillViewport = false
+            isFillViewport = true
             addView(bodyContent, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        sheet.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        sheet.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         if (footerView != null) {
             sheet.addView(footerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        fun computeTargetBodyHeight(ratio: Float): Int {
+            val decorH = activity.window.decorView.height.takeIf { it > 0 } ?: screenH
+            val usable = (decorH - lastSafeTop - lastBottom).coerceAtLeast(dp(activity, 320f))
+            val chromeAllowance = dp(activity, if (footerView != null) 168f else 108f)
+            return ((usable * ratio).toInt() - chromeAllowance).coerceAtLeast(dp(activity, 150f))
+        }
+
+        fun applyRatio(ratio: Float, animated: Boolean) {
+            activeRatio = ratio
+            val targetH = computeTargetBodyHeight(ratio)
+            heightAnimator?.cancel()
+            val startH = scroll.currentMaxHeight()
+            if (!animated || !android.animation.ValueAnimator.areAnimatorsEnabled() || kotlin.math.abs(targetH - startH) < 8) {
+                scroll.limitHeight(targetH, exact = true)
+                return
+            }
+            heightAnimator = android.animation.ValueAnimator.ofInt(startH, targetH).apply {
+                duration = 210L
+                interpolator = android.view.animation.DecelerateInterpolator(1.5f)
+                addUpdateListener { anim ->
+                    scroll.limitHeight(anim.animatedValue as Int, exact = true)
+                }
+                start()
+            }
         }
 
         sheet.scrollable = scroll
         sheet.dimWindow = dialog.window
         sheet.onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }
+        sheet.onExpandUp = onExpandGesture
 
         dialog.setContentView(sheet)
         ViewCompat.setOnApplyWindowInsetsListener(sheet) { _, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            val bottom = maxOf(safe.bottom, ime)
-            sheet.setPadding(safe.left, dp(activity, 10f), safe.right, dp(activity, 8f) + bottom)
-            val available = activity.window.decorView.height - safe.top - bottom - dp(activity, 180f)
-            if (available > dp(activity, 120f)) scroll.limitHeight(available)
+            lastSafeTop = safe.top
+            lastBottom = maxOf(safe.bottom, ime)
+            sheet.setPadding(safe.left, dp(activity, 10f), safe.right, dp(activity, 8f) + lastBottom)
+            scroll.limitHeight(computeTargetBodyHeight(activeRatio), exact = true)
             WindowInsetsCompat.CONSUMED
         }
         configureAndShow(activity, dialog, sheet, p)
-        return dialog to scroll
+        scroll.limitHeight(computeTargetBodyHeight(activeRatio), exact = true)
+        return AdaptiveSheetHandle(dialog, scroll, sheet, ::applyRatio)
     }
 
-    private fun configureAndShow(activity: Activity, dialog: Dialog, sheet: View, p: BrowserPalette) {
+    private fun configureAndShow(activity: Activity, dialog: Dialog, sheet: DragDismissLayout, p: BrowserPalette) {
         val sheetWidth = minOf(activity.resources.displayMetrics.widthPixels, dp(activity, UiLayout.SHEET_MAX_DP.toFloat()))
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(sheetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.BOTTOM)
             WindowCompat.setDecorFitsSystemWindows(this, false)
+            @Suppress("DEPRECATION")
             setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             setWindowAnimations(0)
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             setDimAmount(if (p.isDark) 0.56f else 0.42f)
+            @Suppress("DEPRECATION")
             navigationBarColor = Color.TRANSPARENT
             WindowCompat.getInsetsController(this, decorView).apply {
                 isAppearanceLightStatusBars = !p.isDark
@@ -210,6 +290,7 @@ object NexoSheets {
         dialog.show()
         dialog.window?.setLayout(sheetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
         ViewCompat.requestApplyInsets(sheet)
+        sheet.animateEnter()
     }
 
     /** Encabezado de hoja: título, subtítulo y píldora de estado opcionales. */
@@ -466,14 +547,21 @@ object NexoSheets {
         }
 }
 
-/** ScrollView con altura máxima: la hoja nunca tapa toda la pantalla. */
+/** ScrollView con altura máxima o fija animable para hojas adaptables de 3 estados. */
 private class MaxHeightScrollView(context: android.content.Context, private var maxHeight: Int) : ScrollView(context) {
-    fun limitHeight(value: Int) {
-        if (value != maxHeight) { maxHeight = value; requestLayout() }
+    private var exactMode: Boolean = false
+    fun currentMaxHeight(): Int = maxHeight
+    fun limitHeight(value: Int, exact: Boolean = false) {
+        if (value != maxHeight || exact != exactMode) {
+            maxHeight = value
+            exactMode = exact
+            requestLayout()
+        }
     }
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val size = View.MeasureSpec.getSize(heightMeasureSpec)
         val limit = if (size > 0) minOf(size, maxHeight) else maxHeight
-        super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(limit, View.MeasureSpec.AT_MOST))
+        val mode = if (exactMode) View.MeasureSpec.EXACTLY else View.MeasureSpec.AT_MOST
+        super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(limit, mode))
     }
 }

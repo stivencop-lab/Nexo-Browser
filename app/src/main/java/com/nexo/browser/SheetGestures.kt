@@ -7,21 +7,24 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.Window
+import android.view.animation.DecelerateInterpolator
+import android.widget.LinearLayout
 import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
-import android.widget.LinearLayout
 import kotlin.math.abs
 
 /**
- * Hoja inferior que se cierra arrastrándola hacia abajo, como en los
- * navegadores actuales. El gesto empieza en el asa/encabezado o en cualquier
- * punto cuando el contenido ya está arriba del todo; si se suelta antes de la
- * mitad del recorrido (y sin impulso) vuelve a su sitio.
+ * Hoja inferior con entrada animada natural, cierre deslizando hacia abajo y expansión
+ * opcional deslizando hacia arriba (experiencia 3 estados en Nexo AI: Minimizado → Parcial → Expandido).
+ * Respeta la preferencia del sistema de reducción de movimiento (`ValueAnimator.areAnimatorsEnabled()`).
  */
 class DragDismissLayout(context: Context) : LinearLayout(context) {
     /** Se llama una vez, al terminar la animación de salida. */
     var onDismiss: () -> Unit = {}
+
+    /** Opcional: gesto de arrastre hacia arriba desde el asa/cabecera para expandir a pantalla completa. */
+    var onExpandUp: (() -> Unit)? = null
 
     /** Contenido desplazable: mientras no esté arriba, el gesto es suyo. */
     var scrollable: View? = null
@@ -35,6 +38,7 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
 
     private val config = ViewConfiguration.get(context)
     private val slop = config.scaledTouchSlop
+    private val expandThresholdPx = 54f * resources.displayMetrics.density
     private val flingVelocity = 900f * resources.displayMetrics.density
     private var startX = 0f
     private var startY = 0f
@@ -49,6 +53,27 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
         dragZonePx <= 0 || event.y <= dragZonePx
 
     private fun contentAtTop(): Boolean = scrollable?.canScrollVertically(-1) != true
+
+    /** Animación breve y natural de entrada desde abajo (respeta reducción de movimiento). */
+    fun animateEnter() {
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            translationY = 0f
+            alpha = 1f
+            return
+        }
+        val travel = (56f * resources.displayMetrics.density)
+        translationY = travel
+        alpha = 0.01f
+        post {
+            if (dismissed) return@post
+            animate()
+                .translationY(0f)
+                .alpha(1f)
+                .setDuration(220L)
+                .setInterpolator(DecelerateInterpolator(1.6f))
+                .start()
+        }
+    }
 
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
         if (dismissed) return true
@@ -72,6 +97,11 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
                     beginDrag(event)
                     return true
                 }
+                if (onExpandUp != null && dy < -expandThresholdPx && abs(dy) > abs(dx) * 1.5f && contentAtTop()) {
+                    candidate = false
+                    onExpandUp?.invoke()
+                    return true
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> recycle()
         }
@@ -92,9 +122,17 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
                 return candidate
             }
             MotionEvent.ACTION_MOVE -> {
+                val totalDy = event.rawY - startY
                 if (!dragging) {
-                    val dy = event.rawY - startY
-                    if (candidate && dy > slop && dy > abs(event.rawX - startX) * 1.4f) beginDrag(event) else return candidate
+                    if (candidate && totalDy > slop && totalDy > abs(event.rawX - startX) * 1.4f) {
+                        beginDrag(event)
+                    } else if (onExpandUp != null && candidate && totalDy < -expandThresholdPx && abs(totalDy) > abs(event.rawX - startX) * 1.5f) {
+                        candidate = false
+                        onExpandUp?.invoke()
+                        return true
+                    } else {
+                        return candidate
+                    }
                 }
                 translationY = (translationY + event.rawY - lastY).coerceAtLeast(0f)
                 lastY = event.rawY
@@ -135,7 +173,6 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
     fun dismissAnimated() {
         if (dismissed) return
         dismissed = true
-        // Sin la animación de la ventana: la hoja ya sale deslizándose.
         dimWindow?.setWindowAnimations(0)
         animateTo(height.toFloat().coerceAtLeast(1f)) { onDismiss() }
     }
@@ -170,6 +207,7 @@ class DragDismissLayout(context: Context) : LinearLayout(context) {
     }
 
     override fun onDetachedFromWindow() {
+        animate().cancel()
         settle?.cancel()
         recycle()
         super.onDetachedFromWindow()

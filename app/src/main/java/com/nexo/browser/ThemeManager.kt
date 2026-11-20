@@ -633,19 +633,93 @@ object ThemeManager {
         }
     }
 
-    /** Botón permanente ✨ de Nexo AI integrado en el borde derecho de la cápsula de direcciones. */
-    fun styleAiSparkButton(activity: Activity, button: ImageButton) {
+    /** Botón permanente ✨ de Nexo AI 5.1 integrado en la cápsula de direcciones con estados visuales reales. */
+    fun styleAiSparkButton(
+        activity: Activity,
+        button: ImageButton,
+        state: com.nexo.browser.ai.NexoAiModels.IndicatorState = com.nexo.browser.ai.NexoAiModels.IndicatorState.IDLE
+    ) {
         val p = palette(activity)
         val hInset = dp(activity, 3f)
-        val vInset = dp(activity, 6f)
-        val pill = InsetDrawable(rounded(activity, p.accentSoft, 18f), hInset, vInset, hInset, vInset)
-        val rippleColor = ColorUtils.setAlphaComponent(p.onAccentSoft, 40)
-        button.background = ripple(activity, pill, 20f, rippleColor)
-        button.imageTintList = ColorStateList.valueOf(if (p.isDark) p.onAccentSoft else p.accent)
+        val vInset = dp(activity, 5f)
+        val (fillColor, strokeColor, iconColor, dotColor) = when (state) {
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.GENERATING -> AiSparkStyle(
+                fill = p.primary.container,
+                stroke = ColorUtils.setAlphaComponent(p.accent, 170),
+                icon = p.primary.onContainer,
+                dot = p.accent
+            )
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.READY -> AiSparkStyle(
+                fill = p.primary.container,
+                stroke = ColorUtils.setAlphaComponent(p.success.color, 185),
+                icon = p.primary.onContainer,
+                dot = p.success.color
+            )
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.ERROR -> AiSparkStyle(
+                fill = p.error.container,
+                stroke = ColorUtils.setAlphaComponent(p.danger, 175),
+                icon = p.error.onContainer,
+                dot = p.danger
+            )
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.IDLE -> AiSparkStyle(
+                fill = if (p.isAmoled) ColorUtils.setAlphaComponent(p.accent, 34) else p.accentSoft,
+                stroke = ColorUtils.setAlphaComponent(p.accent, if (p.isDark) 78 else 54),
+                icon = if (p.isDark) p.onAccentSoft else p.accent,
+                dot = null
+            )
+        }
+
+        val pill = InsetDrawable(rounded(activity, fillColor, 18f, strokeColor), hInset, vInset, hInset, vInset)
+        val baseDrawable: android.graphics.drawable.Drawable = if (dotColor != null) {
+            val dotSize = dp(activity, 7f)
+            val dotDrawable = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(dotColor)
+                setStroke(dp(activity, 1.5f).coerceAtLeast(1), p.surfaceContainer)
+                setSize(dotSize, dotSize)
+            }
+            android.graphics.drawable.LayerDrawable(arrayOf(pill, dotDrawable)).apply {
+                setLayerGravity(1, Gravity.TOP or Gravity.END)
+                setLayerInset(1, 0, dp(activity, 6f), dp(activity, 5f), 0)
+            }
+        } else {
+            pill
+        }
+
+        val rippleColor = ColorUtils.setAlphaComponent(iconColor, 44)
+        button.background = ripple(activity, baseDrawable, 20f, rippleColor)
+        button.imageTintList = ColorStateList.valueOf(iconColor)
         button.backgroundTintList = null
         button.stateListAnimator = null
         button.elevation = 0f
+        button.contentDescription = when (state) {
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.GENERATING -> "Nexo AI generando respuesta"
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.READY -> "Nexo AI tiene una respuesta disponible"
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.ERROR -> "Nexo AI encontró un error"
+            com.nexo.browser.ai.NexoAiModels.IndicatorState.IDLE -> activity.getString(R.string.nexo_ai_action)
+        }
     }
+
+    /** Microanimación breve al pulsar ✨ (respeta reducción de movimiento del sistema). */
+    fun animateAiSparkTap(button: View) {
+        if (!android.animation.ValueAnimator.areAnimatorsEnabled()) return
+        button.animate().cancel()
+        button.animate()
+            .scaleX(0.88f)
+            .scaleY(0.88f)
+            .setDuration(75L)
+            .withEndAction {
+                button.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(130L)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
+            .start()
+    }
+
+    private data class AiSparkStyle(val fill: Int, val stroke: Int?, val icon: Int, val dot: Int?)
 
     /** Botón menú ⋮ centrado con precisión óptica junto al contador de pestañas. */
     fun styleMenuIconButton(activity: Activity, button: Button) {
