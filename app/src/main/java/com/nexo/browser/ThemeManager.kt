@@ -77,8 +77,8 @@ object ThemeManager {
     /** Nombre visible de cada acento. */
     fun accentLabel(accent: String): String = when (accent) {
         BrowserPrefs.ACCENT_SIGNAL -> "Azul Señal"
-        BrowserPrefs.ACCENT_COBALT -> "Cobalto"
-        BrowserPrefs.ACCENT_ORANGE -> "Naranja Internacional"
+        BrowserPrefs.ACCENT_COBALT -> "Cobalto Editorial"
+        BrowserPrefs.ACCENT_ORANGE -> "Bermellón"
         BrowserPrefs.ACCENT_SAGE -> "Salvia"
         else -> "Monocromo"
     }
@@ -183,11 +183,13 @@ object ThemeManager {
     fun fontSemiBold(activity: Activity): Typeface = weight(activity, 600)
 
     /** UI 7.0 no grita: el antiguo «bold» se limita a SemiBold 600. */
-    fun fontBold(activity: Activity): Typeface = fontSemiBold(activity)
+    fun fontBold(activity: Activity): Typeface = weight(activity, 700)
 
     /** JetBrains Mono: solo métricas y latencias, siempre con cifras tabulares. */
-    fun fontMono(activity: Activity): Typeface =
-        runCatching { activity.resources.getFont(R.font.jetbrains_mono) }.getOrDefault(Typeface.MONOSPACE)
+    fun fontMono(activity: Activity, weight: Int = 400): Typeface {
+        val base = runCatching { activity.resources.getFont(R.font.jetbrains_mono) }.getOrDefault(Typeface.MONOSPACE)
+        return if (weight == 400) base else Typeface.create(base, weight, false)
+    }
 
     /** Encabezado editorial: SemiBold con tracking -0.025em. */
     fun styleHeading(activity: Activity, text: TextView, sizeSp: Float) {

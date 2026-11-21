@@ -16,8 +16,8 @@ android {
         // Cefrium 0.21.0 (Chromium 156) exige Android 10.
         minSdk = 29
         targetSdk = 35
-        versionCode = 75
-        versionName = "0.39.1"
+        versionCode = 76
+        versionName = "0.39.2"
         // Solo la actualización de transición (paquete anterior) entrega sus datos a Nexo nuevo.
         manifestPlaceholders["legacyExport"] = project.hasProperty("nexoTransition").toString()
     }
@@ -104,6 +104,7 @@ dependencies {
     implementation("com.cefrium:cefrium-native-codecs-armeabi-v7a:0.21.0")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
     // Selector de pestañas: tarjetas recicladas y deslizar para cerrar.
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     // HCT / Material color utilities; the browser keeps its native View UI.
@@ -111,6 +112,7 @@ dependencies {
     implementation("androidx.dynamicanimation:dynamicanimation:1.1.0")
     // WebSocket para los subtítulos en vivo (Deepgram).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.re2j:re2j:1.8")
 
     testImplementation("junit:junit:4.13.2")
     // org.json real en las pruebas JVM (el de Android es un stub).

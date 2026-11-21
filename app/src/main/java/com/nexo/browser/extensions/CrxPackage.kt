@@ -111,35 +111,29 @@ object CrxPackage {
         if (zipOffset >= file.length()) throw InvalidCrxException("El CRX no contiene archivos.")
         verifyZipStartsHere(raf, zipOffset)
 
-        val fields = Protobuf.read(header)
-        val rsaProofs = fields.filter { it.number == 2 }.map { proof(it.bytes) }
-        val ecdsaProofs = fields.filter { it.number == 3 }.map { proof(it.bytes) }
-        if (rsaProofs.size + ecdsaProofs.size > 8) throw InvalidCrxException("Demasiadas firmas en el CRX.")
-        val signedHeaderData = fields.lastOrNull { it.number == 10000 }?.bytes
-            ?: throw InvalidCrxException("El CRX3 no declara su ID.")
-        val crxId = Protobuf.read(signedHeaderData).lastOrNull { it.number == 1 }?.bytes
-        if (crxId == null || crxId.size != 16) throw InvalidCrxException("ID de CRX3 no válido.")
-
-        val proofs = rsaProofs.map { it to "SHA256withRSA" } + ecdsaProofs.map { it to "SHA256withECDSA" }
-        if (proofs.isEmpty()) throw InvalidCrxException("El CRX3 no está firmado.")
-
+        val parsed = Crx3Parser.parse(header)
+        val signedHeaderData = parsed.signedData
+        val crxId = parsed.crxId
         val signedPrefix = ByteArrayOutputStream().apply {
             write(SIGNATURE_CONTEXT)
             write(u32le(signedHeaderData.size.toLong()))
             write(signedHeaderData)
         }.toByteArray()
 
+        val verifiers = parsed.proofs.map { proof ->
+            Signature.getInstance(proof.algorithm).apply {
+                initVerify(publicKey(proof.key, proof.keyAlgorithm))
+                update(signedPrefix)
+            }
+        }
+        updateFromFile(verifiers, raf, zipOffset)
         var developerKey: ByteArray? = null
-        for ((proof, algorithm) in proofs) {
-            val key = proof.first
-            val signatureBytes = proof.second
-            val verifier = Signature.getInstance(algorithm)
-            verifier.initVerify(publicKey(key, if (algorithm.endsWith("RSA")) "RSA" else "EC"))
-            verifier.update(signedPrefix)
-            updateFromFile(verifier, file, zipOffset)
-            if (!verifier.verify(signatureBytes)) throw InvalidCrxException("Una firma del CRX no es válida.")
-            val keyId = MessageDigest.getInstance("SHA-256").digest(key).copyOf(16)
-            if (keyId.contentEquals(crxId)) developerKey = key
+        for (index in parsed.proofs.indices) {
+            val proof = parsed.proofs[index]
+            val valid = runCatching { verifiers[index].verify(proof.signature) }.getOrDefault(false)
+            if (!valid) throw InvalidCrxException("Una firma del CRX no es válida.")
+            val keyId = MessageDigest.getInstance("SHA-256").digest(proof.key).copyOf(16)
+            if (keyId.contentEquals(crxId)) developerKey = proof.key
         }
         val key = developerKey ?: throw InvalidCrxException("Ninguna firma corresponde al ID del CRX.")
         return Verified(
@@ -148,7 +142,7 @@ object CrxPackage {
             zipOffset = zipOffset,
             publicKey = key,
             publicKeySha256 = sha256Hex(key),
-            signerCount = proofs.size
+            signerCount = parsed.proofs.size
         )
     }
 
@@ -165,7 +159,7 @@ object CrxPackage {
         verifyZipStartsHere(raf, zipOffset)
         val verifier = Signature.getInstance("SHA1withRSA")
         verifier.initVerify(publicKey(key, "RSA"))
-        updateFromFile(verifier, file, zipOffset)
+        updateFromFile(listOf(verifier), raf, zipOffset)
         if (!verifier.verify(signatureBytes)) throw InvalidCrxException("La firma del CRX no es válida.")
         return Verified(
             extensionId = extensionIdFor(key),
@@ -216,35 +210,28 @@ object CrxPackage {
 
     /** Abre el ZIP contenido (después de [verify]). */
     fun openZip(file: File, verified: Verified): InputStream =
-        file.inputStream().also { input ->
-            var remaining = verified.zipOffset
-            while (remaining > 0) {
-                val skipped = input.skip(remaining)
-                if (skipped <= 0) throw InvalidCrxException("CRX truncado.")
-                remaining -= skipped
+        file.inputStream().let { input ->
+            try {
+                input.channel.position(verified.zipOffset)
+                if (input.channel.size() <= verified.zipOffset) throw InvalidCrxException("CRX truncado.")
+                input
+            } catch (error: Throwable) {
+                input.close()
+                throw error
             }
         }
-
-    private fun proof(bytes: ByteArray?): Pair<ByteArray, ByteArray> {
-        val fields = Protobuf.read(bytes ?: throw InvalidCrxException("Prueba de firma no válida."))
-        val key = fields.lastOrNull { it.number == 1 }?.bytes ?: throw InvalidCrxException("Prueba sin clave.")
-        val signature = fields.lastOrNull { it.number == 2 }?.bytes ?: throw InvalidCrxException("Prueba sin firma.")
-        return key to signature
-    }
 
     private fun publicKey(der: ByteArray, algorithm: String): PublicKey =
         runCatching { KeyFactory.getInstance(algorithm).generatePublic(X509EncodedKeySpec(der)) }
             .getOrElse { throw InvalidCrxException("Clave pública del CRX no válida.") }
 
-    private fun updateFromFile(signature: Signature, file: File, offset: Long) {
-        RandomAccessFile(file, "r").use { raf ->
-            raf.seek(offset)
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val read = raf.read(buffer)
-                if (read < 0) break
-                signature.update(buffer, 0, read)
-            }
+    private fun updateFromFile(signatures: List<Signature>, input: RandomAccessFile, offset: Long) {
+        input.seek(offset)
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            for (signature in signatures) signature.update(buffer, 0, read)
         }
     }
 
@@ -262,43 +249,4 @@ object CrxPackage {
         ((value ushr 16) and 0xff).toByte(),
         ((value ushr 24) and 0xff).toByte()
     )
-}
-
-/** Lector mínimo de protobuf: solo los tipos que usa la cabecera CRX3. */
-internal object Protobuf {
-    class Field(val number: Int, val bytes: ByteArray?)
-
-    fun read(data: ByteArray): List<Field> {
-        val fields = mutableListOf<Field>()
-        var index = 0
-        fun varint(): Long {
-            var result = 0L
-            var shift = 0
-            while (true) {
-                if (index >= data.size || shift > 63) throw CrxPackage.InvalidCrxException("Cabecera CRX dañada.")
-                val byte = data[index++].toInt() and 0xff
-                result = result or ((byte and 0x7f).toLong() shl shift)
-                if (byte and 0x80 == 0) return result
-                shift += 7
-            }
-        }
-        while (index < data.size) {
-            val key = varint()
-            val number = (key ushr 3).toInt()
-            when ((key and 7).toInt()) {
-                0 -> { varint(); fields += Field(number, null) }
-                1 -> { index += 8; fields += Field(number, null) }
-                2 -> {
-                    val length = varint()
-                    if (length < 0 || length > data.size - index) throw CrxPackage.InvalidCrxException("Cabecera CRX dañada.")
-                    fields += Field(number, data.copyOfRange(index, index + length.toInt()))
-                    index += length.toInt()
-                }
-                5 -> { index += 4; fields += Field(number, null) }
-                else -> throw CrxPackage.InvalidCrxException("Cabecera CRX dañada.")
-            }
-            if (index > data.size) throw CrxPackage.InvalidCrxException("Cabecera CRX dañada.")
-        }
-        return fields
-    }
 }

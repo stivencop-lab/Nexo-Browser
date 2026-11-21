@@ -116,6 +116,9 @@ class MainActivity :
     private lateinit var statusScrim: View
     private lateinit var topOverlay: LinearLayout
     private lateinit var bottomChrome: LinearLayout
+    private var webBackdrop: NexoGlassBackdrop? = null
+    private val glassSettingsChanged: () -> Unit = ::styleChromeGlass
+    private lateinit var chromeIsland: View
     private lateinit var chromeCluster: LinearLayout
     private lateinit var miniPill: LinearLayout
     private lateinit var miniLock: ImageView
@@ -237,6 +240,7 @@ class MainActivity :
         LiveCaptions.attach(this)
         applyTheme()
         configureUi()
+        GlassPreferences.addListener(glassSettingsChanged)
         ThemeManager.takeInitialFocus(root)
         TabManager.initialize(this)
         TabManager.attach(this)
@@ -302,7 +306,7 @@ class MainActivity :
         bottomChrome.setPadding(0, 0, 0, if (hideBars) 0 else bottomInset + NexoUi.dp(this, 2f))
         val startVisible = startPage.visibility == View.VISIBLE
         // Página: bajo la barra de estado; por detrás del cromo Liquid; sobre el teclado.
-        val pageTop = if (hideBars || startVisible) 0 else top
+        val pageTop = if (hideBars || startVisible || liquidChrome) 0 else top
         val pageBottom = when {
             hideBars -> 0
             imeBottom > 0 -> imeBottom
@@ -347,6 +351,7 @@ class MainActivity :
         topOverlay = findViewById(R.id.topOverlay)
         bottomChrome = findViewById(R.id.bottomChrome)
         chromeCluster = findViewById(R.id.chromeCluster)
+        chromeIsland = findViewById(R.id.chromeIsland)
         miniPill = findViewById(R.id.miniPill)
         miniLock = findViewById(R.id.miniLock)
         miniDomain = findViewById(R.id.miniDomain)
@@ -452,8 +457,18 @@ class MainActivity :
             }
         }
         miniPill.setOnClickListener { setChromeCompact(false) }
-        // El cristal desenfoca Inicio en vivo: se repinta cuando el fondo cambia (p. ej. al desplazar).
-        listOf<View>(omniboxCapsule, chromeCluster, miniPill).forEach { NexoGlass.follow(it, startPage) }
+        val glassControls = listOf(chromeIsland, tabButton, miniPill)
+        glassControls.forEach { NexoGlass.follow(it, startPage) }
+        val cefPage = engineView as? com.nexo.browser.engine.cefrium.CefriumPageView
+        if (cefPage != null) {
+            webBackdrop = NexoGlassBackdrop(pageView, {
+                cefPage.renderingSurface?.takeIf { liquidChrome && !immersive && startPage.visibility != View.VISIBLE }
+            }) { glassControls.forEach(View::invalidate) }
+            cefPage.onBackdropInvalidated = { webBackdrop?.markDirty() }
+            pageView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) webBackdrop?.markDirty()
+            }
+        }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
         compactBackButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
@@ -486,6 +501,9 @@ class MainActivity :
             if (session === attachedSession) {
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
+                    if (session !== attachedSession) return@runOnUiThread
+                    TabManager.rememberScroll(session, scrollY)
+                    webBackdrop?.markDirty()
                     val hide = NavConfig.shouldAutoHideDock(
                         mode = if (liquidChrome) NavConfig.Mode.CLASSIC else NavConfig.mode(this),
                         autoHideEnabled = BrowserPrefs.autoHideBars(this),
@@ -595,7 +613,7 @@ class MainActivity :
 
         omnibox.setOnFocusChangeListener { _, focused ->
             val tab = TabManager.activeTab()
-            ThemeManager.styleOmniboxCapsule(this, omniboxCapsule, focused)
+            omnibox.typeface = if (focused) ThemeManager.fontRegular(this) else ThemeManager.fontMono(this)
             styleChromeGlass()
             if (focused) {
                 setDockScrollHidden(false)
@@ -792,8 +810,8 @@ class MainActivity :
             SheetAction(R.drawable.ic_menu_reader, "Modo lectura") {
                 com.nexo.browser.reader.NexoReader.openActiveTab(this)
             },
-            SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = current?.desktopMode == true, checked = current?.desktopMode == true) {
-                TabManager.setDesktopMode(!(current?.desktopMode ?: false))
+            SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = TabManager.desktopModeActive(), checked = TabManager.desktopModeActive()) {
+                TabManager.setDesktopMode(!TabManager.desktopModeActive())
             },
             SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") { current?.let { copyText("Enlace", it.url) } },
             SheetAction(R.drawable.ic_menu_share, "Compartir") { shareCurrent() },
@@ -1384,11 +1402,12 @@ class MainActivity :
         pageView.setBackgroundColor(p.background)
         ThemeManager.styleOmniboxInput(this, omnibox)
         omnibox.textSize = 15f
+        omnibox.typeface = if (omnibox.hasFocus()) ThemeManager.fontRegular(this) else ThemeManager.fontMono(this)
+        omnibox.fontFeatureSettings = "tnum"
         ThemeManager.styleIconButton(this, compactBackButton)
         ThemeManager.styleIconButton(this, pillReloadButton)
         pillReloadButton.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
         pillReloadButton.scaleX = 0.9f; pillReloadButton.scaleY = 0.9f
-        styleChromeGlass()
         styleTabToolsButton(TabManager.activeTab())
         styleMiniPlayerChip()
         // Emblema Nexo Aperture: integrado en el clúster, respira mientras Nexo AI escribe.
@@ -1400,6 +1419,7 @@ class MainActivity :
             com.nexo.browser.ai.NexoAiSheet.show(this)
         }
         ThemeManager.styleTabCounter(this, tabButton)
+        styleChromeGlass()
         ThemeManager.styleMenuIconButton(this, findViewById(R.id.menuButton))
         ThemeManager.styleFlatButton(this, clearOmniboxButton)
         clearOmniboxButton.setTextColor(p.muted)
@@ -1439,7 +1459,8 @@ class MainActivity :
             NexoGlass.float(it, p)
         }
         miniDomain.setTextColor(p.text)
-        miniDomain.typeface = ThemeManager.fontMedium(this)
+        miniDomain.typeface = ThemeManager.fontMono(this, 500)
+        miniDomain.fontFeatureSettings = "tnum"
         miniLock.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
         applyNavigationMode()
         settingsFingerprint = fingerprint()
@@ -1456,19 +1477,28 @@ class MainActivity :
         val p = ThemeManager.palette(this)
         val private = TabManager.activeTab()?.isPrivate == true
         val focused = omnibox.hasFocus()
-        val backdrop = startPage.takeIf { it.visibility == View.VISIBLE }
-        fun glass(radius: Float) = NexoGlassDrawable(this, p, radius, smoked = private).also { it.setBackdrop(backdrop) }
-        omniboxCapsule.background = if (focused) ThemeManager.rounded(this, p.surfaceContainerHigh, NexoUi.Tokens.RADIUS_PILL)
-            else glass(NexoUi.Tokens.RADIUS_PILL)
-        NexoGlass.float(omniboxCapsule, p)
-        chromeCluster.background = glass(NexoUi.Tokens.RADIUS_PILL)
-        NexoGlass.float(chromeCluster, p)
-        miniPill.background = android.graphics.drawable.InsetDrawable(glass(NexoUi.Tokens.RADIUS_PILL), 0, NexoUi.dp(this, 7f), 0, NexoUi.dp(this, 7f))
+        val startVisible = startPage.visibility == View.VISIBLE
+        val intensity = GlassPreferences.intensity
+        webBackdrop?.intensity = intensity
+        fun glass(host: View, radius: Float) = NexoGlassDrawable(this, p, radius, smoked = private).also {
+            if (startVisible) it.setBackdrop(startPage, host)
+            else it.setWebBackdrop(webBackdrop, pageView, host)
+        }
+        chromeIsland.background = if (focused) ThemeManager.rounded(this, p.surfaceContainerHigh, NexoTokens.CARD_RADIUS)
+            else glass(chromeIsland, NexoTokens.CARD_RADIUS)
+        omniboxCapsule.background = null
+        chromeCluster.background = null
+        NexoGlass.float(chromeIsland, p)
+        tabButton.background = ThemeManager.ripple(this, glass(tabButton, NexoTokens.CARD_RADIUS), NexoTokens.CARD_RADIUS)
+        NexoGlass.float(tabButton, p)
+        miniPill.background = android.graphics.drawable.InsetDrawable(
+            glass(miniPill, NexoTokens.PILL_RADIUS), 0, NexoUi.dp(this, 8f), 0, NexoUi.dp(this, 8f))
         NexoGlass.float(miniPill, p, if (p.isDark) 3f else 6f)
-        // Enfoque: la píldora ocupa todo el ancho; el clúster se retira.
         val home = TabManager.activeTab()?.let { BrowserPrefs.isNexoHome(it.url) } != false
         val showCluster = !focused || !liquidChrome
         chromeCluster.visibility = if (showCluster) View.VISIBLE else View.GONE
+        tabButton.visibility = if (showCluster) View.VISIBLE else View.GONE
+        webBackdrop?.markDirty()
         // En Inicio el emblema vive dentro de la cápsula unificada de búsqueda y consulta.
         aiButton.visibility = if (home && liquidChrome) View.GONE else View.VISIBLE
         pillReloadButton.visibility = if (liquidChrome && !focused && TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true) View.VISIBLE else View.GONE
@@ -1651,6 +1681,7 @@ class MainActivity :
             BrowserPrefs.smartPip(this).toString(), BrowserPrefs.backgroundMedia(this).toString(),
             BrowserPrefs.captionsEnabled(this).toString(),
             BrowserPrefs.navMode(this), BrowserPrefs.navActions(this),
+            BrowserPrefs.chromeStyle(this), GlassPreferences.intensity.name,
             BrowserPrefs.autoHideBars(this).toString()
         ).joinToString("|")
 
@@ -1727,10 +1758,13 @@ class MainActivity :
             attachedSession?.let { LiveCaptions.stop(it) }
             // Un permiso pedido desde otra pestaña no se concede desde esta.
             attachedSession?.let { SitePermissionPrompts.cancelFor(it) }
-            if (attachedSession != null) engineView.release()
+            webBackdrop?.reset()
+            (engineView as? com.nexo.browser.engine.cefrium.CefriumPageView)?.selectTab(tab.id)
+            // El motor separa la vista anterior y conserva la cubierta si se está recuperando esta pestaña.
             // Fondo del tema mientras la página pinta (evita el destello blanco).
             engineView.attach(session, ThemeManager.palette(this).background)
             attachedSession = session
+            webBackdrop?.markDirty()
         }
         if (fullScreenActive != tab.isFullScreen) {
             fullScreenActive = tab.isFullScreen
@@ -1817,6 +1851,7 @@ class MainActivity :
 
     override fun onProgress(tab: BrowserTab, progressValue: Int, loading: Boolean) {
         if (tab.id != TabManager.activeTab()?.id) return
+        webBackdrop?.markDirty()
         progress.progress = progressValue
         progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
         if (!loading) {
@@ -1949,8 +1984,7 @@ class MainActivity :
     }
 
     /**
-     * Observador puro de URL (sin inyección en el DOM de la tienda ni falsificación de User-Agent):
-     * cuando el usuario abre una ficha de Chrome Web Store o Microsoft Edge Add-ons, ofrece la
+     * Cuando el usuario abre una ficha de Chrome Web Store o Microsoft Edge Add-ons, ofrece la
      * barra contextual nativa «Instalar en Nexo» o «Gestionar en Nexo» si ya está instalada.
      */
     private fun updateExtensionInstallBanner(tab: BrowserTab) {
@@ -1985,8 +2019,7 @@ class MainActivity :
                 .trim()
                 .takeIf { it.isNotBlank() && !it.startsWith("http", ignoreCase = true) }
                 ?: target.store.label
-            val modeNote = if (tab.desktopMode) "Modo escritorio · " else ""
-            extensionBannerText.text = "$label · $modeNote${target.store.label}"
+            extensionBannerText.text = "$label · ${target.store.label}"
             extensionBannerAction.text = "Instalar en Nexo"
         }
         extensionInstallBanner.visibility = View.VISIBLE
@@ -2019,6 +2052,9 @@ class MainActivity :
         }
 
         super.onResume()
+        (engineView as? com.nexo.browser.engine.cefrium.CefriumPageView)?.onHostResume()
+        webBackdrop?.setRunning(true)
+        if (TabManager.activeTab()?.isPrivate != true) com.nexo.browser.engine.cefrium.SpareRendererPool.start(this)
         BrowserHosts.attach(this)
         LiveCaptions.reapply(this)
         refreshCaptionsUi()
@@ -2057,9 +2093,19 @@ class MainActivity :
         }
     }
 
+    override fun onPause() {
+        if (!MigrationMode.enabled(this)) {
+            (engineView as? com.nexo.browser.engine.cefrium.CefriumPageView)?.onHostPause()
+            webBackdrop?.setRunning(false)
+            com.nexo.browser.engine.cefrium.SpareRendererPool.stop(this)
+        }
+        super.onPause()
+    }
+
     override fun onStop() {
         if (MigrationMode.enabled(this)) { super.onStop(); return }
-        // Sin captura aquí: al parar la superficie se destruye y la imagen sale en negro.
+        (engineView as? com.nexo.browser.engine.cefrium.CefriumPageView)?.onHostStop()
+        // La captura se solicitó en onPause, con la superficie todavía disponible.
         pageView.removeCallbacks(idlePreview)
 
         if (!isInPictureInPictureMode) {
@@ -2703,6 +2749,8 @@ class MainActivity :
         aiControllerObserver = null
         com.nexo.browser.shield.MalwareScan.removeObserver(malwareObserver)
         com.nexo.browser.shield.MalwareWarning.dismiss()
+        GlassPreferences.removeListener(glassSettingsChanged)
+        webBackdrop?.setRunning(false)
         PageBridge.onScrollDirection = null
         unregisterPredictiveBack()
         PerfLog.detach(this)

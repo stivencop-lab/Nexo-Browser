@@ -10,13 +10,13 @@ object BrowserPrefs {
     const val THEME_OLED = "oled"
     const val THEME_LIGHT = "light"
 
-    // Nexo UI 7.0: cinco acentos adultos. Los valores antiguos se migran al leerlos.
+    // Los acentos guardados en versiones anteriores se migran al leerlos.
     const val ACCENT_MONO = "mono"
     const val ACCENT_SIGNAL = "signal"
     const val ACCENT_COBALT = "cobalt"
     const val ACCENT_ORANGE = "orange"
     const val ACCENT_SAGE = "sage"
-    val ACCENTS = listOf(ACCENT_MONO, ACCENT_SIGNAL, ACCENT_COBALT, ACCENT_ORANGE, ACCENT_SAGE)
+    val ACCENTS = listOf(ACCENT_MONO, ACCENT_COBALT, ACCENT_ORANGE, ACCENT_SAGE)
 
     /** Cromo inferior: «Liquid Split» (por defecto) o el Dock clásico refinado. */
     const val CAPTION_POS_VIDEO = "video"
@@ -32,8 +32,7 @@ object BrowserPrefs {
     /** Acentos de UI 5.x/6.x → equivalente adulto más cercano de UI 7.0. */
     fun migrateAccent(raw: String?): String = when (raw) {
         null, "", "dynamic" -> ACCENT_MONO
-        "violet" -> ACCENT_SIGNAL
-        "cyan" -> ACCENT_COBALT
+        "violet", "cyan", ACCENT_SIGNAL -> ACCENT_COBALT
         "lime" -> ACCENT_SAGE
         "pink", "red" -> ACCENT_ORANGE
         in ACCENTS -> raw

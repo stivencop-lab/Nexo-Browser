@@ -24,5 +24,10 @@ data class BrowserTab(
     var isFullScreen: Boolean = false,
     var session: EngineSession? = null
 ) {
+    internal var inactiveSince: Long? = null
+    internal var isFrozen: Boolean = false
+    internal var lastScrollY: Int = 0
+    internal var recoverScroll: Pair<String, Int>? = null
+
     init { require(burnerId == null || (isPrivate && burnerId.isNotBlank())) { "Burner requiere navegación privada." } }
 }

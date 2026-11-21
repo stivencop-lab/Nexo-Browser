@@ -44,6 +44,7 @@ import com.nexo.browser.engine.LoadDecision
 import com.nexo.browser.engine.MediaEvent
 import com.nexo.browser.engine.ProcessExit
 import com.nexo.browser.engine.SessionParams
+import com.nexo.browser.extensions.hub.ExtensionStoreResolver
 import com.nexo.browser.shield.PhantomShield
 import java.io.File
 import java.io.FileInputStream
@@ -100,6 +101,8 @@ class CefriumEngineSession internal constructor(
     private var active = false
     private var suspendMediaWhenInactive = params.suspendMediaWhenInactive
     private var desktopMode = params.desktopMode
+    private var storeDesktopOptOut = false
+    private var appliedDesktop: Boolean? = null
     private var mainFrameError = false
     private var sslNoticeFor: String? = null
     internal var fullScreen = false
@@ -201,7 +204,9 @@ class CefriumEngineSession internal constructor(
                 releaseBrowser()
             }
         }
-        val created = runCatching { CefriumBrowser.createWithSurface(activity, profile) }.getOrElse {
+        val created = runCatching {
+            SpareRendererPool.take(activity, profile) ?: CefriumBrowser.createWithSurface(activity, profile)
+        }.getOrElse {
             EngineDiagnostics.log("createWithSurface falló (perfil ${profile.name}, privado=${profile.isIncognito})", it)
             TabManager.notifyMessage("Chromium no pudo abrir la pestaña: ${it.message ?: it.javaClass.simpleName}")
             return null
@@ -214,7 +219,10 @@ class CefriumEngineSession internal constructor(
         pendingUrl = null
         when {
             state != null -> applyState(created, state)
-            url != null -> created.loadUrl(url)
+            url != null -> {
+                applyUserAgent(created, url)
+                created.loadUrl(url)
+            }
         }
         host?.attachBrowser(this)
         return created
@@ -228,6 +236,7 @@ class CefriumEngineSession internal constructor(
         darkBoot = emptyList()
         darkBootSignature = ""
         lastDark = null
+        appliedDesktop = null
         applyCanvasBackground(target)
         // Antes que los scripts de PhantomShield: la política oscura ya está cuando arranca el motor de la página.
         applyDarkBoot(target)
@@ -270,6 +279,17 @@ class CefriumEngineSession internal constructor(
                 .getOrNull()
         }
         darkBootSignature = signature
+    }
+
+    /** Restores the current entry and Chromium PageState, including the scroll position. */
+    internal fun recreateSurface(expected: CefriumBrowser): Boolean {
+        if (liveBrowser() !== expected || host == null) return false
+        val navigation = runCatching { expected.serializeNavigationState() }.getOrNull()
+        pendingState = CefriumState.of(currentUrl, navigation)
+        pendingUrl = null
+        EngineDiagnostics.recordSurfaceRebind()
+        releaseBrowser()
+        return ensureBrowser() != null
     }
 
     /** Cierra el navegador sin cerrar la pestaña (Activity destruida, transferencia de perfil). */
@@ -369,8 +389,19 @@ class CefriumEngineSession internal constructor(
 
     internal fun lastBlockedSslHost(): String? = sslNoticeFor
 
-    private fun applyUserAgent(target: CefriumBrowser) {
-        if (!target.isClosed) target.setUserAgentOverride(if (desktopMode) UserAgents.desktop() else null)
+    internal fun isDesktopPresentation(): Boolean =
+        desktopMode || (!storeDesktopOptOut && ExtensionStoreResolver.usesStoreDesktopProfile(currentUrl))
+
+    internal fun restoreScroll(scrollY: Int) {
+        runCatching { liveBrowser()?.evaluateJavaScript("window.scrollTo(0, $scrollY)") }
+    }
+
+    private fun applyUserAgent(target: CefriumBrowser, destination: String? = currentUrl) {
+        val desktop = desktopMode || (!storeDesktopOptOut && ExtensionStoreResolver.usesStoreDesktopProfile(destination))
+        if (!target.isClosed && appliedDesktop != desktop) {
+            target.setUserAgentOverride(if (desktop) UserAgents.desktop() else null)
+            appliedDesktop = desktop
+        }
     }
 
     // --- EngineSession ---
@@ -378,6 +409,7 @@ class CefriumEngineSession internal constructor(
     override fun loadUrl(url: String) {
         val target = upgrade(PhantomShield.cleanNavigation(url))
         currentUrl = target
+        if (!ExtensionStoreResolver.usesStoreDesktopProfile(target)) storeDesktopOptOut = false
         val live = ensureBrowser()?.takeIf { !it.isClosed }
         if (live == null) {
             pendingUrl = target
@@ -385,7 +417,7 @@ class CefriumEngineSession internal constructor(
         } else {
             // onBeforeNavigate no ve las cargas de la app: el esquema del destino se fija aquí.
             applyDarkFor(live, target)
-            runCatching { live.loadUrl(target) }
+            runCatching { applyUserAgent(live, target); live.loadUrl(target) }
         }
     }
 
@@ -425,6 +457,7 @@ class CefriumEngineSession internal constructor(
 
     override fun setDesktopMode(enabled: Boolean) {
         desktopMode = enabled
+        storeDesktopOptOut = !enabled && ExtensionStoreResolver.usesStoreDesktopProfile(currentUrl)
         liveBrowser()?.let { runCatching { applyUserAgent(it) } }
     }
 
@@ -469,6 +502,7 @@ class CefriumEngineSession internal constructor(
     /** El historial solo se restaura en un navegador sin navegar; si no, se carga la dirección. */
     private fun applyState(target: CefriumBrowser, state: CefriumState) {
         if (target.isClosed) return
+        applyUserAgent(target, state.currentUri)
         val navigation = state.navigation
         val fresh = runCatching { !target.canGoBack() && !target.canGoForward() && target.url.isNullOrEmpty() }.getOrDefault(false)
         if (navigation != null && fresh && runCatching { target.restoreNavigationState(navigation) }.isSuccess) return
@@ -655,7 +689,11 @@ class CefriumEngineSession internal constructor(
         override fun onBeforeNavigate(browser: CefriumBrowser, request: CefriumNavigationRequest): Boolean {
             if (!request.isForMainFrame) return false
             // Esquema oscuro del sitio de destino antes de que llegue su documento (también tras redirecciones).
-            request.url?.let { applyDarkFor(browser, it) }
+            request.url?.let {
+                if (!ExtensionStoreResolver.usesStoreDesktopProfile(it)) storeDesktopOptOut = false
+                applyUserAgent(browser, it)
+                applyDarkFor(browser, it)
+            }
             if (request.isRedirect) return false
             val url = request.url ?: return false
             val observer = observer ?: return true
@@ -698,6 +736,7 @@ class CefriumEngineSession internal constructor(
         }
 
         override fun onLoadStart(browser: CefriumBrowser, url: String?) {
+            host?.onDocumentChanged(browser)
             mainFrameError = false
             sslNoticeFor = null
             docGen.incrementAndGet()
@@ -739,6 +778,7 @@ class CefriumEngineSession internal constructor(
         }
 
         override fun onDocumentAvailable(browser: CefriumBrowser) {
+            host?.onDocumentAvailable(browser)
             observer?.onFirstContentfulPaint(this@CefriumEngineSession)
             if (!browser.isClosed) {
                 com.nexo.browser.extensions.nxr.NxrRuntime.onDocumentAvailable(
@@ -766,7 +806,11 @@ class CefriumEngineSession internal constructor(
             }
             EngineDiagnostics.recordRendererExit(exit == ProcessExit.KILL)
             EngineDiagnostics.log("el proceso de la página terminó: $status (código $errorCode)")
-            main.post { observer?.onProcessExit(this@CefriumEngineSession, exit) }
+            main.post {
+                if (this@CefriumEngineSession.browser !== browser) return@post
+                host?.onRendererTerminated(browser)
+                observer?.onProcessExit(this@CefriumEngineSession, exit)
+            }
         }
 
         /** Certificado no válido: la conexión se cancela siempre, sin excepción. */

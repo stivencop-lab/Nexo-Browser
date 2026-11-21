@@ -73,7 +73,7 @@ object ExtensionCompatibility {
         ApiMatrixRow("alarms", ApiSupport.UNSUPPORTED, "No hay planificador persistente en segundo plano fuera del ciclo de vida del documento."),
         ApiMatrixRow("contextMenus", ApiSupport.UNSUPPORTED, "Menús contextuales personalizados de terceros no disponibles en Cefrium 0.21.0."),
         ApiMatrixRow("notifications", ApiSupport.UNSUPPORTED, "chrome.notifications no está expuesto a extensiones de terceros."),
-        ApiMatrixRow("declarativeNetRequest", ApiSupport.UNSUPPORTED, "Los rulesets DNR de terceros no se inyectan en el interceptor de red nativo (PhantomShield opera integrado)."),
+        ApiMatrixRow("declarativeNetRequest", ApiSupport.LIMITED, "PhantomShield ejecuta reglas estáticas de bloqueo y excepción por dominio. Reglas dinámicas, expresiones regulares y redirecciones siguen fuera de alcance."),
         ApiMatrixRow("webNavigation", ApiSupport.UNSUPPORTED, "Eventos chrome.webNavigation no expuestos a extensiones de terceros."),
         ApiMatrixRow("clipboardWrite", ApiSupport.LIMITED, "Solo mediante la API web estándar del navegador tras gesto directo del usuario."),
         ApiMatrixRow("cookies", ApiSupport.UNSUPPORTED, "chrome.cookies bloqueado para extensiones de terceros por aislamiento y seguridad."),
@@ -88,6 +88,7 @@ object ExtensionCompatibility {
 
     /** Permisos con soporte parcial honesto sobre NXR/Cefrium. */
     private val LIMITED_PERMS = mapOf(
+        "declarativeNetRequest" to MATRIX_BY_API.getValue("declarativeNetRequest").note,
         "activeTab" to "Acción manual sobre la pestaña activa desde la ficha NXR tras consentimiento explícito.",
         "clipboardWrite" to "Solo mediante la API web estándar tras un gesto directo del usuario.",
         "clipboardRead" to "Solo tras gesto directo del usuario y permisos web estándar.",
@@ -98,7 +99,7 @@ object ExtensionCompatibility {
     /** Permisos cuya API no existe para terceros en Cefrium 0.21.0. */
     val UNSUPPORTED_PERMS = setOf(
         "tabs", "scripting", "alarms", "contextMenus", "menus", "notifications",
-        "declarativeNetRequest", "declarativeNetRequestWithHostAccess", "declarativeNetRequestFeedback",
+        "declarativeNetRequestWithHostAccess", "declarativeNetRequestFeedback",
         "webNavigation", "webRequest", "webRequestBlocking", "webRequestFilterResponse", "cookies",
         "downloads", "history", "bookmarks", "offscreen", "sidePanel", "identity", "background",
         "debugger", "devtools", "nativeMessaging", "proxy", "privacy", "management",
@@ -189,14 +190,16 @@ object ExtensionCompatibility {
             )
         }
         if (manifest.dnrRulesets.isNotEmpty()) {
-            unsupported += "declarativeNetRequest"
+            limited["declarativeNetRequest"] = MATRIX_BY_API.getValue("declarativeNetRequest").note
             breakdown["declarativeNetRequest"] = MATRIX_BY_API.getValue("declarativeNetRequest")
         }
 
         val runnableScripts = manifest.contentScripts.count { it.js.isNotEmpty() || it.css.isNotEmpty() }
         val unsupportedList = unsupported.toList().sorted()
+        val hasStaticDnr = manifest.manifestVersion == 3 && "declarativeNetRequest" in manifest.permissions &&
+            manifest.dnrRulesets.any { it.enabled }
         val level = when {
-            runnableScripts == 0 -> Level.UNSUPPORTED
+            runnableScripts == 0 && !hasStaticDnr -> Level.UNSUPPORTED
             unsupportedList.isNotEmpty() || limited.isNotEmpty() -> Level.PARTIAL
             else -> Level.FULL
         }

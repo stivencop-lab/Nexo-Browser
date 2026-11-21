@@ -27,24 +27,24 @@ import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 
 /**
- * Sistema de componentes y tokens Nexo UI 7.0 «Liquid Craft»:
+ * Sistema de componentes y tokens Nexo UI 9.0 «Liquid Glass»:
  * Plus Jakarta Sans (400 cuerpo · 500 controles · 600 encabezados a -0.025em) y JetBrains Mono
  * solo para métricas; superficies sin bordes repetitivos, iconos lineales desnudos y radios
  * concéntricos (R_interno = R_externo − padding) con objetivos táctiles de 48dp.
  */
 object NexoUi {
-    /** Tokens unificados de Nexo UI 7.0. */
+    /** Tokens unificados de Nexo UI 9.0. */
     object Tokens {
         /** Hoja inferior: radio superior continuo. */
-        const val RADIUS_SHEET = 34f
+        const val RADIUS_SHEET = NexoTokens.SHEET_RADIUS
         /** Tarjetas agrupadas y miniaturas de pestañas. */
-        const val RADIUS_CARD = 22f
+        const val RADIUS_CARD = NexoTokens.CARD_RADIUS
         /** Squircle de sitios fijados (52×52dp). */
-        const val RADIUS_PINNED = 20f
+        const val RADIUS_PINNED = NexoTokens.CONTROL_RADIUS
         /** Controles internos (segmentos, campos). */
-        const val RADIUS_CONTROL = 14f
+        const val RADIUS_CONTROL = NexoTokens.CONTROL_RADIUS
         /** Píldora total. */
-        const val RADIUS_PILL = 999f
+        const val RADIUS_PILL = NexoTokens.PILL_RADIUS
         const val RADIUS_SM = RADIUS_CONTROL
         const val RADIUS_MD = 16f
 

@@ -64,6 +64,15 @@ object ExtensionStoreResolver {
 
     private val LOCALE_SEGMENT_REGEX = Regex("^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,4})?$")
 
+    /** Only the two HTTPS store origins are eligible for automatic desktop presentation. */
+    internal fun usesStoreDesktopProfile(url: String?): Boolean {
+        if (url == null) return false
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        if (!"https".equals(uri.scheme, true) || uri.rawUserInfo != null || (uri.port != -1 && uri.port != 443)) return false
+        val host = uri.host?.lowercase() ?: return false
+        return (host == "chromewebstore.google.com" || host == "microsoftedge.microsoft.com") && isExtensionStoreUrl(url)
+    }
+
     /**
      * Detecta cualquier página de tienda oficial de extensiones Chromium
      * (Chrome Web Store o Microsoft Edge Add-ons: inicio, búsqueda, categorías o ficha)

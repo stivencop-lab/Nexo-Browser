@@ -47,7 +47,7 @@ class BrowserColorsTest {
         assertEquals(0xFF0E0E11.toInt(), oled.surface)
         assertEquals(0xFF17171C.toInt(), oled.elevated)
         val paper = BrowserColors.create(BrowserColors.MONOCHROME, dark = false)
-        assertEquals(0xFFF6F5F1.toInt(), paper.canvas)
+        assertEquals(0xFFF5F4F0.toInt(), paper.canvas)
         assertEquals(0xFFFFFFFF.toInt(), paper.surface)
         assertEquals(0xFFECEAE4.toInt(), paper.elevated)
         assertEquals(0xFF111113.toInt(), paper.ink)

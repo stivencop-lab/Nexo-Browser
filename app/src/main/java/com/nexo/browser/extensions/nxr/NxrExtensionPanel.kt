@@ -24,6 +24,7 @@ import com.cefrium.CefriumNavigationClient
 import com.cefrium.CefriumNavigationRequest
 import com.cefrium.CefriumProfile
 import com.nexo.browser.DragDismissLayout
+import com.nexo.browser.NexoGlass
 import com.nexo.browser.NexoUi
 import com.nexo.browser.TabManager
 import com.nexo.browser.ThemeManager
@@ -31,6 +32,7 @@ import com.nexo.browser.UiLayout
 import com.nexo.browser.UrlSafety
 import com.nexo.browser.WindowPrivacy
 import com.nexo.browser.engine.cefrium.EngineDiagnostics
+import com.nexo.browser.extensions.CrxPackage
 import com.nexo.browser.extensions.ExtensionManifest
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -42,7 +44,7 @@ import java.io.File
  * (`CefriumProfile.registerContentServer` + `CefriumBrowser.createWithSurface`).
  *
  * Seguridad:
- * - Origen sintético aislado `https://nxr-ui.nexo.invalid` en un perfil independiente (`nexo_nxr_ext_ui`).
+ * - Un origen sintético por extensión en el perfil independiente `nexo_nxr_ext_ui`.
  * - Sirve exclusivamente archivos extraídos dentro de `files/` validando ruta canónica (anti Zip Slip).
  * - Los enlaces web externos se abren en una pestaña normal de Nexo, nunca dentro del panel.
  * - Expone `chrome`/`browser` acotado a un token efímero de sesión de panel (almacenamiento aislado y
@@ -50,23 +52,23 @@ import java.io.File
  */
 object NxrExtensionPanel {
     private const val PROFILE_NAME = "nexo_nxr_ext_ui"
-    private const val PANEL_ORIGIN = "https://nxr-ui.nexo.invalid"
     private var currentDialog: Dialog? = null
-    private var serverRegistered = false
+    private val registeredOrigins = mutableSetOf<String>()
+    private var viewportScript: String? = null
 
-    private fun ensureProfile(context: Context): CefriumProfile? {
+    private fun ensureProfile(context: Context, extensionId: String, origin: String): CefriumProfile? {
         val profile = runCatching { CefriumProfile.get(PROFILE_NAME) }
             .onFailure { EngineDiagnostics.log("NXR panel: perfil no disponible", it) }
             .getOrNull() ?: return null
-        if (!serverRegistered) {
+        if (origin !in registeredOrigins) {
             val rootDir = NxrRuntime.rootDirectory(context)
             val ok = runCatching {
-                profile.registerContentServer(PANEL_ORIGIN, ExtensionFilesServer(rootDir))
+                profile.registerContentServer(origin, ExtensionFilesServer(rootDir, extensionId))
             }.onFailure {
                 EngineDiagnostics.log("NXR panel: servidor de contenido rechazado", it)
             }.isSuccess
             if (!ok) return null
-            serverRegistered = true
+            registeredOrigins.add(origin)
         }
         return profile
     }
@@ -80,7 +82,9 @@ object NxrExtensionPanel {
         val canonicalBase = NxrPackageInstaller.filesDir(rootDir, extId).canonicalPath + File.separator
         if (!targetFile.isFile || !targetFile.canonicalPath.startsWith(canonicalBase)) return false
 
-        val profile = ensureProfile(activity) ?: return false
+        val safeId = NxrStorage.sanitizeId(extId)
+        val panelOrigin = "https://${CrxPackage.sha256Hex(safeId.toByteArray()).take(32)}.nxr-ui.nexo.invalid"
+        val profile = ensureProfile(activity, safeId, panelOrigin) ?: return false
         val web = runCatching { CefriumBrowser.createWithSurface(activity, profile) }
             .onFailure { EngineDiagnostics.log("NXR panel: no se pudo crear navegador", it) }
             .getOrNull() ?: return false
@@ -90,14 +94,8 @@ object NxrExtensionPanel {
         val density = activity.resources.displayMetrics.density
         fun dp(v: Float) = (v * density).toInt()
         val radius = NexoUi.Tokens.RADIUS_SHEET * density
-        val sheetBg = when {
-            p.isAmoled -> 0xFF0C0E13.toInt()
-            p.isDark -> p.surfaceContainer
-            else -> p.surfaceContainerLow
-        }
-
-        val safeId = NxrStorage.sanitizeId(extId)
-        val baseUrl = "$PANEL_ORIGIN/$safeId/"
+        val sheetBg = p.background
+        val baseUrl = "$panelOrigin/$safeId/"
         val startUrl = baseUrl + cleanPage
         val panelToken = NxrRuntime.issuePanelToken(safeId)
         val bootScript = NxrRuntime.buildExtensionUiBootScript(activity, safeId, panelToken, baseUrl)
@@ -105,11 +103,12 @@ object NxrExtensionPanel {
         val dialog = Dialog(activity)
         web.setBackgroundColor(sheetBg)
         web.setDarkMode(ThemeManager.isDark(activity))
-        if (bootScript != null) {
-            runCatching { web.addDocumentStartJavaScript(bootScript, setOf(PANEL_ORIGIN)) }
-        }
+        val adaptation = viewportScript ?: runCatching {
+            activity.assets.open("nexo/nxr-popup-viewport.js").bufferedReader().use { it.readText() }
+        }.getOrDefault("").also { viewportScript = it }
+        runCatching { web.addDocumentStartJavaScript(adaptation + "\n" + bootScript.orEmpty(), setOf(panelOrigin)) }
         web.setQueryHandler(
-            CefriumBrowser.QueryOriginPolicy.exactly(PANEL_ORIGIN),
+            CefriumBrowser.QueryOriginPolicy.exactly(panelOrigin),
             object : CefriumBrowser.QueryHandler {
                 override fun onQuery(queryId: Long, request: String, origin: String, callback: CefriumBrowser.QueryCallback): Boolean =
                     onQuery(queryId, request, origin, true, callback)
@@ -184,7 +183,6 @@ object NxrExtensionPanel {
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(NexoUi.statusPill(activity, "NXR UI", NexoUi.Tone.ACCENT))
         }
 
         val sheet = DragDismissLayout(activity).apply {
@@ -192,7 +190,6 @@ object NxrExtensionPanel {
             dragZonePx = dp(48f)
             background = GradientDrawable().apply {
                 setColor(sheetBg)
-                if (p.isAmoled) setStroke(dp(1f).coerceAtLeast(1), ThemeManager.hairline(p))
                 cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
             }
             outlineProvider = object : ViewOutlineProvider() {
@@ -223,7 +220,8 @@ object NxrExtensionPanel {
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(sheet) { _, insets ->
             val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
             val bottom = maxOf(safe.bottom, insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom)
-            sheet.setPadding(safe.left, 0, safe.right, bottom)
+            val touchPadding = dp(8f)
+            sheet.setPadding(safe.left + touchPadding, 0, safe.right + touchPadding, bottom + touchPadding)
             androidx.core.view.WindowInsetsCompat.CONSUMED
         }
         currentDialog = dialog
@@ -241,22 +239,23 @@ object NxrExtensionPanel {
             navigationBarColor = Color.TRANSPARENT
             setWindowAnimations(android.R.style.Animation_InputMethod)
         }
+        NexoGlass.blurBehind(dialog, activity)
         androidx.core.view.ViewCompat.requestApplyInsets(sheet)
         runCatching { web.onResume(); web.setPageVisible(true) }
         web.loadUrl(startUrl)
         return true
     }
 
-    private class ExtensionFilesServer(private val rootDir: File) : CefriumContentServer {
+    private class ExtensionFilesServer(private val rootDir: File, private val extensionId: String) : CefriumContentServer {
         override fun serve(request: CefriumContentRequest): CefriumContentResponse {
             val rawPath = request.path.orEmpty().removePrefix("/").substringBefore('?').substringBefore('#')
             val slash = rawPath.indexOf('/')
             if (slash <= 0) {
                 return notFound()
             }
-            val extId = runCatching { NxrStorage.sanitizeId(rawPath.substring(0, slash)) }.getOrNull() ?: return notFound()
+            if (rawPath.substring(0, slash) != extensionId) return notFound()
             val relPath = ExtensionManifest.normalizePath(rawPath.substring(slash + 1)) ?: return notFound()
-            val baseDir = NxrPackageInstaller.filesDir(rootDir, extId)
+            val baseDir = NxrPackageInstaller.filesDir(rootDir, extensionId)
             val target = File(baseDir, relPath)
             val canonicalBase = runCatching { baseDir.canonicalPath + File.separator }.getOrNull() ?: return notFound()
             val canonicalTarget = runCatching { target.canonicalPath }.getOrNull() ?: return notFound()

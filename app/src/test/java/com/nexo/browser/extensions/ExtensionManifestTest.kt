@@ -152,7 +152,7 @@ class ExtensionManifestTest {
         assertEquals(ExtensionCompatibility.Level.PARTIAL, partial.level)
         assertEquals(ExtensionCompatibility.InstallVerdict.LIMITED_INSTALLABLE, partial.verdict)
         assertTrue("debugger" in partial.unsupported)
-        assertTrue("declarativeNetRequest" in partial.unsupported)
+        assertTrue("declarativeNetRequest" in partial.limited)
         assertTrue("background.service_worker" in partial.unsupported)
         assertTrue("content_scripts" in partial.limited)
 

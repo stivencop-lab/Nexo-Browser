@@ -13,7 +13,7 @@ import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Miniaturas de pestañas: JPEG pequeño en disco y una caché en memoria.
+ * Miniaturas de pestañas: WebP en disco y una caché en memoria.
  *
  * - Solo se guarda la parte superior de la página (lo que muestra la
  *   tarjeta) en RGB_565: caben cuatro veces más miniaturas en memoria.
@@ -30,7 +30,15 @@ object TabPreviewStore {
     private fun dir(context: Context): File =
         File(context.filesDir, "tab_previews").apply { mkdirs() }
 
-    private fun file(context: Context, id: String) = File(dir(context), "$id.jpg")
+    private fun file(context: Context, id: String) = File(dir(context), "$id.webp")
+    private fun legacyFile(context: Context, id: String) = File(dir(context), "$id.jpg")
+
+    private val webpFormat = if (android.os.Build.VERSION.SDK_INT >= 30) {
+        Bitmap.CompressFormat.WEBP_LOSSY
+    } else {
+        @Suppress("DEPRECATION")
+        Bitmap.CompressFormat.WEBP
+    }
 
     private val io = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
         Thread(task, "NexoPreviews").apply { isDaemon = true }
@@ -39,7 +47,7 @@ object TabPreviewStore {
     private val listeners = CopyOnWriteArrayList<(String) -> Unit>()
 
     private val memoryBytes: Int =
-        (Runtime.getRuntime().maxMemory() / 24L).coerceIn(4L * 1024 * 1024, 16L * 1024 * 1024).toInt()
+        (Runtime.getRuntime().maxMemory() / 10L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
     private val memory = object : LruCache<String, Bitmap>(memoryBytes) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
@@ -59,24 +67,35 @@ object TabPreviewStore {
         memory.put(id, bitmap)
         val app = context.applicationContext
         io.execute {
-            runCatching { file(app, id).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) } }
+            runCatching { write(app, id, bitmap) }
         }
         notify(id)
     }
 
     private fun saveNow(context: Context, id: String, bitmap: Bitmap) {
         runCatching {
-            if (isBlank(bitmap) && (memory.get(id) != null || file(context, id).exists())) {
+            if (isBlank(bitmap) && (memory.get(id) != null || file(context, id).exists() || legacyFile(context, id).exists())) {
                 bitmap.recycle()
                 return
             }
             val thumbnail = thumbnail(bitmap)
             if (thumbnail !== bitmap) bitmap.recycle()
-            file(context, id).outputStream().use {
-                thumbnail.compress(Bitmap.CompressFormat.JPEG, 80, it)
-            }
+            write(context, id, thumbnail)
             memory.put(id, thumbnail)
             notify(id)
+        }
+    }
+
+    private fun write(context: Context, id: String, bitmap: Bitmap) {
+        val file = android.util.AtomicFile(file(context, id))
+        val output = file.startWrite()
+        try {
+            check(bitmap.compress(webpFormat, 80, output))
+            file.finishWrite(output)
+            legacyFile(context, id).delete()
+        } catch (error: Throwable) {
+            file.failWrite(output)
+            throw error
         }
     }
 
@@ -143,10 +162,10 @@ object TabPreviewStore {
 
     private fun load(context: Context, id: String): Bitmap? =
         runCatching {
-            file(context, id).takeIf { it.exists() }?.let {
+            (file(context, id).takeIf { it.exists() } ?: legacyFile(context, id).takeIf { it.exists() })?.let {
                 BitmapFactory.decodeFile(
                     it.absolutePath,
-                    // JPEG sin transparencia: RGB_565 usa la mitad de memoria.
+                    // Miniaturas sin transparencia: RGB_565 usa la mitad de memoria.
                     BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
                 )
             }
@@ -155,7 +174,13 @@ object TabPreviewStore {
     fun remove(context: Context, id: String) {
         memory.remove(id)
         val app = context.applicationContext
-        io.execute { runCatching { file(app, id).delete() } }
+        io.execute {
+            memory.remove(id)
+            runCatching {
+                android.util.AtomicFile(file(app, id)).delete()
+                legacyFile(app, id).delete()
+            }
+        }
     }
 
     fun clear(context: Context) {

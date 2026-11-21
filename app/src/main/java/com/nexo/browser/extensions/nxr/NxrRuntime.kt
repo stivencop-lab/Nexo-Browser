@@ -99,6 +99,7 @@ object NxrRuntime {
         NxrPackageInstaller.cleanupOrphanDirs(dir)
         rootDir = dir
         storage = NxrStorage(dir)
+        DnrBridge.initialize(dir)
         if (shimSource == null) {
             shimSource = runCatching {
                 context.applicationContext.assets.open(SHIM_ASSET).use { it.readBytes().toString(Charsets.UTF_8) }
@@ -175,7 +176,7 @@ object NxrRuntime {
         val policy = NxrPermissions.readPolicy(extDir)
         if (!policy.enabled) return ExtensionCompatibility.LifecycleState.INSTALLED
         val stats = runtimeStatsMap[extId]
-        return if (stats != null && stats.injectionCount > 0L) {
+        return if (stats != null && stats.injectionCount > 0L || DnrBridge.hasBlocked(extId)) {
             ExtensionCompatibility.LifecycleState.RUNNING
         } else {
             ExtensionCompatibility.LifecycleState.ENABLED
@@ -188,6 +189,7 @@ object NxrRuntime {
         if (!extDir.isDirectory) return false
         val updated = NxrPermissions.readPolicy(extDir).copy(enabled = enabled)
         NxrPermissions.writePolicy(extDir, updated)
+        DnrBridge.refresh(dir, extId)
         if (!enabled) {
             revokeGrantsForExtension(extId)
             runtimeStatsMap.remove(extId)
@@ -201,6 +203,7 @@ object NxrRuntime {
         if (!extDir.isDirectory) return false
         val updated = NxrPermissions.readPolicy(extDir).copy(allowInPrivate = allow)
         NxrPermissions.writePolicy(extDir, updated)
+        DnrBridge.refresh(dir, extId)
         if (!allow) revokeGrantsForExtension(extId, onlyPrivate = true)
         return true
     }
@@ -224,6 +227,7 @@ object NxrRuntime {
             )
         }
         NxrPermissions.writePolicy(extDir, next)
+        DnrBridge.refresh(dir, extId)
         if (!allowed) revokeGrantsForExtension(extId, originHost = normalized)
         return true
     }
@@ -233,7 +237,9 @@ object NxrRuntime {
         revokeGrantsForExtension(extId)
         errors.remove(extId)
         runtimeStatsMap.remove(extId)
-        return NxrPackageInstaller.uninstall(dir, extId)
+        return NxrPackageInstaller.uninstall(dir, extId).also {
+            if (it) DnrBridge.refresh(dir, extId)
+        }
     }
 
     /** Revoca inmediatamente las capacidades activas de [extId] (total, privadas o de un host). */
@@ -809,6 +815,7 @@ object NxrRuntime {
             gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, NexoUi.dp(activity, 8f))
         }
+        val dnrRules = DnrBridge.ruleCount(ext.id)
         val stateTone = when (state) {
             ExtensionCompatibility.LifecycleState.RUNNING -> NexoUi.Tone.SUCCESS
             ExtensionCompatibility.LifecycleState.ENABLED -> NexoUi.Tone.INFO
@@ -828,6 +835,7 @@ object NxrRuntime {
             ).apply { marginStart = NexoUi.dp(activity, 8f) }
         )
         body.addView(statusRow)
+        if (dnrRules > 0) body.addView(NexoUi.note(activity, "Reglas DNR estáticas cargadas: $dnrRules"))
 
         if (stats != null && stats.injectionCount > 0L) {
             val fmt = SimpleDateFormat("HH:mm:ss", Locale.US)
@@ -835,7 +843,7 @@ object NxrRuntime {
                 activity,
                 "Ejecuciones reales en esta sesión: ${stats.injectionCount} · Último sitio: ${stats.lastHost} (${fmt.format(Date(stats.lastInjectedAtMs))})"
             ))
-        } else if (policy.enabled) {
+        } else if (policy.enabled && manifest?.contentScripts?.isNotEmpty() == true) {
             body.addView(NexoUi.note(
                 activity,
                 "Habilitada y lista: se inyectará automáticamente al abrir o recargar páginas coincidentes."
