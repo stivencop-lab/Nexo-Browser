@@ -171,6 +171,7 @@ object CefriumEngine : BrowserEngine {
      * se cierran todos antes de transferir el perfil.
      */
     override fun shutdownForTransfer(done: () -> Unit) {
+        SpareRendererPool.clear()
         TabManager.liveSessions().forEach { (it as? CefriumEngineSession)?.releaseBrowser() }
         done()
     }

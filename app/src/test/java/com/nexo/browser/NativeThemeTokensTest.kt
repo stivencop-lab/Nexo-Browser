@@ -19,7 +19,7 @@ class NativeThemeTokensTest {
 
     private fun expected(): String {
         val xml = StringBuilder("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
-            .append("<!-- Nexo UI 7.0 «Liquid Craft». Generado desde BrowserColors.kt por NativeThemeTokensTest. -->\n<resources>\n")
+            .append("<!-- Nexo UI 9.0 «Liquid Glass». Generado desde BrowserColors.kt por NativeThemeTokensTest. -->\n<resources>\n")
         for ((name, seed) in accents) for (dark in listOf(false, true)) {
             val p = BrowserColors.create(seed, dark)
             val roles = listOf(

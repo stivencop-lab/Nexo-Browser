@@ -3,6 +3,8 @@ package com.nexo.browser
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.ColorFilter
 import android.graphics.LinearGradient
@@ -10,6 +12,7 @@ import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.RenderNode
@@ -17,6 +20,7 @@ import android.graphics.Shader
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
 import android.os.Build
+import androidx.annotation.RequiresApi
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewOutlineProvider
@@ -29,17 +33,7 @@ import androidx.dynamicanimation.animation.SpringForce
 import kotlin.math.PI
 import kotlin.math.sin
 
-/**
- * Cristal Líquido de Nexo UI 7.0.
- *
- * - API 31+: si hay un [backdrop] dibujable (vistas nativas, p. ej. la página de inicio), se
- *   graba en un RenderNode con `RenderEffect.createBlurEffect(26, 26, CLAMP)` y se pinta bajo
- *   una capa translúcida (oscuro #141418 · 72 %, Paper #FFFFFF · 78 %).
- * - Sin desenfoque posible (API < 31 o superficie de Chromium): relleno elegante al 92 %.
- * - Borde especular: trazo interior superior de 0.5dp (blanco 22 % oscuro / 95 % Paper) que
- *   se desvanece hacia la mitad, más una elevación suave.
- * - [smoked]: vidrio ahumado discreto para el modo privado.
- */
+/** Tint and refraction over either a native view or the shared Chromium surface capture. */
 class NexoGlassDrawable(
     context: Context,
     private val palette: BrowserPalette,
@@ -54,97 +48,151 @@ class NexoGlassDrawable(
         style = Paint.Style.STROKE
         strokeWidth = (0.5f * density).coerceAtLeast(1f)
     }
+    private val noise = Paint().apply {
+        if (Build.VERSION.SDK_INT < 31) shader = noiseShader
+    }
+    private val sampling = Paint(Paint.FILTER_BITMAP_FLAG)
     private val rect = RectF()
+    private val bitmapBounds = RectF()
     private val clip = Path()
-    private var edgeShaderTop = Float.NaN
-    private var edgeShaderHeight = Float.NaN
-    private var blurNode: RenderNode? = null
+    private val intensity = GlassPreferences.intensity
+    private val blur = if (Build.VERSION.SDK_INT >= 31) BlurNode(intensity.radiusDp * density) else null
     private var backdropView: View? = null
-    private var hostLocation = IntArray(2)
-    private var sourceLocation = IntArray(2)
-
+    private var webBackdrop: NexoGlassBackdrop? = null
+    private var host: View? = null
+    private val hostLocation = IntArray(2)
+    private val sourceLocation = IntArray(2)
+    private var nativeDirty = true
     var smoked: Boolean = smoked
-        set(value) { if (field != value) { field = value; edge.shader = null; invalidateSelf() } }
+        set(value) { if (field != value) { field = value; updateEdge(); invalidateSelf() } }
 
-    /** Vista nativa situada detrás del cristal que se desenfoca en tiempo real (API 31+). */
-    fun setBackdrop(view: View?) {
-        if (backdropView === view) return
+    fun setBackdrop(view: View?, chrome: View? = null) {
+        if (backdropView === view && host === chrome) return
         backdropView = view
-        if (view == null) blurNode = null
+        host = chrome
+        markBackdropDirty()
+    }
+
+    internal fun setWebBackdrop(backdrop: NexoGlassBackdrop?, viewport: View, chrome: View) {
+        webBackdrop = backdrop
+        backdropView = viewport
+        host = chrome
+        markBackdropDirty()
+    }
+
+    internal fun markBackdropDirty() {
+        nativeDirty = true
         invalidateSelf()
     }
 
-    private val blurring: Boolean
-        get() = Build.VERSION.SDK_INT >= 31 && backdropView?.let { it.isAttachedToWindow && it.visibility == View.VISIBLE && it.width > 0 } == true
+    override fun onBoundsChange(bounds: Rect) {
+        super.onBoundsChange(bounds)
+        rect.set(bounds)
+        val r = radius.coerceAtMost(rect.height() / 2f)
+        clip.reset()
+        clip.addRoundRect(rect, r, r, Path.Direction.CW)
+        nativeDirty = true
+        updateEdge()
+    }
 
-    private fun fillColor(): Int {
-        val alpha = if (blurring) (if (palette.isDark) 0.72f else 0.78f) else 0.92f
-        val base = when {
-            smoked && palette.isDark -> 0xFF050507.toInt()
-            smoked -> 0xFFDAD8D1.toInt()
-            palette.isDark -> 0xFF141418.toInt()
-            else -> 0xFFFFFFFF.toInt()
-        }
-        val oledBase = if (palette.isAmoled && !smoked) 0xFF0E0E11.toInt() else base
-        return ColorUtils.setAlphaComponent(oledBase, (alpha * 255).toInt())
+    private fun updateEdge() {
+        if (rect.isEmpty || !specularTop) return
+        val upper = if (palette.isDark) (if (smoked) 0x26FFFFFF else 0x61FFFFFF) else 0xE0FFFFFF.toInt()
+        val lower = if (palette.isDark) 0x1CFFFFFF else 0x210D0803
+        edge.shader = LinearGradient(0f, rect.top, 0f, rect.bottom,
+            intArrayOf(upper, 0x00FFFFFF, 0x00FFFFFF, lower),
+            floatArrayOf(0f, 0.40f, 0.75f, 1f), Shader.TileMode.CLAMP)
     }
 
     override fun draw(canvas: Canvas) {
-        val b = bounds
-        if (b.isEmpty) return
-        rect.set(b)
-        val r = radius.coerceAtMost(rect.height() / 2f)
-        if (blurring && canvas.isHardwareAccelerated) drawBackdrop(canvas, r)
-        fill.color = fillColor()
-        canvas.drawRoundRect(rect, r, r, fill)
-        if (specularTop) {
-            val top = if (palette.isDark) (if (smoked) 0x26FFFFFF else ColorUtils.setAlphaComponent(0xFFFFFFFF.toInt(), 56))
-            else ColorUtils.setAlphaComponent(0xFFFFFFFF.toInt(), 242)
-            // El degradado solo se crea de nuevo si cambia el tamaño (no en cada fotograma).
-            if (edge.shader == null || edgeShaderTop != rect.top || edgeShaderHeight != rect.height()) {
-                edge.shader = LinearGradient(0f, rect.top, 0f, rect.top + rect.height() * 0.55f,
-                    top, 0x00FFFFFF, Shader.TileMode.CLAMP)
-                edgeShaderTop = rect.top
-                edgeShaderHeight = rect.height()
-            }
-            val inset = edge.strokeWidth / 2f
-            canvas.drawRoundRect(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset, r, r, edge)
+        if (rect.isEmpty) return
+        val blurred = drawBackdrop(canvas)
+        val base = when {
+            smoked && palette.isDark -> 0xFF050507.toInt()
+            smoked -> 0xFFDAD8D1.toInt()
+            palette.isAmoled -> NexoTokens.OLED
+            palette.isDark -> 0xFF141418.toInt()
+            else -> NexoTokens.PAPER
         }
-        if (!palette.isDark) {
-            // Paper: el cristal blanco sobre páginas blancas necesita un contorno casi invisible.
-            val shader = edge.shader
-            edge.shader = null
-            edge.color = ColorUtils.setAlphaComponent(palette.text, 16)
+        val alpha = when {
+            !blurred -> 235
+            palette.isDark -> 143
+            else -> 184
+        }
+        val r = radius.coerceAtMost(rect.height() / 2f)
+        fill.color = ColorUtils.setAlphaComponent(base, alpha)
+        canvas.drawRoundRect(rect, r, r, fill)
+        if (blurred && noise.shader != null) canvas.drawRoundRect(rect, r, r, noise)
+        if (specularTop) {
             val inset = edge.strokeWidth / 2f
             canvas.drawRoundRect(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset, r, r, edge)
-            edge.shader = shader
         }
     }
 
-    private fun drawBackdrop(canvas: Canvas, r: Float) {
-        if (Build.VERSION.SDK_INT < 31) return
-        val source = backdropView ?: return
-        val host = callback as? View ?: return
-        // Evita recursión si el cristal vive dentro de su propio fondo.
-        var parent = host.parent
-        while (parent != null) { if (parent === source) return; parent = parent.parent }
-        val node = blurNode ?: RenderNode("nexo-glass").also {
-            it.setRenderEffect(RenderEffect.createBlurEffect(26f, 26f, Shader.TileMode.CLAMP))
-            blurNode = it
-        }
-        node.setPosition(0, 0, source.width, source.height)
-        val recording = node.beginRecording()
-        source.draw(recording)
-        node.endRecording()
-        host.getLocationInWindow(hostLocation)
+    private fun drawBackdrop(canvas: Canvas): Boolean {
+        val source = backdropView ?: return false
+        val chrome = host ?: (callback as? View) ?: return false
+        if (!source.isAttachedToWindow || source.visibility != View.VISIBLE || source.width <= 0 || source.height <= 0) return false
+        val web = webBackdrop
+        val bitmap = web?.bitmap
+        if (web != null && bitmap == null || bitmap == null && (blur == null || !canvas.isHardwareAccelerated)) return false
+        chrome.getLocationInWindow(hostLocation)
         source.getLocationInWindow(sourceLocation)
+        val dx = sourceLocation[0] - hostLocation[0]
+        val dy = sourceLocation[1] - hostLocation[1]
         val save = canvas.save()
-        clip.reset()
-        clip.addRoundRect(rect, r, r, Path.Direction.CW)
         canvas.clipPath(clip)
-        canvas.translate((sourceLocation[0] - hostLocation[0]).toFloat(), (sourceLocation[1] - hostLocation[1]).toFloat())
-        canvas.drawRenderNode(node)
+        if (Build.VERSION.SDK_INT >= 31 && canvas.isHardwareAccelerated && blur != null) {
+            blur.draw(canvas, source, bitmap, sampling, bitmapBounds, dx, dy, rect,
+                web?.version ?: 0, nativeDirty || (web == null && source.isDirty))
+        } else if (bitmap != null) {
+            bitmapBounds.set(dx.toFloat(), dy.toFloat(), (dx + source.width).toFloat(), (dy + source.height).toFloat())
+            canvas.drawBitmap(bitmap, null, bitmapBounds, sampling)
+        }
+        nativeDirty = false
         canvas.restoreToCount(save)
+        return true
+    }
+
+    @RequiresApi(31)
+    private class BlurNode(radiusPx: Float) {
+        private val node = RenderNode("NexoGlass").apply {
+            setRenderEffect(RenderEffect.createBlurEffect(radiusPx, radiusPx, Shader.TileMode.CLAMP))
+        }
+        private val padding = (radiusPx * 2f).toInt()
+        private var x = Int.MIN_VALUE
+        private var y = Int.MIN_VALUE
+        private var version = -1L
+        private var sourceWidth = 0
+        private var sourceHeight = 0
+
+        fun draw(canvas: Canvas, source: View, bitmap: Bitmap?, sampling: Paint, bitmapBounds: RectF, dx: Int, dy: Int,
+                 rect: RectF, frameVersion: Long, dirty: Boolean) {
+            val left = rect.left.toInt() - padding
+            val top = rect.top.toInt() - padding
+            val resized = node.setPosition(left, top, rect.right.toInt() + padding, rect.bottom.toInt() + padding)
+            if (dirty || resized || !node.hasDisplayList() || x != dx || y != dy || version != frameVersion ||
+                sourceWidth != source.width || sourceHeight != source.height) {
+                x = dx
+                y = dy
+                version = frameVersion
+                sourceWidth = source.width
+                sourceHeight = source.height
+                val recording = node.beginRecording()
+                try {
+                    recording.translate((dx - left).toFloat(), (dy - top).toFloat())
+                    if (bitmap != null) {
+                        bitmapBounds.set(0f, 0f, sourceWidth.toFloat(), sourceHeight.toFloat())
+                        recording.drawBitmap(bitmap, null, bitmapBounds, sampling)
+                    } else {
+                        source.draw(recording)
+                    }
+                } finally {
+                    node.endRecording()
+                }
+            }
+            canvas.drawRenderNode(node)
+        }
     }
 
     override fun getOutline(outline: Outline) {
@@ -155,8 +203,21 @@ class NexoGlassDrawable(
 
     override fun setAlpha(alpha: Int) { fill.alpha = alpha; invalidateSelf() }
     override fun setColorFilter(colorFilter: ColorFilter?) { fill.colorFilter = colorFilter; invalidateSelf() }
+
     @Deprecated("Deprecated in Java")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+
+    private companion object {
+        val noiseShader by lazy {
+            val random = java.util.Random(90L)
+            val speckles = IntArray(32 * 32) {
+                val alpha = random.nextInt(6) shl 24
+                if (random.nextBoolean()) alpha or 0x00FFFFFF else alpha
+            }
+            BitmapShader(Bitmap.createBitmap(speckles, 32, 32, Bitmap.Config.ARGB_8888),
+                Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+        }
+    }
 }
 
 /** Utilidades de material: elevación suave, sombra Paper y desenfoque de ventanas. */
@@ -191,18 +252,22 @@ object NexoGlass {
         if (Build.VERSION.SDK_INT < 31) return
         val listener = ViewTreeObserver.OnPreDrawListener {
             @Suppress("DEPRECATION")
-            if (backdrop.visibility == View.VISIBLE && backdrop.isDirty) glass.invalidate()
+            if (backdrop.visibility == View.VISIBLE && backdrop.isDirty) {
+                (glass.background as? NexoGlassDrawable)?.markBackdropDirty()
+                glass.invalidate()
+            }
             true
         }
         glass.viewTreeObserver.addOnPreDrawListener(listener)
     }
 
     /** Hoja sobre la web: desenfoque real de lo que hay detrás (incluida la superficie de Chromium). */
-    fun blurBehind(dialog: Dialog, activity: Activity, radiusDp: Float = 26f) {
+    fun blurBehind(dialog: Dialog, activity: Activity, radiusDp: Float = GlassPreferences.intensity.radiusDp) {
         if (Build.VERSION.SDK_INT < 31) return
         val window = dialog.window ?: return
         val wm = activity.getSystemService(WindowManager::class.java) ?: return
         if (!wm.isCrossWindowBlurEnabled) return
+        window.setBackgroundBlurRadius((radiusDp * activity.resources.displayMetrics.density).toInt())
         window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
         window.attributes = window.attributes.apply {
             blurBehindRadius = (radiusDp * activity.resources.displayMetrics.density).toInt()
@@ -258,25 +323,20 @@ object NexoMotion {
 /**
  * Nexo Aperture: dos arcos concéntricos entrelazados (trazo 1.7dp, extremos redondos)
  * alrededor de un punto central que respira suavemente durante el streaming.
- * Sustituye a la chispa de 4 puntas: ninguna estética de "IA mágica".
  */
 class NexoApertureDrawable(context: Context, sizeDp: Float = 20f) : Drawable(), Animatable {
     private val density = context.resources.displayMetrics.density
     private val size = (sizeDp * density).toInt()
-    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 1.7f * density
-        strokeCap = Paint.Cap.ROUND
-    }
+    private val arcs = context.getDrawable(R.drawable.ic_nexo_aperture_arcs)!!.mutate()
     private val core = Paint(Paint.ANTI_ALIAS_FLAG)
     private val status = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val oval = RectF()
+    private var drawingAlpha = 255
     private var dotColor: Int? = null
     private var running = false
     private var startedAt = 0L
 
     fun setColor(color: Int) {
-        stroke.color = color
+        arcs.setTint(color)
         core.color = color
         invalidateSelf()
     }
@@ -295,15 +355,9 @@ class NexoApertureDrawable(context: Context, sizeDp: Float = 20f) : Drawable(), 
         val unit = minOf(b.width(), b.height()) / 24f
         val phase = if (running) ((SystemClock.uptimeMillis() - startedAt) % 1800L) / 1800f else 0f
         val breathe = if (running) (0.5f + 0.5f * sin(phase * 2f * PI.toFloat())) else 0f
-        // Arco exterior: 270° abiertos arriba a la derecha; arco interior: 220° opuesto.
-        val outer = 8.4f * unit
-        oval.set(cx - outer, cy - outer, cx + outer, cy + outer)
-        canvas.drawArc(oval, -30f + phase * 360f * 0.08f, 270f, false, stroke)
-        val inner = 4.6f * unit
-        oval.set(cx - inner, cy - inner, cx + inner, cy + inner)
-        canvas.drawArc(oval, 150f - phase * 360f * 0.08f, 220f, false, stroke)
+        arcs.draw(canvas)
         val coreR = (1.55f + 0.55f * breathe) * unit
-        core.alpha = (255 * (0.78f + 0.22f * breathe)).toInt()
+        core.alpha = (drawingAlpha * (0.78f + 0.22f * breathe)).toInt()
         canvas.drawCircle(cx, cy, coreR, core)
         dotColor?.let {
             status.color = it
@@ -311,6 +365,13 @@ class NexoApertureDrawable(context: Context, sizeDp: Float = 20f) : Drawable(), 
             canvas.drawCircle(b.right - r - 0.4f * unit, b.top + r + 0.4f * unit, r, status)
         }
         if (running) invalidateSelf()
+    }
+
+    override fun onBoundsChange(bounds: Rect) {
+        val side = minOf(bounds.width(), bounds.height())
+        val left = bounds.left + (bounds.width() - side) / 2
+        val top = bounds.top + (bounds.height() - side) / 2
+        arcs.setBounds(left, top, left + side, top + side)
     }
 
     override fun start() {
@@ -322,8 +383,8 @@ class NexoApertureDrawable(context: Context, sizeDp: Float = 20f) : Drawable(), 
 
     override fun stop() { running = false; invalidateSelf() }
     override fun isRunning() = running
-    override fun setAlpha(alpha: Int) { stroke.alpha = alpha; core.alpha = alpha }
-    override fun setColorFilter(colorFilter: ColorFilter?) { stroke.colorFilter = colorFilter; core.colorFilter = colorFilter }
+    override fun setAlpha(alpha: Int) { drawingAlpha = alpha; arcs.alpha = alpha; invalidateSelf() }
+    override fun setColorFilter(colorFilter: ColorFilter?) { arcs.colorFilter = colorFilter; core.colorFilter = colorFilter }
     @Deprecated("Deprecated in Java")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }

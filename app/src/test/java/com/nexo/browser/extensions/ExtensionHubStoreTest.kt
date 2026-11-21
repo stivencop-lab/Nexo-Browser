@@ -314,4 +314,13 @@ class ExtensionHubStoreTest {
         assertEquals("1.2.0", stillInstalled.version)
         assertEquals("sepia", storage.get(extId, "theme").optString("theme"))
     }
+    @Test fun automaticDesktopModeUsesOnlyTheTwoHttpsStoreOrigins() {
+        assertTrue(ExtensionStoreResolver.usesStoreDesktopProfile("https://chromewebstore.google.com/detail/example"))
+        assertTrue(ExtensionStoreResolver.usesStoreDesktopProfile("https://microsoftedge.microsoft.com/es-es/addons/"))
+        assertFalse(ExtensionStoreResolver.usesStoreDesktopProfile("http://chromewebstore.google.com/"))
+        assertFalse(ExtensionStoreResolver.usesStoreDesktopProfile("https://chromewebstore.google.com:8443/"))
+        assertFalse(ExtensionStoreResolver.usesStoreDesktopProfile("https://chrome.google.com/webstore/"))
+        assertFalse(ExtensionStoreResolver.usesStoreDesktopProfile("https://chromewebstore.google.com.example.net/"))
+        assertFalse(ExtensionStoreResolver.usesStoreDesktopProfile("https://microsoftedge.microsoft.com/welcome"))
+    }
 }

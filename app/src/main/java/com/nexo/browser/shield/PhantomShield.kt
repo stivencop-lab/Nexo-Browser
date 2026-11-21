@@ -378,10 +378,16 @@ object PhantomShield {
             val url = request.url ?: return false
             if (!url.startsWith("http://") && !url.startsWith("https://")) return false
             if (request.isMainFrame) tab?.onMainFrame(url)
-            if (!started || !enabled) return forget(url)
             val type = ShieldPolicy.typeFromEngine(request.type?.name.orEmpty(), url)
             val top = request.topLevelUrl?.takeIf { it.isNotEmpty() } ?: tab?.topUrl ?: url
             val document = request.documentUrl?.takeIf { it.isNotEmpty() } ?: top
+            if (tab != null && !request.isMainFrame &&
+                com.nexo.browser.extensions.nxr.DnrBridge.blocks(url, document, top, type, request.method.orEmpty(), tab.isPrivate)) {
+                forget(url)
+                recordBlocked(tab)
+                return true
+            }
+            if (!started || !enabled) return forget(url)
             val topHost = UrlParts.host(top)
             val cacheKey = if (!request.isMainFrame && url.length <= 320) "$type|${topHost.orEmpty()}|$url" else null
             val cached = cacheKey?.let { decisionCache.get(it) }

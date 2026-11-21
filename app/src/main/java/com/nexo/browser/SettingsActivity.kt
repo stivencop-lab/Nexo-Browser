@@ -449,6 +449,34 @@ class SettingsActivity : Activity() {
         navCard.addView(chromeHolder, navIdx, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             bottomMargin = NexoUi.dp(this@SettingsActivity, 6f)
         })
+        val glassLabel = TextView(this).apply {
+            text = "Intensidad del cristal"
+            textSize = 14f
+            tag = "muted"
+            setPadding(0, NexoUi.dp(this@SettingsActivity, 6f), 0, NexoUi.dp(this@SettingsActivity, 8f))
+        }
+        val glassHolder = android.widget.FrameLayout(this)
+        fun renderGlass() {
+            glassHolder.removeAllViews()
+            glassHolder.addView(NexoUi.segmented(this,
+                GlassIntensity.entries.map { it.name to it.label },
+                GlassPreferences.intensity.name) {
+                GlassPreferences.set(this, GlassIntensity.valueOf(it))
+            })
+        }
+        renderGlass()
+        val glassListener = ::renderGlass
+        glassHolder.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) {
+                GlassPreferences.addListener(glassListener)
+                renderGlass()
+            }
+            override fun onViewDetachedFromWindow(view: View) {
+                GlassPreferences.removeListener(glassListener)
+            }
+        })
+        navCard.addView(glassLabel, navIdx + 1)
+        navCard.addView(glassHolder, navIdx + 2)
         navTitle?.text = "Dock clásico"
         // Inicio minimalista, junto a la barra (sin subtítulo).
         navCard.addView(NexoUi.switchRow(this, "Inicio minimalista", null, BrowserPrefs.minimalStart(this)) {

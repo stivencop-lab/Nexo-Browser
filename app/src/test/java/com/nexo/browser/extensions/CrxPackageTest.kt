@@ -68,7 +68,8 @@ class CrxPackageTest {
         if (extra != null) {
             header += field(2, field(1, extra.public.encoded) + field(2, sign("SHA256withRSA", extra, signedHeader, archive)))
         }
-        header += field(10000, signedHeader)
+        // Modern headers can contain fields this version of the reader does not know.
+        header += field(99, byteArrayOf(1, 2, 3)) + field(10000, signedHeader)
         val body = archive.copyOf().also { if (corruptAfterSigning) it[it.size / 2] = (it[it.size / 2] + 1).toByte() }
         return folder.newFile().apply {
             writeBytes("Cr24".toByteArray() + CrxPackage.u32le(3) + CrxPackage.u32le(header.size.toLong()) + header + body)

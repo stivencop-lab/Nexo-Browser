@@ -57,8 +57,8 @@ data class BrowserPalette(
 }
 
 /**
- * Nexo UI 7.0 «Liquid Craft»: tres materiales neutros puros (Obsidian, OLED y Paper)
- * y cinco acentos adultos. Ningún neutro se tiñe con el acento: la marca vive solo
+ * Nexo UI 9.0 «Liquid Glass»: tres materiales neutros puros (Obsidian, OLED y Paper)
+ * y acentos editoriales. Ningún neutro se tiñe con el acento: la marca vive solo
  * en controles activos. Todos los roles de texto se corrigen en tono HCT hasta
  * cumplir WCAG AA sobre cada superficie, y la tinta principal cumple AAA.
  */
@@ -66,12 +66,12 @@ object BrowserColors {
     /** Valor centinela: el acento Monocromo usa la propia tinta del tema. */
     const val MONOCHROME = 0x00000000
     const val SIGNAL = 0xFF2563EB.toInt()
-    const val COBALT = 0xFF3B82F6.toInt()
-    const val ORANGE = 0xFFF97316.toInt()
-    const val SAGE = 0xFF16A34A.toInt()
+    const val COBALT = NexoTokens.COBALT
+    const val ORANGE = NexoTokens.VERMILION
+    const val SAGE = NexoTokens.SAGE
 
     /** Acentos ofrecidos por Configuración, en orden de presentación. */
-    val ACCENTS = listOf(MONOCHROME, SIGNAL, COBALT, ORANGE, SAGE)
+    val ACCENTS = listOf(MONOCHROME, COBALT, ORANGE, SAGE)
 
     const val INK_DARK = 0xFFF4F4F5.toInt()
     const val INK_PAPER = 0xFF111113.toInt()
@@ -83,20 +83,20 @@ object BrowserColors {
     )
 
     private val OBSIDIAN = Neutrals(
-        canvas = 0xFF09090B.toInt(), surface = 0xFF131316.toInt(), container = 0xFF17171A.toInt(),
+        canvas = NexoTokens.OBSIDIAN, surface = 0xFF131316.toInt(), container = 0xFF17171A.toInt(),
         elevated = 0xFF1B1B20.toInt(), highest = 0xFF232329.toInt(),
         ink = INK_DARK, muted = 0xFF8E8E98.toInt(), outline = 0xFF3A3A42.toInt(), outlineVariant = 0xFF2E2E35.toInt(),
         divider = 0x0FFFFFFF, glass = 0xB8141418.toInt(), glassEdge = 0x38FFFFFF
     )
     private val OLED = Neutrals(
-        canvas = 0xFF000000.toInt(), surface = 0xFF0E0E11.toInt(), container = 0xFF121215.toInt(),
+        canvas = NexoTokens.OLED, surface = 0xFF0E0E11.toInt(), container = 0xFF121215.toInt(),
         elevated = 0xFF17171C.toInt(), highest = 0xFF1F1F25.toInt(),
         ink = INK_DARK, muted = 0xFF8E8E98.toInt(), outline = 0xFF3A3A42.toInt(), outlineVariant = 0xFF2E2E35.toInt(),
         divider = 0x12FFFFFF, glass = 0xC70E0E11.toInt(), glassEdge = 0x38FFFFFF
     )
     // Paper: muted #6E6E77 del brief baja a 4.1:1 sobre #ECEAE4; #64646D conserva el gris cálido y cumple AA.
     private val PAPER = Neutrals(
-        canvas = 0xFFF6F5F1.toInt(), surface = 0xFFFFFFFF.toInt(), container = 0xFFF1F0EB.toInt(),
+        canvas = NexoTokens.PAPER, surface = 0xFFFFFFFF.toInt(), container = 0xFFF1F0EB.toInt(),
         elevated = 0xFFECEAE4.toInt(), highest = 0xFFE4E2DB.toInt(),
         ink = INK_PAPER, muted = 0xFF64646D.toInt(), outline = 0xFFC9C7C0.toInt(), outlineVariant = 0xFFDEDCD5.toInt(),
         divider = 0x12111113, glass = 0xC7FFFFFF.toInt(), glassEdge = 0xF2FFFFFF.toInt()

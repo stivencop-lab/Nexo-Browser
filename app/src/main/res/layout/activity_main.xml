@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Nexo UI 7.0 «Liquid Craft»: lienzo web edge-to-edge con cromo flotante de cristal.
+  Nexo UI 9.0 «Liquid Glass»: lienzo web edge-to-edge con cromo flotante de cristal.
   Capas (de abajo arriba): página → velo de barra de estado → avisos superiores → cromo inferior.
   MainActivity reparte los insets: nada se rellena dos veces.
 -->
@@ -312,90 +312,110 @@
                     android:src="@drawable/ic_nav_back"
                     android:visibility="gone" />
 
-                <!-- Píldora de cristal: [candado sutil] dominio [recargar]. -->
                 <LinearLayout
-                    android:id="@+id/omniboxCapsule"
+                    android:id="@+id/chromeIsland"
                     android:layout_width="0dp"
-                    android:layout_height="@dimen/chrome_pill_height"
+                    android:layout_height="56dp"
                     android:layout_weight="1"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:paddingStart="4dp"
-                    android:paddingEnd="4dp">
-
-                    <ImageButton
-                        android:id="@+id/tabToolsButton"
-                        android:layout_width="40dp"
-                        android:layout_height="@dimen/touch_target"
-                        android:contentDescription="Control del sitio, permisos, red e identidad Burner"
-                        android:scaleType="center"
-                        android:src="@drawable/ic_lock" />
-
-                    <EditText
-                        android:id="@+id/omnibox"
+                    android:orientation="horizontal">
+                    <!-- Píldora de cristal: [candado sutil] dominio [recargar]. -->
+                    <LinearLayout
+                        android:id="@+id/omniboxCapsule"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_weight="1"
-                        android:background="@null"
-                        android:ellipsize="end"
                         android:gravity="center_vertical"
-                        android:hint="@string/omnibox_hint"
-                        android:imeOptions="actionGo"
-                        android:importantForAutofill="no"
-                        android:inputType="textUri"
-                        android:maxLines="1"
-                        android:minHeight="@dimen/touch_target"
-                        android:paddingStart="0dp"
-                        android:paddingEnd="4dp"
-                        android:selectAllOnFocus="true"
-                        android:singleLine="true"
-                        android:textSize="15sp" />
+                        android:orientation="horizontal"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp">
 
-                    <Button
-                        android:id="@+id/clearOmniboxButton"
-                        android:layout_width="40dp"
-                        android:layout_height="@dimen/touch_target"
-                        android:contentDescription="@string/clear_address"
-                        android:gravity="center"
-                        android:minWidth="0dp"
-                        android:minHeight="@dimen/touch_target"
-                        android:padding="0dp"
-                        android:text="×"
-                        android:textAllCaps="false"
-                        android:textSize="20sp"
-                        android:visibility="gone" />
+                        <ImageButton
+                            android:id="@+id/tabToolsButton"
+                            android:layout_width="40dp"
+                            android:layout_height="@dimen/touch_target"
+                            android:contentDescription="Control del sitio, permisos, red e identidad Burner"
+                            android:scaleType="center"
+                            android:src="@drawable/ic_lock" />
 
-                    <ImageButton
-                        android:id="@+id/pillReloadButton"
-                        android:layout_width="40dp"
-                        android:layout_height="@dimen/touch_target"
-                        android:contentDescription="Recargar"
-                        android:scaleType="center"
-                        android:src="@drawable/ic_nav_reload" />
+                        <EditText
+                            android:id="@+id/omnibox"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@null"
+                            android:ellipsize="end"
+                            android:gravity="center_vertical"
+                            android:hint="@string/omnibox_hint"
+                            android:imeOptions="actionGo"
+                            android:importantForAutofill="no"
+                            android:inputType="textUri"
+                            android:maxLines="1"
+                            android:minHeight="@dimen/touch_target"
+                            android:paddingStart="0dp"
+                            android:paddingEnd="4dp"
+                            android:selectAllOnFocus="true"
+                            android:singleLine="true"
+                            android:textSize="15sp" />
+
+                        <Button
+                            android:id="@+id/clearOmniboxButton"
+                            android:layout_width="40dp"
+                            android:layout_height="@dimen/touch_target"
+                            android:contentDescription="@string/clear_address"
+                            android:gravity="center"
+                            android:minWidth="0dp"
+                            android:minHeight="@dimen/touch_target"
+                            android:padding="0dp"
+                            android:text="×"
+                            android:textAllCaps="false"
+                            android:textSize="20sp"
+                            android:visibility="gone" />
+
+                        <ImageButton
+                            android:id="@+id/pillReloadButton"
+                            android:layout_width="40dp"
+                            android:layout_height="@dimen/touch_target"
+                            android:contentDescription="Recargar"
+                            android:scaleType="center"
+                            android:src="@drawable/ic_nav_reload" />
+                    </LinearLayout>
+
+                    <!-- Clúster de cristal desacoplado: [Nexo Aperture] [•••]. -->
+                    <LinearLayout
+                        android:id="@+id/chromeCluster"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="2dp"
+                        android:paddingEnd="2dp">
+
+                        <ImageButton
+                            android:id="@+id/aiButton"
+                            android:layout_width="44dp"
+                            android:layout_height="@dimen/touch_target"
+                            android:contentDescription="@string/nexo_ai_action"
+                            android:scaleType="center" />
+
+                        <Button
+                            android:id="@+id/menuButton"
+                            android:layout_width="44dp"
+                            android:layout_height="@dimen/touch_target"
+                            android:contentDescription="@string/open_menu"
+                            android:gravity="center"
+                            android:minWidth="0dp"
+                            android:minHeight="@dimen/touch_target"
+                            android:padding="0dp"
+                            android:text="" />
+                    </LinearLayout>
                 </LinearLayout>
 
-                <!-- Clúster de cristal desacoplado: [Nexo Aperture] [pestañas] [•••]. -->
-                <LinearLayout
-                    android:id="@+id/chromeCluster"
-                    android:layout_width="wrap_content"
-                    android:layout_height="@dimen/chrome_pill_height"
-                    android:layout_marginStart="8dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:paddingStart="2dp"
-                    android:paddingEnd="2dp">
-
-                    <ImageButton
-                        android:id="@+id/aiButton"
-                        android:layout_width="44dp"
-                        android:layout_height="@dimen/touch_target"
-                        android:contentDescription="@string/nexo_ai_action"
-                        android:scaleType="center" />
-
-                    <Button
+                <Button
                         android:id="@+id/tabButton"
-                        android:layout_width="44dp"
-                        android:layout_height="@dimen/touch_target"
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:layout_marginStart="8dp"
                         android:contentDescription="@string/open_tabs"
                         android:gravity="center"
                         android:minWidth="0dp"
@@ -404,21 +424,9 @@
                         android:text="1"
                         android:textAllCaps="false"
                         android:textSize="11sp" />
-
-                    <Button
-                        android:id="@+id/menuButton"
-                        android:layout_width="44dp"
-                        android:layout_height="@dimen/touch_target"
-                        android:contentDescription="@string/open_menu"
-                        android:gravity="center"
-                        android:minWidth="0dp"
-                        android:minHeight="@dimen/touch_target"
-                        android:padding="0dp"
-                        android:text="" />
-                </LinearLayout>
             </com.nexo.browser.GestureDock>
 
-            <!-- Scroll Compacto: mini-píldora centrada de 34dp (objetivo táctil de 48dp). -->
+            <!-- Scroll Compacto: mini-píldora centrada de 32dp (objetivo táctil de 48dp). -->
             <LinearLayout
                 android:id="@+id/miniPill"
                 android:layout_width="wrap_content"

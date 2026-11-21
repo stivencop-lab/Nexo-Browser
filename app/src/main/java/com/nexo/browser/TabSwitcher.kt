@@ -1021,6 +1021,7 @@ private class TabCardAdapter(
             ).apply { marginEnd = dp(5f) })
         }
         if (active && !grid) addBadge("Activa", NexoUi.Tone.ACCENT)
+        if (tab.isFrozen) addBadge("Suspendida", NexoUi.Tone.NEUTRAL)
         if (tab.pinned) addBadge("Fijada", NexoUi.Tone.INFO)
         if (tab.burnerId != null) addBadge("Burner", NexoUi.Tone.WARNING)
         if (dupCount >= 2) addBadge("×$dupCount", NexoUi.Tone.WARNING)

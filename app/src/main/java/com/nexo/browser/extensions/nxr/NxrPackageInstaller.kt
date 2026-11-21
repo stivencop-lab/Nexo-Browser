@@ -396,6 +396,7 @@ object NxrPackageInstaller {
                 }
                 throw swapErr
             }
+            DnrBridge.refresh(rootDir, id)
             return installed
         } catch (t: Throwable) {
             staging.deleteRecursively()

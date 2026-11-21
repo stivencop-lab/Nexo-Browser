@@ -41,6 +41,7 @@ class NexoApplication : Application() {
         }
         if (!isMainProcess()) return
         AppContext.initialize(this)
+        GlassPreferences.initialize(this)
         CrashLog.install(this)
         MigrationMode.initialize(this)
         if (!MigrationMode.cold) BrowserPrefs.purgeLegacyKeys(this)
@@ -52,6 +53,7 @@ class NexoApplication : Application() {
             StrictMode.setThreadPolicy(
                 StrictMode.ThreadPolicy.Builder()
                     .detectAll()
+                    .penaltyDeathOnNetwork()
                     .penaltyLog()
                     .build()
             )
@@ -68,6 +70,7 @@ class NexoApplication : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (!isMainProcess()) return
+        if (level >= 10) com.nexo.browser.engine.cefrium.SpareRendererPool.clear()
         TabManager.onTrimMemory(level)
         SiteIconStore.trimMemory(level)
         RemoteImageLoader.trimMemory(level)
