@@ -108,7 +108,9 @@ La última release firmada publicada desde `main` es **Nexo Browser v0.39.1** (`
 - [Descargar `SHA256SUMS.txt`](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.1/SHA256SUMS.txt)
 - [Ver release v0.39.1](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.39.1)
 
-Hashes SHA-256: ver `SHA256SUMS.txt` de la release `v0.39.1`.
+Hashes SHA-256 verificados en la release `v0.39.1`:
+- `Nexo-v0.39.1-arm64-v8a.apk`: `acec47c80dc3fe442436866f368ce256df182af0a71d4e6bf1e5bf39c24b437b`
+- `Nexo-v0.39.1-armeabi-v7a.apk`: `05450a2d5309bbc3507387a30ea9ba8ed0d57f48b87b9674b0ed5deb28018695`
 
 ---
 
