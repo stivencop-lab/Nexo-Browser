@@ -1,8 +1,8 @@
 # Nexo Browser
 
-> **Versión en Gradle:** `0.38.0` · `versionCode 74` · Paquete `com.nexo.browser`
+> **Versión en Gradle:** `0.39.1` · `versionCode 75` · Paquete `com.nexo.browser`
 >
-> **Última release publicada:** [v0.38.0](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.38.0) · Motor **Chromium 156** embebido mediante [Cefrium](https://cefrium.com) `0.21.0` (LGPL-3.0) · Android 10+ (`minSdk 29`, `targetSdk 35`, `compileSdk 37.2`).
+> **Última release publicada:** [v0.39.1](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.39.1) · Motor **Chromium 156** embebido mediante [Cefrium](https://cefrium.com) `0.21.0` (LGPL-3.0) · Android 10+ (`minSdk 29`, `targetSdk 35`, `compileSdk 37.2`).
 
 <img src="docs/brand/nexo.svg" alt="Logo de Nexo Browser" width="112" />
 
@@ -74,6 +74,9 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 - **Nexo Media Engine (`com.nexo.browser.media`) y Subtítulos en vivo (`LiveCaptions`, `PlaybackAudioCapture`, `PlaybackPcm`, `CaptionsUi`):** velocidad (`0.25x–3.0x`), salto rápido (`5–30 s`), gestos en pantalla completa, subtítulos nativos/WebVTT/HLS/SRT o transcripción en vivo con Deepgram, PiP y reproducción en segundo plano. Incluye **captura universal de audio en Android 10+** (`allowAudioPlaybackCapture="true"`, `ALLOW_CAPTURE_BY_ALL` en proceso principal y subprocesos Chromium, negociación nativa `48 kHz estéreo → 44.1 kHz estéreo → 48 kHz mono → 16 kHz mono` con remuestreo `PlaybackPcm.to16kMono`, detección de bajo volumen, soporte de `<audio>`, medidor de señal en tiempo real y activación en 1 toque), además de acceso directo a **Subtítulos instantáneos de Android (Offline)** para contenido con DRM hardware.
 - **Nexo Dark Engine (`com.nexo.browser.dark`):** Auto/Claro/Oscuro/OLED, política síncrona por sitio en `document_start`, modo híbrido sin autointerferencia y protección de imágenes/vídeos/canvas/formularios.
 - **Escáner de páginas fraudulentas (`shield/MalwareSignals`, `MalwareScan`, `MalwareWarning`):** heurística local al cargar cada página (marcas suplantadas, punycode, credenciales enviadas a otro dominio, descargas `.apk/.exe`, falso soporte técnico), segunda opinión opcional con IA solo en páginas dudosas y pantalla de aviso a pantalla completa. Nunca en pestañas privadas.
+- **Reproductor HTML5 en pantalla completa:** doble toque a los lados para saltar, arrastre horizontal para buscar, brillo/volumen en los laterales, mantener pulsado para 2×, bloqueo, giro automático y ajuste de imagen; la pantalla no se apaga mientras se ve un video.
+- **Notificación multimedia con `MediaSession`:** título, artista, carátula y barra de progreso en el panel, la pantalla de bloqueo y las islas dinámicas de los fabricantes; anterior/siguiente o ±10 s, y se retira al cerrar Nexo desde Recientes. Las descargas son Live Updates en Android 16 QPR1+.
+- **Historial de Nexo AI:** buscar, renombrar, eliminar conversaciones o mensajes sueltos y borrar todo el historial.
 - **Una API para todo (`ai/AiHub`):** una sola conexión de IA para Nexo AI, Reader, traducción, subtítulos y PhantomShield; la clave sigue en Android Keystore.
 - **PhantomShield:** bloqueo de red EasyList/uBlock con caché LRU, reglas cosméticas, YouTube, popunders (`$popup`), limpieza de parámetros de rastreo (también al compartir enlaces desde `MainActivity`) e IA opcional (3 proveedores, soporte NVIDIA/APIs estrictas, timeout 90 s).
 - **Nexo AI 5.1 y Traductor** ([documentación completa](docs/NEXO-AI-5.1.md)): panel adaptable de **3 estados** (*Minimizado → Panel parcial → Pantalla expandida*), **conversaciones persistentes** en `NexoAiController` + `NexoAiStore` (minimizar jamás cancela consultas ni borra historial), indicador flotante in-app (`NexoAiPillView`), emblema Nexo Aperture con estados reales, **streaming SSE real** (OpenAI-compatible y Anthropic Claude) con reloj monotónico (`elapsedRealtimeNanos`), vinculación segura `PageBinding` contra acciones en páginas distintas, **laboratorio multimodelo Comparar modelos** (2 a 5 modelos, máx. 2 en paralelo, TTFT real, mediana en repeticiones, fallos aislados y contexto opt-in), claves cifradas en Android Keystore (`SecretStore`), defensa `<UNTRUSTED_PAGE_CONTEXT>` y traducción completa restaurable sin recargar.
@@ -98,16 +101,14 @@ Nexo ya no depende de GeckoView ni de Android System WebView (ver [migración a 
 
 ## APK disponible
 
-La última release firmada publicada desde `main` es **Nexo Browser v0.38.0** (`versionCode 74`), paquete `com.nexo.browser`:
+La última release firmada publicada desde `main` es **Nexo Browser v0.39.1** (`versionCode 75`), paquete `com.nexo.browser`:
 
-- [Descargar APK `arm64-v8a` (recomendado)](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.38.0/Nexo-v0.38.0-arm64-v8a.apk)
-- [Descargar APK `armeabi-v7a` (32 bits)](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.38.0/Nexo-v0.38.0-armeabi-v7a.apk)
-- [Descargar `SHA256SUMS.txt`](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.38.0/SHA256SUMS.txt)
-- [Ver release v0.38.0](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.38.0)
+- [Descargar APK `arm64-v8a` (recomendado)](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.1/Nexo-v0.39.1-arm64-v8a.apk)
+- [Descargar APK `armeabi-v7a` (32 bits)](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.1/Nexo-v0.39.1-armeabi-v7a.apk)
+- [Descargar `SHA256SUMS.txt`](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.1/SHA256SUMS.txt)
+- [Ver release v0.39.1](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.39.1)
 
-Hashes SHA-256 verificados en la release `v0.38.0`:
-- `Nexo-v0.38.0-arm64-v8a.apk`: `418cdaafccb39b69f7ac2b1faf1278a5043b204f688742ec3251bce299e1297b`
-- `Nexo-v0.38.0-armeabi-v7a.apk`: `feb2ab9f6f30dbce8223c2c2c7a910b71b598702024ee06bc09c7363a44ebd67`
+Hashes SHA-256: ver `SHA256SUMS.txt` de la release `v0.39.1`.
 
 ---
 

@@ -16,8 +16,8 @@ android {
         // Cefrium 0.21.0 (Chromium 156) exige Android 10.
         minSdk = 29
         targetSdk = 35
-        versionCode = 74
-        versionName = "0.38.0"
+        versionCode = 75
+        versionName = "0.39.1"
         // Solo la actualización de transición (paquete anterior) entrega sus datos a Nexo nuevo.
         manifestPlaceholders["legacyExport"] = project.hasProperty("nexoTransition").toString()
     }
