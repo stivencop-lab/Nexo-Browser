@@ -561,8 +561,12 @@ object PhantomShield {
     /** Script de inicio del anfitrión de IA ([ShieldAiHost]). */
     internal fun aiHostScript(): String = scripts.aiHost
 
-    internal fun hostGet(keys: Any?): JSONObject = store.get(if (keys == null || keys == JSONObject.NULL) null else keys)
-    internal fun hostSet(values: JSONObject) { if (values.length() > 0) store.set(values) }
+    // «Una API para todo»: la IA lee la conexión maestra de Nexo AI y nunca guarda su clave en disco.
+    internal fun hostGet(keys: Any?): JSONObject = com.nexo.browser.ai.AiHub.overlayShieldRead(
+        com.nexo.browser.AppContext.getOrNull(), store.get(if (keys == null || keys == JSONObject.NULL) null else keys))
+    internal fun hostSet(values: JSONObject) {
+        if (values.length() > 0) store.set(com.nexo.browser.ai.AiHub.stripShieldWrite(com.nexo.browser.AppContext.getOrNull(), values))
+    }
     internal fun hostRemove(keys: List<String>) { if (keys.isNotEmpty()) store.remove(keys) }
     internal fun keysOf(payload: Any?): Set<String>? = requestedKeys(payload)
 
@@ -843,13 +847,13 @@ object PhantomShield {
                         result.put(key, defaultSetting(key))
                     }
                 }
-                answer(call.id, result)
+                answer(call.id, com.nexo.browser.ai.AiHub.overlayShieldRead(com.nexo.browser.AppContext.getOrNull(), result))
             }
             "set" -> {
                 val values = call.payload as? JSONObject ?: return answer(call.id, null, "Valores no válidos")
                 val allowed = JSONObject()
                 values.keys().forEach { key -> if (key in PANEL_WRITABLE) allowed.put(key, values.get(key)) }
-                store.set(allowed)
+                store.set(com.nexo.browser.ai.AiHub.stripShieldWrite(com.nexo.browser.AppContext.getOrNull(), allowed))
                 answer(call.id, null)
             }
             "remove" -> {

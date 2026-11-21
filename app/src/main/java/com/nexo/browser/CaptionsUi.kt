@@ -78,7 +78,10 @@ object CaptionsUi {
         videoRect: Rect?,
         display: CaptionDisplay?,
         pip: Boolean,
-        hint: Boolean = false
+        hint: Boolean = false,
+        /** Alto del cromo flotante que tapa el pie de la página (Liquid Split Chrome). */
+        bottomObstruction: Int = 0,
+        topObstruction: Int = 0
     ) {
         if (display == null || display.isEmpty || frameWidth <= 0 || frameHeight <= 0) {
             view.visibility = View.GONE
@@ -139,13 +142,17 @@ object CaptionsUi {
         view.text = text
 
         val margin = dp(activity, 8f)
-        val videoArea = if (!pip && videoRect != null) {
+        val position = if (pip || hint) BrowserPrefs.CAPTION_POS_VIDEO else BrowserPrefs.captionPosition(activity)
+        val videoArea = if (!pip && videoRect != null && position == BrowserPrefs.CAPTION_POS_VIDEO) {
             Rect(videoRect).takeIf {
                 it.intersect(0, 0, frameWidth, frameHeight) &&
                     it.width() > dp(activity, 160f) && it.height() > dp(activity, 90f)
             }
         } else null
-        val area = videoArea ?: Rect(0, 0, frameWidth, frameHeight - if (pip) 0 else dp(activity, 76f))
+        // Área visible: nunca bajo el cromo flotante ni bajo la barra de estado.
+        val visibleTop = if (pip) 0 else topObstruction
+        val visibleBottom = if (pip) frameHeight else (frameHeight - maxOf(bottomObstruction, dp(activity, 12f)))
+        val area = videoArea ?: Rect(0, visibleTop, frameWidth, visibleBottom.coerceAtLeast(visibleTop + dp(activity, 48f)))
         val maxWidth = (area.width() - margin * 2).coerceAtLeast(dp(activity, 120f))
         view.maxWidth = maxWidth
         view.measure(
@@ -158,9 +165,64 @@ object CaptionsUi {
         val maxY = (frameHeight - height - margin).coerceAtLeast(margin)
         val minY = (area.top + margin).coerceAtMost(maxY)
         view.translationX = (area.centerX() - width / 2f).coerceIn(margin.toFloat(), maxX.toFloat())
-        view.translationY = (area.bottom - height - dp(activity, if (pip) 6f else 14f)).toFloat()
-            .coerceIn(minY.toFloat(), maxY.toFloat())
+        val maxVisibleY = (area.bottom - height - margin).coerceAtLeast(minY).coerceAtMost(maxY)
+        val y = when (position) {
+            BrowserPrefs.CAPTION_POS_TOP -> (area.top + dp(activity, 16f)).toFloat()
+            BrowserPrefs.CAPTION_POS_CENTER -> area.centerY() - height / 2f
+            BrowserPrefs.CAPTION_POS_CUSTOM -> area.top + (area.height() - height) * BrowserPrefs.captionCustomY(activity)
+            else -> (area.bottom - height - dp(activity, if (pip) 6f else 14f)).toFloat()
+        }
+        // Mientras se arrastra, la posición la marca el dedo.
+        if (view.getTag(R.id.nexo_caption_dragging) != true) {
+            view.translationY = y.coerceIn(minY.toFloat(), maxVisibleY.toFloat())
+        }
+        view.setTag(R.id.nexo_caption_area, intArrayOf(area.top, area.bottom))
         view.visibility = View.VISIBLE
+    }
+
+    /**
+     * Arrastrar el subtítulo con el dedo: al soltarlo queda en modo «Donde lo arrastre» con su
+     * altura relativa guardada. Un toque sin movimiento no hace nada (no tapa el video).
+     */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    fun enableDrag(activity: Activity, view: TextView, onMoved: () -> Unit) {
+        val slop = android.view.ViewConfiguration.get(activity).scaledTouchSlop
+        var startY = 0f
+        var startTranslation = 0f
+        var dragging = false
+        view.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    startY = e.rawY; startTranslation = v.translationY; dragging = false; true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dy = e.rawY - startY
+                    if (!dragging && kotlin.math.abs(dy) > slop) {
+                        dragging = true
+                        v.setTag(R.id.nexo_caption_dragging, true)
+                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (dragging) v.translationY = startTranslation + dy
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    v.setTag(R.id.nexo_caption_dragging, false)
+                    if (dragging) {
+                        val area = v.getTag(R.id.nexo_caption_area) as? IntArray
+                        if (area != null) {
+                            val span = (area[1] - area[0] - v.height).coerceAtLeast(1)
+                            BrowserPrefs.setCaptionCustomY(activity, (v.translationY - area[0]) / span)
+                            BrowserPrefs.setCaptionPosition(activity, BrowserPrefs.CAPTION_POS_CUSTOM)
+                        }
+                        v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                        onMoved()
+                    }
+                    dragging = false
+                    true
+                }
+                else -> false
+            }
+        }
     }
 
     /** Píldoras de idioma de destino: los habituales, el elegido y "Más idiomas…". */
@@ -394,9 +456,16 @@ object CaptionsUi {
         val (aiEndpointView, aiEndpointField) = NexoUi.field(activity, "Dirección de la API (compatible con OpenAI)", "https://servidor/v1", BrowserPrefs.aiTranslateEndpoint(activity))
         val (aiKeyView, aiKeyField) = NexoUi.field(activity, "Clave API del modelo", "Se guarda cifrada en el teléfono", BrowserPrefs.aiTranslateKey(activity))
         aiKeyField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        // «Una API para todo»: si Nexo AI está configurado, el modelo 1 es su conexión y no se repite aquí.
+        val usesMaster = com.nexo.browser.ai.AiHub.translationUsesMaster(activity)
         aiBox.addView(NexoUi.section(activity, "Modelo de IA"))
-        aiBox.addView(aiProviderRow)
-        aiBox.addView(aiModelView); aiBox.addView(aiEndpointView); aiBox.addView(aiKeyView)
+        if (usesMaster) {
+            val m = com.nexo.browser.ai.AiHub.master(activity)
+            aiBox.addView(NexoUi.note(activity, "Usa la API de Nexo AI (${m?.model?.substringAfterLast('/') ?: "configurada"}). Cámbiala en Nexo AI › Ajustes."))
+        } else {
+            aiBox.addView(aiProviderRow)
+            aiBox.addView(aiModelView); aiBox.addView(aiEndpointView); aiBox.addView(aiKeyView)
+        }
         aiBox.addView(NexoUi.note(activity, "Traduce varias frases en una sola petición, con el contexto anterior. Con subtítulos propios del video, traduce todo por adelantado."))
         fun refreshProvider() {
             translateBox.visibility = if (target.isBlank()) View.GONE else View.VISIBLE
@@ -492,6 +561,18 @@ object CaptionsUi {
         val sizeRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         chips(sizeRow, SIZES.map { it.first.toString() to it.second }, { size.toString() }) { size = it.toInt() }
         body.addView(sizeRow)
+        var position = BrowserPrefs.captionPosition(activity)
+        body.addView(NexoUi.section(activity, "Posición"))
+        val positionRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        chips(positionRow, listOf(
+            BrowserPrefs.CAPTION_POS_VIDEO to "Sobre el video",
+            BrowserPrefs.CAPTION_POS_TOP to "Arriba",
+            BrowserPrefs.CAPTION_POS_CENTER to "Centro",
+            BrowserPrefs.CAPTION_POS_BOTTOM to "Abajo",
+            BrowserPrefs.CAPTION_POS_CUSTOM to "Donde lo arrastre"
+        ), { position }) { position = it }
+        body.addView(positionRow)
+        body.addView(NexoUi.note(activity, "También puedes arrastrar el subtítulo con el dedo: se queda donde lo sueltes."))
         var background = BrowserPrefs.captionBackground(activity)
         body.addView(NexoUi.section(activity, "Fondo"))
         val backgroundRow = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -526,7 +607,7 @@ object CaptionsUi {
             if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_DEEPL && deeplField.text.isBlank()) {
                 error.text = "Escribe la clave de DeepL o elige Google."; error.visibility = View.VISIBLE; return@button
             }
-            if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_AI) {
+            if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_AI && !usesMaster) {
                 val endpoint = aiEndpointField.text.toString().trim()
                 if (aiProvider == "custom" && !CaptionProtocol.isSafeKeyedEndpoint(endpoint)) {
                     error.text = "La dirección de la API debe ser https:// (o http:// solo hacia este teléfono), sin usuario ni contraseña."
@@ -552,6 +633,7 @@ object CaptionsUi {
             BrowserPrefs.setDeeplKey(activity, deeplField.text.toString())
             BrowserPrefs.setCaptionSize(activity, size)
             BrowserPrefs.setCaptionBackground(activity, background)
+            BrowserPrefs.setCaptionPosition(activity, position)
             BrowserPrefs.setCaptionColor(activity, color)
             BrowserPrefs.setCaptionLines(activity, lines)
             BrowserPrefs.setCaptionClearSeconds(activity, clearSeconds)

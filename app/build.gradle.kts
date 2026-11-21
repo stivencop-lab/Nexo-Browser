@@ -57,6 +57,11 @@ android {
             isUniversalApk = false
         }
     }
+    // La interfaz de Nexo es en español: solo se empaquetan los recursos es/en (y los
+    // predeterminados). Chromium trae ~120 idiomas que inflaban resources.arsc (~4.7 MB).
+    androidResources {
+        localeFilters += listOf("es", "en")
+    }
     buildFeatures {
         compose = false
         viewBinding = false

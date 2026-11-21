@@ -112,7 +112,8 @@ class NexoAiPillView @JvmOverloads constructor(
         background = NexoGlassDrawable(activity, p, NexoUi.Tokens.RADIUS_PILL, smoked = true)
         NexoGlass.float(this, p, if (p.isDark) 6f else 10f)
         dotView.color = dot
-        dotView.breathing = streaming || snapshot.indicatorState == NexoAiModels.IndicatorState.READY
+        // Solo respira mientras llegan tokens: en reposo no se redibuja (batería).
+        dotView.breathing = streaming
         aperture.setColor(p.text)
         aperture.setBreathing(streaming)
         bars.color = p.text

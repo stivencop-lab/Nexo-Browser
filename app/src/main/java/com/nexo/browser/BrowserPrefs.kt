@@ -19,6 +19,13 @@ object BrowserPrefs {
     val ACCENTS = listOf(ACCENT_MONO, ACCENT_SIGNAL, ACCENT_COBALT, ACCENT_ORANGE, ACCENT_SAGE)
 
     /** Cromo inferior: «Liquid Split» (por defecto) o el Dock clásico refinado. */
+    const val CAPTION_POS_VIDEO = "video"
+    const val CAPTION_POS_TOP = "top"
+    const val CAPTION_POS_CENTER = "center"
+    const val CAPTION_POS_BOTTOM = "bottom"
+    const val CAPTION_POS_CUSTOM = "custom"
+    val CAPTION_POSITIONS = setOf(CAPTION_POS_VIDEO, CAPTION_POS_TOP, CAPTION_POS_CENTER, CAPTION_POS_BOTTOM, CAPTION_POS_CUSTOM)
+
     const val CHROME_LIQUID = "liquid"
     const val CHROME_DOCK = "dock"
 
@@ -254,6 +261,16 @@ object BrowserPrefs {
     fun chromeStyle(c: Context) = p(c).getString("chrome_style", CHROME_LIQUID)
         ?.takeIf { it == CHROME_LIQUID || it == CHROME_DOCK } ?: CHROME_LIQUID
     fun setChromeStyle(c: Context, v: String) = p(c).edit().putString("chrome_style", v).apply()
+    /** «Una API para todo»: todas las funciones de IA usan la conexión de Nexo AI (por defecto). */
+    fun unifiedAi(c: Context) = p(c).getBoolean("unified_ai", true)
+    fun setUnifiedAi(c: Context, v: Boolean) = p(c).edit().putBoolean("unified_ai", v).apply()
+    /** Subtítulos: "video" (sobre el video), "top", "center", "bottom" o "custom" (arrastrados). */
+    fun captionPosition(c: Context) = p(c).getString("caption_position", CAPTION_POS_VIDEO)
+        ?.takeIf { it in CAPTION_POSITIONS } ?: CAPTION_POS_VIDEO
+    fun setCaptionPosition(c: Context, v: String) = p(c).edit().putString("caption_position", v).apply()
+    /** Posición vertical guardada al arrastrar (0 = arriba, 1 = abajo del área visible). */
+    fun captionCustomY(c: Context) = p(c).getFloat("caption_custom_y", 0.82f).coerceIn(0f, 1f)
+    fun setCaptionCustomY(c: Context, v: Float) = p(c).edit().putFloat("caption_custom_y", v.coerceIn(0f, 1f)).apply()
     fun minimalStart(c: Context) = p(c).getBoolean("minimal_start", true)
     fun setMinimalStart(c: Context, v: Boolean) = p(c).edit().putBoolean("minimal_start", v).apply()
     fun autoHideBars(c: Context) = p(c).getBoolean("auto_hide_bars", true)

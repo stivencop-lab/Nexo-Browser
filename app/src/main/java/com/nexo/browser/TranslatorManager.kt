@@ -327,12 +327,10 @@ object TranslatorManager {
             }
         }
         if (provider == BrowserPrefs.TRANSLATE_AI) {
-            val aiProvider = BrowserPrefs.aiTranslateProvider(context)
-            val endpoint = BrowserPrefs.aiTranslateEndpoint(context)
-            val model = BrowserPrefs.aiTranslateModel(context)
-            val key = BrowserPrefs.aiTranslateKey(context)
-            if (key.isNotBlank() || aiProvider == "custom") {
-                val res = translateWithAi(aiProvider, endpoint, model, key, lines, target, job)
+            // «Una API para todo»: la conexión de Nexo AI si está configurada; si no, la propia.
+            val conn = com.nexo.browser.ai.AiHub.translation(context)
+            if (conn != null) {
+                val res = translateWithAi(conn.provider, conn.endpoint, conn.model, conn.key, lines, target, job)
                 if (res != null) return res
             }
         }

@@ -408,6 +408,8 @@ class MainActivity :
         miniPlayerButton = findViewById(R.id.miniPlayerButton)
         captionsButton = findViewById(R.id.captionsButton)
         captionView = findViewById(R.id.captionView)
+        // Subtítulos arrastrables: se quedan donde el usuario los suelte.
+        CaptionsUi.enableDrag(this, captionView) { refreshCaptionsUi() }
         findBar = findViewById(R.id.findBar)
         findInput = findViewById(R.id.findInput)
         findCount = findViewById(R.id.findCount)
@@ -433,6 +435,8 @@ class MainActivity :
             }
         }
         miniPill.setOnClickListener { setChromeCompact(false) }
+        // El cristal desenfoca Inicio en vivo: se repinta cuando el fondo cambia (p. ej. al desplazar).
+        listOf<View>(omniboxCapsule, chromeCluster, miniPill).forEach { NexoGlass.follow(it, startPage) }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
         compactBackButton.setOnClickListener { TabManager.goBackOrPrevious() }
         forwardButton.setOnClickListener { TabManager.goForward() }
@@ -2183,13 +2187,22 @@ class MainActivity :
             if (pipCrop != null || isInPictureInPictureMode) null else tab?.let { BrowserMediaController.videoRect(it.id) },
             display,
             isInPictureInPictureMode,
-            hint = display?.status == true
+            hint = display?.status == true,
+            bottomObstruction = captionBottomObstruction()
         )
         // El aviso genérico caduca: volver a dibujar para retirarlo.
         captionView.removeCallbacks(captionHintExpiry)
         if (display?.status == true && LiveCaptions.statusExpires(session)) {
             captionView.postDelayed(captionHintExpiry, LiveCaptions.HINT_MS + 150L)
         }
+    }
+
+    /** Parte del pie de la página tapada por el cromo flotante (la web fluye por detrás). */
+    private fun captionBottomObstruction(): Int {
+        if (!::bottomChrome.isInitialized || bottomChrome.visibility != View.VISIBLE || immersive) return 0
+        val pageBottom = (browserFrame.layoutParams as? android.widget.FrameLayout.LayoutParams)?.bottomMargin ?: 0
+        val chrome = if (chromeCompact) NexoUi.dp(this, 48f) + safeBottom else bottomChrome.height
+        return (chrome - pageBottom).coerceAtLeast(0) + NexoUi.dp(this, 8f)
     }
 
     /**
