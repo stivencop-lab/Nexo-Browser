@@ -9,7 +9,7 @@ import org.json.JSONArray
  * Puro: probado en la JVM.
  */
 object BridgeLimits {
-    private const val MAX_KEYS = 16
+    private const val MAX_KEYS = 20
     private const val MAX_AUDIO_BASE64 = 350_000
     private const val MAX_TEXT = 2_000
     private const val MAX_CUES = 200

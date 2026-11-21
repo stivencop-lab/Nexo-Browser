@@ -210,6 +210,41 @@ object SiteControlSheet {
                 com.nexo.browser.reader.NexoReader.openActiveTab(activity)
             })
         }
+        // Escáner de páginas: análisis con IA bajo demanda y «no es fraude» (sitio de confianza).
+        val scanOrigin = com.nexo.browser.shield.MalwareScan.originOf(url)
+        if (isWeb && scanOrigin.isNotEmpty() && !tab.isPrivate && BrowserPrefs.malwareScan(activity)) {
+            groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_menu_shield, "Analizar la página con IA",
+                if (com.nexo.browser.ai.AiHub.master(activity) == null) "Necesita una conexión en Nexo AI" else "Phishing, estafas y malware") {
+                sheet.dismiss()
+                Toastish.show(activity, "Analizando $host…")
+                com.nexo.browser.shield.MalwareScan.analyzeNow(activity, tab) { result, error ->
+                    if (activity.isFinishing || activity.isDestroyed) return@analyzeNow
+                    val text = error ?: when (result?.decision?.level) {
+                        com.nexo.browser.shield.MalwareSignals.Level.DANGEROUS -> "Posible página fraudulenta" + (result.decision.reasons.firstOrNull()?.let { ": $it" } ?: "")
+                        com.nexo.browser.shield.MalwareSignals.Level.SUSPICIOUS -> "Página con señales sospechosas" + (result.decision.reasons.firstOrNull()?.let { ": $it" } ?: "")
+                        else -> "Sin señales de engaño" + if (result?.decision?.byAi == true) " (revisado con IA)" else ""
+                    }
+                    Toast.makeText(activity, text, Toast.LENGTH_LONG).show()
+                }
+            })
+            val trusted = com.nexo.browser.shield.MalwareScan.isTrusted(activity, scanOrigin)
+            val flagged = scan != null && scan.decision.level != com.nexo.browser.shield.MalwareSignals.Level.CLEAN
+            if (trusted || flagged) {
+                groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_quick_shield,
+                    if (trusted) "Volver a analizar este sitio" else "Confiar en este sitio",
+                    if (trusted) "Ahora no se analiza" else "No es fraude: dejar de avisar") {
+                    sheet.dismiss()
+                    if (trusted) {
+                        com.nexo.browser.shield.MalwareScan.untrust(activity, scanOrigin)
+                        Toastish.show(activity, "$host se analizará de nuevo.")
+                    } else {
+                        com.nexo.browser.shield.MalwareScan.trust(activity, scanOrigin)
+                        Toastish.show(activity, "$host marcado como de confianza.")
+                    }
+                    TabManager.activeTab()?.let { (activity as? MainActivity)?.refreshTabTools(it) }
+                })
+            }
+        }
         groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Media Engine y Subtítulos") {
             sheet.dismiss()
             NexoMediaEngine.showSheet(activity)

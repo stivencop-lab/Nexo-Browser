@@ -280,6 +280,59 @@ object NexoAiController {
         notifyListeners(snap)
     }
 
+    /** Borra todo el historial (cancela lo que esté en curso) y deja una conversación vacía. */
+    fun deleteAllConversations() {
+        val snap = synchronized(lock) {
+            activeHandles.values.forEach { it.cancel() }
+            activeHandles.clear()
+            activeRequests.clear()
+            conversations.clear()
+            val fresh = createEmptyConversationLocked("")
+            conversations.add(fresh)
+            activeConversationId = fresh.id
+            unreadReadyConversationId = null
+            lastErrorSummary = null
+            minimizedPillVisible = false
+            persistLocked()
+            buildSnapshotLocked()
+        }
+        notifyListeners(snap)
+    }
+
+    /**
+     * Elimina un mensaje. Una pregunta se lleva consigo su respuesta (sin ella la respuesta
+     * pierde el contexto); si esa respuesta seguía generándose, se cancela.
+     */
+    fun deleteMessage(conversationId: String, messageId: String) {
+        val snap = synchronized(lock) {
+            val idx = conversations.indexOfFirst { it.id == conversationId }
+            if (idx < 0) return
+            val conv = conversations[idx]
+            val removed = NexoAiHistory.messagesToDelete(conv.messages, messageId)
+            if (removed.isEmpty()) return
+            conv.messages.filter { it.id in removed }.mapNotNull { it.requestId }.forEach { reqId ->
+                activeHandles.remove(reqId)?.cancel()
+                activeRequests.remove(reqId)
+            }
+            conversations[idx] = conv.copy(messages = conv.messages.filterNot { it.id in removed })
+            persistLocked()
+            buildSnapshotLocked()
+        }
+        notifyListeners(snap)
+    }
+
+    fun renameConversation(conversationId: String, title: String) {
+        val clean = NexoAiHistory.cleanTitle(title) ?: return
+        val snap = synchronized(lock) {
+            val idx = conversations.indexOfFirst { it.id == conversationId }
+            if (idx < 0) return
+            conversations[idx] = conversations[idx].copy(title = clean)
+            persistLocked()
+            buildSnapshotLocked()
+        }
+        notifyListeners(snap)
+    }
+
     /**
      * Cambia el estado visual del panel (Minimizado / Parcial / Expandido) SIN cancelar consultas
      * ni reconstruir conversaciones.

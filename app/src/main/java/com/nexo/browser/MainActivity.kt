@@ -71,8 +71,16 @@ class MainActivity :
         if (isFinishing || isDestroyed) return@Observer
         val tab = TabManager.activeTab()?.takeIf { it.id == tabId } ?: return@Observer
         styleTabToolsButton(tab)
-        if (result.decision.block) com.nexo.browser.shield.MalwareWarning.show(this, tab, result)
+        if (result.decision.block && !com.nexo.browser.shield.MalwareWarning.isShowing() &&
+            !com.nexo.browser.shield.MalwareScan.isBypassed(result.origin)
+        ) {
+            com.nexo.browser.shield.MalwareScan.recordBlocked(this)
+            com.nexo.browser.shield.MalwareWarning.show(this, tab, result)
+        }
     }
+
+    /** Tras cambiar la confianza de un sitio, el botón de herramientas pierde el aviso. */
+    internal fun refreshTabTools(tab: BrowserTab) = styleTabToolsButton(tab)
     private lateinit var backButton: ImageButton
     private lateinit var forwardButton: ImageButton
     private lateinit var compactBackButton: ImageButton
@@ -146,6 +154,7 @@ class MainActivity :
 
     // Un sitio puso un elemento (normalmente el video) en pantalla completa.
     private var fullScreenActive = false
+    private var keepScreenOnApplied = false
     private var fullscreenMediaOverlay: com.nexo.browser.media.NexoMediaEngine.FullscreenOverlay? = null
     private var pendingPipEntry: Runnable? = null
     private var wasBackgrounded = false
@@ -1842,6 +1851,17 @@ class MainActivity :
         updateMiniPlayerChip()
         updatePipParams()
         followPipVideo()
+        updateKeepScreenOn()
+    }
+
+    /** Mientras se ve un video la pantalla no se apaga (como en cualquier reproductor). */
+    private fun updateKeepScreenOn() {
+        val tab = TabManager.activeTab()
+        val watching = tab != null && BrowserMediaController.isVideoPlaying(tab.id)
+        if (watching == keepScreenOnApplied) return
+        keepScreenOnApplied = watching
+        if (watching) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     /** Si el video cambia de sitio durante el PiP, mover el recorte con él. */
@@ -2264,7 +2284,7 @@ class MainActivity :
         }
     }
 
-    private fun startMiniPlayer(
+    internal fun startMiniPlayer(
         silent: Boolean = false,
         requirePlayback: Boolean = false,
         delayMs: Long = 120L

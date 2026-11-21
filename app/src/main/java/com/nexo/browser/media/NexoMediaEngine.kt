@@ -2,6 +2,7 @@ package com.nexo.browser.media
 
 import android.app.Activity
 import android.app.Dialog
+import android.content.pm.ActivityInfo
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -13,7 +14,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -54,8 +54,19 @@ object NexoMediaEngine {
         val durationSec: Double = 0.0,
         val drmProtected: Boolean = false,
         val hasTextTracks: Boolean = false,
-        val captionOffsetMs: Int = 0
-    )
+        val captionOffsetMs: Int = 0,
+        val loop: Boolean = false,
+        val bufferedAheadSec: Double = 0.0,
+        /** `SystemClock.elapsedRealtime()` del informe: la página solo informa cambios. */
+        val reportedAtMs: Long = 0L
+    ) {
+        /** Posición estimada ahora (extrapolada si se reproduce). */
+        fun positionNow(nowMs: Long): Double {
+            if (!playing || reportedAtMs <= 0L) return currentTimeSec
+            val est = currentTimeSec + (nowMs - reportedAtMs).coerceAtLeast(0L) / 1000.0 * playbackRate
+            return if (durationSec > 0) est.coerceAtMost(durationSec) else est
+        }
+    }
 
     data class TimedCue(val id: Int, val startSec: Double, val endSec: Double, val text: String)
 
@@ -97,7 +108,9 @@ object NexoMediaEngine {
         currentTimeSec: Double,
         durationSec: Double,
         drmProtected: Boolean,
-        hasTextTracks: Boolean
+        hasTextTracks: Boolean,
+        loop: Boolean = false,
+        bufferedAheadSec: Double = 0.0
     ) {
         val prev = snapshots[tabId]
         val cleanRate = MediaSitePrefs.clampSpeed(playbackRate)
@@ -111,7 +124,10 @@ object NexoMediaEngine {
             durationSec = if (durationSec.isFinite() && durationSec >= 0.0) durationSec else 0.0,
             drmProtected = drmProtected,
             hasTextTracks = hasTextTracks,
-            captionOffsetMs = siteCfg.captionOffsetMs
+            captionOffsetMs = siteCfg.captionOffsetMs,
+            loop = loop,
+            bufferedAheadSec = if (bufferedAheadSec.isFinite() && bufferedAheadSec > 0) bufferedAheadSec else 0.0,
+            reportedAtMs = android.os.SystemClock.elapsedRealtime()
         )
         snapshots[tabId] = next
 
@@ -143,6 +159,19 @@ object NexoMediaEngine {
         val clamped = MediaSitePrefs.clampSpeed(speed)
         return PageBridge.sendMediaCommand(session, JSONObject().put("action", "set_speed").put("speed", clamped.toDouble()))
     }
+
+    fun sendSeekTo(session: EngineSession?, seconds: Double): Boolean =
+        PageBridge.sendMediaCommand(session, JSONObject().put("action", "seek_to").put("time", seconds.coerceAtLeast(0.0)))
+
+    /** Velocidad temporal mientras se mantiene pulsado (se deshace al soltar). */
+    fun sendHoldSpeed(session: EngineSession?, active: Boolean, speed: Float = MediaGestures.HOLD_SPEED): Boolean =
+        PageBridge.sendMediaCommand(session, JSONObject().put("action", "hold_speed").put("active", active).put("speed", speed.toDouble()))
+
+    fun sendFit(session: EngineSession?, fit: MediaGestures.Fit): Boolean =
+        PageBridge.sendMediaCommand(session, JSONObject().put("action", "set_fit").put("fit", fit.css))
+
+    fun sendLoop(session: EngineSession?, loop: Boolean): Boolean =
+        PageBridge.sendMediaCommand(session, JSONObject().put("action", "set_loop").put("loop", loop))
 
     fun sendCaptionOffset(session: EngineSession?, offsetMs: Int): Boolean {
         val clamped = MediaSitePrefs.clampOffsetMs(offsetMs)
@@ -180,6 +209,33 @@ object NexoMediaEngine {
             }
         ))
         body.addView(quickRow)
+        if (snap?.present == true && snap.durationSec > 0) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            val pos = snap.positionNow(now)
+            body.addView(TextView(activity).apply {
+                text = buildString {
+                    append(com.nexo.browser.MediaNotificationLayout.formatTime(pos))
+                    append(" / ")
+                    append(com.nexo.browser.MediaNotificationLayout.formatTime(snap.durationSec))
+                    if (snap.bufferedAheadSec >= 1) append(" · ${snap.bufferedAheadSec.toInt()} s en búfer")
+                }
+                textSize = 13f
+                typeface = NexoUi.regular(activity)
+                setTextColor(ThemeManager.palette(activity).muted)
+                setPadding(0, NexoUi.dp(activity, 8f), 0, 0)
+            })
+        }
+        body.addView(NexoUi.chipRow(activity, listOf(
+            NexoUi.chip(activity, "Desde el inicio", false) { sendSeekTo(session, 0.0) },
+            NexoUi.chip(activity, if (snap?.loop == true) "Repetir: sí" else "Repetir: no", snap?.loop == true) {
+                sendLoop(session, snap?.loop != true)
+                sheet.dismiss()
+            },
+            NexoUi.chip(activity, "Mini video", false) {
+                sheet.dismiss()
+                (activity as? com.nexo.browser.MainActivity)?.startMiniPlayer()
+            }
+        )), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = NexoUi.dp(activity, 8f) })
 
         // --- Velocidad ---
         body.addView(NexoUi.section(activity, "Velocidad de reproducción"))
@@ -286,6 +342,16 @@ object NexoMediaEngine {
         ) { enabled ->
             MediaSitePrefs.setFullscreenGestures(activity, enabled)
         })
+        body.addView(NexoUi.note(activity,
+            "Doble toque a los lados: ∓${siteCfg.seekStepSec} s · Arrastra en horizontal para buscar · Mantén pulsado para 2×."))
+        body.addView(NexoUi.switchRow(
+            activity,
+            "Girar automáticamente",
+            "Al entrar en pantalla completa, orienta la pantalla según el video (horizontal o vertical).",
+            MediaSitePrefs.autoRotate(activity)
+        ) { enabled ->
+            MediaSitePrefs.setAutoRotate(activity, enabled)
+        })
 
         if (host.isNotEmpty() && !siteCfg.isDefault()) {
             body.addView(NexoUi.button(activity, "Restablecer preferencias de $host") {
@@ -314,28 +380,59 @@ object NexoMediaEngine {
     }
 
     /**
-     * Capa ligera de gestos (brillo/volumen) y bloqueo táctil en pantalla completa.
-     * Solo se monta cuando la página entra en pantalla completa y se retira al salir.
+     * Capa del reproductor en pantalla completa: gestos (doble toque para saltar, arrastre
+     * horizontal para buscar, brillo/volumen en los laterales, mantener pulsado para 2×),
+     * HUD con nivel, barra de controles (bloquear, girar, ajuste de imagen, velocidad, panel)
+     * y giro automático según la forma del video.
+     *
+     * Los toques llegan por [PullRefreshLayout.touchFilter] antes que la página: los que no
+     * son un gesto pasan intactos al reproductor web; al empezar un gesto la página recibe
+     * `ACTION_CANCEL` y el resto del gesto es de Nexo.
      */
     class FullscreenOverlay(
         private val activity: Activity,
-        private val hostContainer: ViewGroup,
+        private val hostContainer: com.nexo.browser.PullRefreshLayout,
         private val onOpenPanel: () -> Unit
     ) {
         private var overlayRoot: FrameLayout? = null
+        private var hud: LinearLayout? = null
         private var hudText: TextView? = null
+        private var hudLevel: LevelBar? = null
+        private var sideHud: TextView? = null
         private var controlsBar: LinearLayout? = null
-        private var lockButton: Button? = null
+        private var lockButton: TextView? = null
+        private var fitButton: TextView? = null
+        private var speedButton: TextView? = null
         private var locked = false
-        private val hideHud = Runnable { hudText?.visibility = View.GONE }
-        private val hideBar = Runnable { controlsBar?.visibility = View.GONE }
+        private var fit = MediaGestures.Fit.CONTAIN
+        private var savedOrientation: Int? = null
+        private val hideHud = Runnable { hud?.visibility = View.GONE }
+        private val hideSide = Runnable { sideHud?.visibility = View.GONE }
+        private val hideBar = Runnable { if (!locked) controlsBar?.visibility = View.GONE else lockOnly() }
+
+        // Estado del gesto en curso.
+        private enum class Mode { NONE, CONTROLS, LOCKED, SEEK_TAP, HOLD, BRIGHTNESS, VOLUME, SCRUB }
+        private var mode = Mode.NONE
+        private var startX = 0f
+        private var startY = 0f
+        private var startZone = MediaGestures.Zone.PAGE
+        private var startBrightness = 0.5f
+        private var startVolume = 0
+        private var maxVolume = 15
+        private var scrubDelta = 0
+        private var lastTapUpMs = 0L
+        private var lastTapZone: MediaGestures.Zone? = null
+        private var chainUntilMs = 0L
+        private var chainZone: MediaGestures.Zone? = null
+        private var chainSeconds = 0
+        private var pass: ((MotionEvent) -> Boolean)? = null
+        private var downEvent: MotionEvent? = null
+        private val longPress = Runnable { startHold() }
+        private val audio by lazy { activity.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
+        private val slop by lazy { ViewConfiguration.get(activity).scaledTouchSlop.toFloat() }
 
         fun setActive(fullscreen: Boolean) {
             if (!fullscreen) {
-                detach()
-                return
-            }
-            if (!MediaSitePrefs.fullscreenGestures(activity)) {
                 detach()
                 return
             }
@@ -345,189 +442,394 @@ object NexoMediaEngine {
 
         fun detach() {
             main.removeCallbacks(hideHud)
+            main.removeCallbacks(hideSide)
             main.removeCallbacks(hideBar)
+            main.removeCallbacks(longPress)
+            if (mode == Mode.HOLD) sendHoldSpeed(session(), false)
+            if (fit != MediaGestures.Fit.CONTAIN) sendFit(session(), MediaGestures.Fit.CONTAIN)
+            fit = MediaGestures.Fit.CONTAIN
+            mode = Mode.NONE
             locked = false
-            overlayRoot?.let { view ->
-                (view.parent as? ViewGroup)?.removeView(view)
-            }
+            downEvent?.recycle()
+            downEvent = null
+            if (hostContainer.touchFilter != null) hostContainer.touchFilter = null
+            savedOrientation?.let { runCatching { activity.requestedOrientation = it } }
+            savedOrientation = null
+            overlayRoot?.let { (it.parent as? ViewGroup)?.removeView(it) }
             overlayRoot = null
+            hud = null
             hudText = null
+            hudLevel = null
+            sideHud = null
             controlsBar = null
             lockButton = null
+            fitButton = null
+            speedButton = null
         }
 
         private fun dp(v: Float): Int = (v * activity.resources.displayMetrics.density).toInt()
 
+        private fun session(): EngineSession? = TabManager.activeTab()?.session
+
+        private fun gesturesOn() = MediaSitePrefs.fullscreenGestures(activity)
+
         private fun attach() {
-            val slop = ViewConfiguration.get(activity).scaledTouchSlop
-            val audio = activity.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            var startX = 0f
-            var startY = 0f
-            var dragging: String? = null // "brightness" | "volume"
-            var startBrightness = 0.5f
-            var startVolume = 0
-            var maxVolume = 15
-
-            val root = object : FrameLayout(activity) {
-                override fun onTouchEvent(event: MotionEvent): Boolean {
-                    if (locked) {
-                        if (event.actionMasked == MotionEvent.ACTION_UP) showControlsTemporarily()
-                        return true
-                    }
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> {
-                            startX = event.x
-                            startY = event.y
-                            dragging = null
-                            val lp = activity.window.attributes
-                            startBrightness = if (lp.screenBrightness in 0.05f..1.0f) lp.screenBrightness else 0.5f
-                            maxVolume = (audio?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15).coerceAtLeast(1)
-                            startVolume = audio?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
-                            // Dejar pasar toques simples al reproductor web salvo que sea arrastre vertical en borde.
-                            return false
-                        }
-                        MotionEvent.ACTION_MOVE -> {
-                            val dx = event.x - startX
-                            val dy = startY - event.y
-                            if (dragging == null && abs(dy) > slop * 2 && abs(dy) > abs(dx) * 1.6f) {
-                                dragging = if (startX < width / 2f) "brightness" else "volume"
-                            }
-                            val mode = dragging ?: return false
-                            val range = (height * 0.55f).coerceAtLeast(180f)
-                            val fraction = dy / range
-                            if (mode == "brightness") {
-                                val next = (startBrightness + fraction).coerceIn(0.05f, 1.0f)
-                                val attrs = activity.window.attributes
-                                attrs.screenBrightness = next
-                                activity.window.attributes = attrs
-                                showHud("Brillo ${(next * 100).roundToInt()}%")
-                            } else if (audio != null) {
-                                val nextVol = (startVolume + fraction * maxVolume).roundToInt().coerceIn(0, maxVolume)
-                                audio.setStreamVolume(AudioManager.STREAM_MUSIC, nextVol, 0)
-                                showHud("Volumen ${(nextVol * 100 / maxVolume)}%")
-                            }
-                            return true
-                        }
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                            val wasDrag = dragging != null
-                            dragging = null
-                            return wasDrag
-                        }
-                    }
-                    return false
-                }
-
-                override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-                    if (locked) {
-                        val bar = controlsBar
-                        if (bar != null && bar.visibility == View.VISIBLE &&
-                            event.y >= bar.top && event.y <= bar.bottom &&
-                            event.x >= bar.left && event.x <= bar.right
-                        ) return false
-                        return true
-                    }
-                    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                        startX = event.x
-                        startY = event.y
-                        dragging = null
-                        val lp = activity.window.attributes
-                        startBrightness = if (lp.screenBrightness in 0.05f..1.0f) lp.screenBrightness else 0.5f
-                        maxVolume = (audio?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15).coerceAtLeast(1)
-                        startVolume = audio?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
-                        return false
-                    }
-                    if (event.actionMasked == MotionEvent.ACTION_MOVE) {
-                        val dx = event.x - startX
-                        val dy = startY - event.y
-                        // Activar gesto vertical solo en los laterales (30% izquierdo / derecho) para no interferir con el centro.
-                        val onEdge = startX < width * 0.30f || startX > width * 0.70f
-                        if (onEdge && abs(dy) > slop * 2 && abs(dy) > abs(dx) * 1.6f) {
-                            dragging = if (startX < width / 2f) "brightness" else "volume"
-                            return true
-                        }
-                    }
-                    return false
-                }
+            val root = FrameLayout(activity).apply {
+                // No acepta toques: solo dibuja. Los toques los filtra el contenedor.
+                isClickable = false
+                isFocusable = false
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }
 
-            val hud = TextView(activity).apply {
+            val pill = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
                 visibility = View.GONE
+                setPadding(dp(18f), dp(12f), dp(18f), dp(12f))
+                background = GradientDrawable().apply {
+                    setColor(0xD9101114.toInt())
+                    cornerRadius = dp(22f).toFloat()
+                }
+            }
+            val hudLabel = TextView(activity).apply {
                 setTextColor(Color.WHITE)
                 textSize = 15f
-                setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
+                gravity = Gravity.CENTER
+                typeface = NexoUi.medium(activity)
+            }
+            val level = LevelBar(activity).apply { visibility = View.GONE }
+            pill.addView(hudLabel)
+            pill.addView(level, LinearLayout.LayoutParams(dp(140f), dp(4f)).apply { topMargin = dp(10f) })
+            root.addView(pill, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+
+            val side = TextView(activity).apply {
+                visibility = View.GONE
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                gravity = Gravity.CENTER
+                typeface = NexoUi.semiBold(activity)
+                setPadding(dp(22f), dp(16f), dp(22f), dp(16f))
                 background = GradientDrawable().apply {
-                    setColor(0xC0000000.toInt())
-                    cornerRadius = dp(18f).toFloat()
+                    shape = GradientDrawable.OVAL
+                    setColor(0x66000000)
                 }
             }
-            root.addView(hud, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            ))
+            root.addView(side, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL or Gravity.START))
 
             val bar = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
+                setPadding(dp(6f), dp(4f), dp(6f), dp(4f))
                 background = GradientDrawable().apply {
-                    setColor(0xB8000000.toInt())
-                    cornerRadius = dp(22f).toFloat()
+                    setColor(0xC7101114.toInt())
+                    cornerRadius = dp(24f).toFloat()
                 }
             }
-
-            fun miniBtn(label: String, onClick: () -> Unit): Button = Button(activity).apply {
+            fun barButton(label: String, description: String, onClick: () -> Unit): TextView = TextView(activity).apply {
                 text = label
-                isAllCaps = false
-                textSize = 12.5f
+                contentDescription = description
                 setTextColor(Color.WHITE)
-                minWidth = 0
-                minimumWidth = 0
-                minHeight = dp(36f)
-                minimumHeight = dp(36f)
+                textSize = 13f
+                typeface = NexoUi.medium(activity)
+                gravity = Gravity.CENTER
+                minWidth = dp(48f)
+                minHeight = dp(44f)
                 setPadding(dp(12f), 0, dp(12f), 0)
-                background = null
-                setOnClickListener { onClick() }
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(0x33FFFFFF), null,
+                    GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(20f).toFloat() })
+                setOnClickListener { onClick(); showControlsTemporarily() }
             }
-
-            val lockBtn = miniBtn("Bloquear") {
-                locked = !locked
-                lockButton?.text = if (locked) "Desbloquear" else "Bloquear"
-                showHud(if (locked) "Controles bloqueados" else "Controles desbloqueados")
-                showControlsTemporarily()
-            }
-            val panelBtn = miniBtn("Media") {
-                if (!locked) onOpenPanel()
-            }
-            bar.addView(lockBtn)
-            bar.addView(panelBtn)
-
+            val lockBtn = barButton("Bloquear", "Bloquear los toques") { toggleLock() }
+            val rotateBtn = barButton("Girar", "Girar la pantalla") { rotate() }
+            val fitBtn = barButton(fit.label, "Ajuste de imagen") { cycleFit() }
+            val speedBtn = barButton(speedLabel(), "Velocidad de reproducción") { cycleSpeed() }
+            val panelBtn = barButton("Más", "Abrir el panel multimedia") { if (!locked) onOpenPanel() }
+            listOf(lockBtn, rotateBtn, fitBtn, speedBtn, panelBtn).forEach { bar.addView(it) }
             root.addView(bar, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.END
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END
             ).apply {
                 topMargin = dp(14f)
                 marginEnd = dp(14f)
             })
 
             overlayRoot = root
-            hudText = hud
+            hud = pill
+            hudText = hudLabel
+            hudLevel = level
+            sideHud = side
             controlsBar = bar
             lockButton = lockBtn
-            hostContainer.addView(
-                root,
-                ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            )
+            fitButton = fitBtn
+            speedButton = speedBtn
+            hostContainer.addView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            hostContainer.touchFilter = { event, passThrough -> onTouch(event, passThrough) }
+            autoRotate()
             showControlsTemporarily()
         }
 
-        private fun showHud(text: String) {
-            val hud = hudText ?: return
-            hud.text = text
-            hud.visibility = View.VISIBLE
+        // ---------------------------------------------------------------- gestos
+
+        private fun onTouch(event: MotionEvent, passThrough: (MotionEvent) -> Boolean): Boolean {
+            val root = overlayRoot ?: return passThrough(event)
+            pass = passThrough
+            val now = android.os.SystemClock.uptimeMillis()
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    main.removeCallbacks(longPress)
+                    downEvent?.recycle()
+                    downEvent = MotionEvent.obtain(event)
+                    startX = event.x
+                    startY = event.y
+                    scrubDelta = 0
+                    if (onControls(event)) {
+                        mode = Mode.CONTROLS
+                        return passThrough(event)
+                    }
+                    if (locked) {
+                        mode = Mode.LOCKED
+                        showControlsTemporarily()
+                        return true
+                    }
+                    mode = Mode.NONE
+                    startZone = MediaGestures.zone(event.x, event.y, root.width, root.height)
+                    if (!gesturesOn()) return passThrough(event)
+                    if (MediaGestures.continuesSeek(startZone, now, lastTapUpMs, lastTapZone, chainUntilMs, chainZone)) {
+                        mode = Mode.SEEK_TAP
+                        seekTap(startZone, now)
+                        return true
+                    }
+                    val lp = activity.window.attributes
+                    startBrightness = if (lp.screenBrightness in 0.02f..1.0f) lp.screenBrightness else systemBrightness()
+                    maxVolume = (audio?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15).coerceAtLeast(1)
+                    startVolume = audio?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
+                    if (startZone != MediaGestures.Zone.PAGE) main.postDelayed(longPress, MediaGestures.LONG_PRESS_MS)
+                    return passThrough(event)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    when (mode) {
+                        Mode.CONTROLS -> return passThrough(event)
+                        Mode.LOCKED, Mode.SEEK_TAP, Mode.HOLD -> return true
+                        Mode.BRIGHTNESS, Mode.VOLUME, Mode.SCRUB -> {
+                            updateDrag(event, root)
+                            return true
+                        }
+                        Mode.NONE -> {
+                            val dx = event.x - startX
+                            val dy = startY - event.y
+                            if (abs(dx) > slop || abs(dy) > slop) main.removeCallbacks(longPress)
+                            if (!gesturesOn()) return passThrough(event)
+                            val drag = MediaGestures.drag(startZone, dx, dy, slop)
+                            if (drag == MediaGestures.Drag.NONE) return passThrough(event)
+                            mode = when (drag) {
+                                MediaGestures.Drag.BRIGHTNESS -> Mode.BRIGHTNESS
+                                MediaGestures.Drag.VOLUME -> Mode.VOLUME
+                                else -> Mode.SCRUB
+                            }
+                            cancelPage(event)
+                            updateDrag(event, root)
+                            return true
+                        }
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    main.removeCallbacks(longPress)
+                    val ended = mode
+                    mode = Mode.NONE
+                    when (ended) {
+                        Mode.CONTROLS -> return passThrough(event)
+                        Mode.NONE -> {
+                            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                                lastTapUpMs = now
+                                lastTapZone = startZone
+                                showControlsTemporarily()
+                            }
+                            return passThrough(event)
+                        }
+                        Mode.SCRUB -> if (event.actionMasked == MotionEvent.ACTION_UP && scrubDelta != 0) {
+                            sendSeekRelative(session(), scrubDelta)
+                        }
+                        Mode.HOLD -> {
+                            sendHoldSpeed(session(), false)
+                            showHud("Velocidad normal")
+                        }
+                        Mode.SEEK_TAP -> {
+                            lastTapUpMs = 0L
+                            chainUntilMs = now + MediaGestures.SEEK_CHAIN_MS
+                        }
+                        else -> Unit
+                    }
+                    return true
+                }
+                else -> return if (mode == Mode.NONE || mode == Mode.CONTROLS) passThrough(event) else true
+            }
+        }
+
+        /** El reproductor web pierde el gesto en curso (deja de arrastrar su barra, etc.). */
+        private fun cancelPage(event: MotionEvent) {
+            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+            runCatching { pass?.invoke(cancel) }
+            cancel.recycle()
+        }
+
+        private fun onControls(event: MotionEvent): Boolean {
+            val bar = controlsBar ?: return false
+            if (bar.visibility != View.VISIBLE) return false
+            return event.x >= bar.left && event.x <= bar.right && event.y >= bar.top && event.y <= bar.bottom
+        }
+
+        private fun systemBrightness(): Float =
+            runCatching {
+                android.provider.Settings.System.getInt(activity.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS) / 255f
+            }.getOrDefault(0.5f).coerceIn(0.02f, 1f)
+
+        private fun updateDrag(event: MotionEvent, root: View) {
+            val dx = event.x - startX
+            val dy = startY - event.y
+            when (mode) {
+                Mode.BRIGHTNESS -> {
+                    val fraction = dy / (root.height * 0.6f).coerceAtLeast(180f)
+                    val next = MediaGestures.brightness(startBrightness, fraction)
+                    val attrs = activity.window.attributes
+                    attrs.screenBrightness = next
+                    activity.window.attributes = attrs
+                    showHud("Brillo ${(next * 100).roundToInt()} %", next)
+                }
+                Mode.VOLUME -> {
+                    val am = audio ?: return
+                    val fraction = dy / (root.height * 0.6f).coerceAtLeast(180f)
+                    val next = MediaGestures.volume(startVolume, fraction, maxVolume)
+                    if (next != am.getStreamVolume(AudioManager.STREAM_MUSIC)) {
+                        runCatching { am.setStreamVolume(AudioManager.STREAM_MUSIC, next, 0) }
+                    }
+                    showHud(if (next == 0) "Silencio" else "Volumen ${next * 100 / maxVolume} %", next / maxVolume.toFloat())
+                }
+                Mode.SCRUB -> {
+                    val snap = snapshot(TabManager.activeTab()?.id)
+                    val duration = snap?.durationSec ?: 0.0
+                    scrubDelta = MediaGestures.scrubSeconds(dx, root.width, duration)
+                    val current = snap?.positionNow(android.os.SystemClock.elapsedRealtime()) ?: 0.0
+                    val target = MediaGestures.scrubTarget(current, scrubDelta, duration)
+                    val sign = if (scrubDelta >= 0) "+" else "−"
+                    val label = buildString {
+                        append(com.nexo.browser.MediaNotificationLayout.formatTime(target))
+                        if (duration > 0) append(" / ").append(com.nexo.browser.MediaNotificationLayout.formatTime(duration))
+                        append("\n").append(sign).append(abs(scrubDelta)).append(" s")
+                    }
+                    showHud(label, if (duration > 0) (target / duration).toFloat() else null)
+                }
+                else -> Unit
+            }
+        }
+
+        private fun seekTap(zone: MediaGestures.Zone, now: Long) {
+            val step = MediaSitePrefs.forSite(activity, TabManager.activeTab()?.url).seekStepSec
+            val forward = zone == MediaGestures.Zone.RIGHT
+            chainSeconds = if (now < chainUntilMs && chainZone == zone) chainSeconds + step else step
+            chainZone = zone
+            chainUntilMs = now + MediaGestures.SEEK_CHAIN_MS
+            sendSeekRelative(session(), if (forward) step else -step)
+            val side = sideHud ?: return
+            side.text = if (forward) "$chainSeconds s  ›› " else " ‹‹  $chainSeconds s"
+            (side.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                lp.gravity = Gravity.CENTER_VERTICAL or if (forward) Gravity.END else Gravity.START
+                lp.marginStart = dp(36f)
+                lp.marginEnd = dp(36f)
+                side.layoutParams = lp
+            }
+            side.visibility = View.VISIBLE
+            side.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            main.removeCallbacks(hideSide)
+            main.postDelayed(hideSide, MediaGestures.SEEK_CHAIN_MS + 150L)
+        }
+
+        private fun startHold() {
+            if (mode != Mode.NONE || locked) return
+            mode = Mode.HOLD
+            downEvent?.let { cancelPage(it) }
+            sendHoldSpeed(session(), true)
+            overlayRoot?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            showHud("2×  ››", null, sticky = true)
+        }
+
+        // ---------------------------------------------------------------- controles
+
+        private fun toggleLock() {
+            locked = !locked
+            lockButton?.text = if (locked) "Desbloquear" else "Bloquear"
+            lockButton?.contentDescription = if (locked) "Desbloquear los toques" else "Bloquear los toques"
+            controlsBar?.let { bar ->
+                for (i in 0 until bar.childCount) {
+                    val child = bar.getChildAt(i)
+                    child.visibility = if (!locked || child === lockButton) View.VISIBLE else View.GONE
+                }
+            }
+            showHud(if (locked) "Pantalla bloqueada" else "Pantalla desbloqueada")
+        }
+
+        private fun lockOnly() {
+            // Bloqueado: la barra se esconde igual; un toque la vuelve a mostrar.
+            controlsBar?.visibility = View.GONE
+        }
+
+        private fun rotate() {
+            if (savedOrientation == null) savedOrientation = activity.requestedOrientation
+            val landscape = activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            activity.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+
+        private fun autoRotate() {
+            if (!MediaSitePrefs.autoRotate(activity)) return
+            val tab = TabManager.activeTab() ?: return
+            val (w, h) = com.nexo.browser.BrowserMediaController.videoAspect(tab.id)
+            if (w <= 0 || h <= 0) return
+            val wanted = when {
+                w > h * 1.05f -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                h > w * 1.05f -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                else -> return
+            }
+            savedOrientation = activity.requestedOrientation
+            activity.requestedOrientation = wanted
+        }
+
+        private fun cycleFit() {
+            fit = fit.next()
+            fitButton?.text = fit.label
+            sendFit(session(), fit)
+            showHud(when (fit) {
+                MediaGestures.Fit.CONTAIN -> "Imagen completa"
+                MediaGestures.Fit.COVER -> "Rellenar pantalla (recorta)"
+                MediaGestures.Fit.FILL -> "Estirar a la pantalla"
+            })
+        }
+
+        private fun speedLabel(): String {
+            val rate = snapshot(TabManager.activeTab()?.id)?.playbackRate ?: 1f
+            return if (abs(rate - rate.roundToInt()) < 0.01f) "${rate.roundToInt()}×" else "${rate}×"
+        }
+
+        private fun cycleSpeed() {
+            val current = snapshot(TabManager.activeTab()?.id)?.playbackRate ?: 1f
+            val steps = listOf(1f, 1.25f, 1.5f, 2f, 0.75f)
+            val idx = steps.indexOfFirst { abs(it - current) < 0.04f }
+            val next = steps[(idx + 1).mod(steps.size)]
+            sendSpeed(session(), next)
+            speedButton?.text = if (abs(next - next.roundToInt()) < 0.01f) "${next.roundToInt()}×" else "${next}×"
+            showHud("Velocidad ${speedButton?.text}")
+        }
+
+        private fun showHud(text: String, level: Float? = null, sticky: Boolean = false) {
+            val pill = hud ?: return
+            hudText?.text = text
+            hudLevel?.let { bar ->
+                bar.visibility = if (level != null) View.VISIBLE else View.GONE
+                if (level != null) bar.setLevel(level)
+            }
+            pill.visibility = View.VISIBLE
             main.removeCallbacks(hideHud)
-            main.postDelayed(hideHud, 1200L)
+            if (!sticky) main.postDelayed(hideHud, 1100L)
         }
 
         private fun showControlsTemporarily() {
@@ -535,6 +837,24 @@ object NexoMediaEngine {
             bar.visibility = View.VISIBLE
             main.removeCallbacks(hideBar)
             main.postDelayed(hideBar, 3500L)
+        }
+    }
+
+    /** Barra de nivel del HUD (brillo, volumen, posición). */
+    private class LevelBar(context: Context) : View(context) {
+        private var level = 0f
+        private val track = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0x4DFFFFFF }
+        private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+
+        fun setLevel(value: Float) {
+            level = if (value.isFinite()) value.coerceIn(0f, 1f) else 0f
+            invalidate()
+        }
+
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            val r = height / 2f
+            canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, track)
+            if (level > 0f) canvas.drawRoundRect(0f, 0f, width * level, height.toFloat(), r, r, fill)
         }
     }
 }

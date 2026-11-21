@@ -51,6 +51,23 @@ object RemoteImageLoader {
         }
     }
 
+    /** Imagen https suelta (carátulas de la notificación multimedia); [onBitmap] en el hilo principal. */
+    fun loadBitmap(url: String, onBitmap: (Bitmap?) -> Unit) {
+        if (url.isBlank() || UrlSafety.scheme(url) != "https") {
+            onBitmap(null)
+            return
+        }
+        cache.get(url)?.let {
+            onBitmap(it)
+            return
+        }
+        pool.execute {
+            val bitmap = runCatching { fetch(url) }.getOrNull()
+            if (bitmap != null) cache.put(url, bitmap)
+            main.post { onBitmap(bitmap) }
+        }
+    }
+
     /** El icono genérico se tiñe con el color secundario del tema para que se vea. */
     private fun showPlaceholder(target: ImageView) {
         target.setImageResource(R.drawable.ic_extension_placeholder)

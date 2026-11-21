@@ -1538,11 +1538,13 @@
       time: Number.isFinite(rawTime) && rawTime >= 0 ? Math.round(rawTime * 10) / 10 : 0,
       duration: Number.isFinite(rawDur) && rawDur > 0 ? Math.round(rawDur * 10) / 10 : 0,
       drm: Boolean(best && best.mediaKeys),
-      tracks: hasTracks
+      tracks: hasTracks,
+      loop: Boolean(best && best.loop),
+      buffered: best ? bufferedAhead(best) : 0
     };
 
     const key = `${state.present}|${state.playing}|${state.width}|${state.height}|` +
-      `${state.rx}|${state.ry}|${state.rw}|${state.rh}|${state.rate}|${state.drm}|${state.tracks}`;
+      `${state.rx}|${state.ry}|${state.rw}|${state.rh}|${state.rate}|${state.drm}|${state.tracks}|${state.loop}`;
     const now = Date.now();
 
     if (key === lastStateKey && now - lastReportAt < HEARTBEAT_MS) return;
@@ -1557,6 +1559,8 @@
   }
 
   /** Comandos de Nexo Media Engine: velocidad, salto configurable, play/pause y desplazamiento CC. */
+  let heldRate = 0;
+
   function mediaCommand(message) {
     const action = String(message && message.action || "");
     if (action === "set_caption_offset") {
@@ -1581,14 +1585,61 @@
       return;
     }
     if (action === "set_speed") {
-      const rate = Math.max(0.5, Math.min(2.5, Number(message.speed) || 1));
+      const rate = Math.max(0.25, Math.min(3, Number(message.speed) || 1));
+      heldRate = 0;
       try { video.playbackRate = rate; } catch (_) {}
       lastStateKey = "";
       scheduleVideoReport();
       return;
     }
+    // Mantener pulsado en pantalla completa: velocidad temporal que se deshace al soltar.
+    if (action === "hold_speed") {
+      try {
+        if (message.active === true) {
+          if (!heldRate) heldRate = Number(video.playbackRate) || 1;
+          video.playbackRate = Math.max(0.25, Math.min(3, Number(message.speed) || 2));
+        } else if (heldRate) {
+          video.playbackRate = heldRate;
+          heldRate = 0;
+        }
+      } catch (_) {}
+      lastStateKey = "";
+      scheduleVideoReport();
+      return;
+    }
+    if (action === "seek_to") {
+      const time = Number(message.time);
+      if (!Number.isFinite(time) || time < 0) return;
+      try {
+        if (video.seekable && video.seekable.length) {
+          const start = video.seekable.start(0);
+          const end = video.seekable.end(video.seekable.length - 1);
+          video.currentTime = Math.max(start, Math.min(end, time));
+        } else {
+          video.currentTime = time;
+        }
+      } catch (_) {}
+      lastStateKey = "";
+      scheduleVideoReport();
+      return;
+    }
+    // Ajuste de imagen: contener (por defecto), rellenar recortando o estirar.
+    if (action === "set_fit") {
+      const fit = ["contain", "cover", "fill"].includes(message.fit) ? message.fit : "contain";
+      try {
+        if (fit === "contain") video.style.removeProperty("object-fit");
+        else video.style.setProperty("object-fit", fit, "important");
+      } catch (_) {}
+      return;
+    }
+    if (action === "set_loop") {
+      try { video.loop = message.loop === true; } catch (_) {}
+      lastStateKey = "";
+      scheduleVideoReport();
+      return;
+    }
     if (action === "seek_relative") {
-      const delta = Math.max(-120, Math.min(120, Number(message.delta) || 0));
+      const delta = Math.max(-600, Math.min(600, Number(message.delta) || 0));
       if (!delta) return;
       try {
         if (video.seekable && video.seekable.length) {
@@ -1604,6 +1655,18 @@
       lastStateKey = "";
       scheduleVideoReport();
     }
+  }
+
+  /** Segundos ya descargados por delante de la posición actual (indicador de búfer). */
+  function bufferedAhead(video) {
+    try {
+      const t = Number(video.currentTime) || 0;
+      const ranges = video.buffered;
+      for (let i = 0; ranges && i < ranges.length; i++) {
+        if (ranges.start(i) <= t + 0.25 && ranges.end(i) >= t) return Math.round((ranges.end(i) - t) * 10) / 10;
+      }
+    } catch (_) {}
+    return 0;
   }
 
   function screenRect(video) {

@@ -13,7 +13,12 @@ object BrowserMediaController {
     data class Snapshot(
         val tabId: String,
         val title: String,
-        val playing: Boolean
+        val playing: Boolean,
+        /** Metadatos, posición y acciones que informa la página (sin carátula ni artista en privado). */
+        val details: MediaDetails? = null,
+        /** Sitio que suena ("youtube.com"); vacío en privado. */
+        val host: String = "",
+        val isPrivate: Boolean = false
     )
 
     private class Entry(
@@ -52,6 +57,7 @@ object BrowserMediaController {
     )
 
     private val entries = linkedMapOf<String, Entry>()
+    private val details = mutableMapOf<String, MediaDetails>()
     private val videos = mutableMapOf<String, VideoState>()
     private val recentPlayback = mutableMapOf<String, Long>()
 
@@ -293,6 +299,7 @@ object BrowserMediaController {
 
     fun removeTab(tabId: String) {
         entries.remove(tabId)
+        details.remove(tabId)
         videos.remove(tabId)
         recentPlayback.remove(tabId)
         playbackHoldUntil.remove(tabId)
@@ -394,15 +401,100 @@ object BrowserMediaController {
         val entry = entries[selectedId] ?: return null
         currentTabId = selectedId
 
+        val tab = TabManager.allTabs().firstOrNull { it.id == selectedId }
+        val host = if (entry.isPrivate) "" else com.nexo.browser.media.MediaSitePrefs.normalizeHost(tab?.url)
         return Snapshot(
             tabId = selectedId,
             title = entry.title,
-            playing = isPlaybackActive(selectedId)
+            playing = isPlaybackActive(selectedId),
+            details = details[selectedId]?.let { if (entry.isPrivate) it.forPrivate() else it },
+            host = host,
+            isPrivate = entry.isPrivate
         )
     }
 
     fun snapshotForService(): Snapshot? =
-        snapshotFor(allowHold = true)
+        snapshotFor(allowHold = true) ?: pausedSnapshot()
+
+    /**
+     * En pausa la notificación sigue (como en cualquier reproductor) para poder reanudar desde
+     * la pantalla de bloqueo o la isla dinámica; el servicio la retira pasado un tiempo.
+     */
+    private fun pausedSnapshot(): Snapshot? {
+        val id = currentTabId?.takeIf { entries[it]?.mediaSession?.isActive == true }
+            ?: entries.entries.lastOrNull { it.value.mediaSession.isActive }?.key
+            ?: return null
+        val entry = entries[id] ?: return null
+        val tab = TabManager.allTabs().firstOrNull { it.id == id }
+        return Snapshot(
+            tabId = id,
+            title = entry.title,
+            playing = false,
+            details = details[id]?.let { if (entry.isPrivate) it.forPrivate() else it },
+            host = if (entry.isPrivate) "" else com.nexo.browser.media.MediaSitePrefs.normalizeHost(tab?.url),
+            isPrivate = entry.isPrivate
+        )
+    }
+
+    /** Detalles de la página (null al dejar de sonar). Solo avisa si cambia algo visible. */
+    fun updateDetails(tabId: String, value: MediaDetails?) {
+        val previous = details[tabId]
+        if (value == null) {
+            if (details.remove(tabId) != null) notifyChanged()
+            return
+        }
+        details[tabId] = value
+        val visibleChange = previous == null ||
+            previous.copy(positionSec = 0.0, reportedAtMs = 0L) != value.copy(positionSec = 0.0, reportedAtMs = 0L) ||
+            kotlin.math.abs(previous.positionAt(value.reportedAtMs, isPlaybackActive(tabId)) - value.positionSec) > 1.5
+        if (visibleChange && entries.containsKey(tabId)) notifyChanged()
+    }
+
+    private fun sessionFor(tabId: String) = TabManager.allTabs().firstOrNull { it.id == tabId }?.session
+
+    private fun targetTab(): String? = currentTabId ?: entries.keys.lastOrNull()
+
+    fun playCurrent() {
+        val id = targetTab() ?: return
+        playbackHoldUntil.remove(id)
+        play(id)
+    }
+
+    fun seekTo(positionMs: Long) {
+        val id = targetTab() ?: return
+        val time = (positionMs.coerceAtLeast(0L) / 1000.0)
+        PageBridge.sendMediaSessionCommand(sessionFor(id), "seekto", org.json.JSONObject().put("time", time))
+        details[id]?.let { details[id] = it.copy(positionSec = time, reportedAtMs = now()) }
+        notifyChanged()
+    }
+
+    fun seekBy(deltaSec: Int) {
+        val id = targetTab() ?: return
+        PageBridge.sendMediaSessionCommand(sessionFor(id), "seekby", org.json.JSONObject().put("delta", deltaSec))
+    }
+
+    fun skipNext() {
+        val id = targetTab() ?: return
+        PageBridge.sendMediaSessionCommand(sessionFor(id), "nexttrack")
+    }
+
+    fun skipPrevious() {
+        val id = targetTab() ?: return
+        PageBridge.sendMediaSessionCommand(sessionFor(id), "previoustrack")
+    }
+
+    /** Al cerrar la app desde Recientes: nada debe seguir sonando sin interfaz. */
+    fun stopAll() {
+        val all = entries.toMap()
+        playbackHoldUntil.clear()
+        recentPlayback.clear()
+        all.forEach { (id, entry) ->
+            entry.playing = false
+            notifyUserPaused(id)
+            main.post { runCatching { entry.mediaSession.pause() } }
+        }
+        notifyChanged()
+    }
 
     fun play(tabId: String) {
         val entry = entries[tabId] ?: return

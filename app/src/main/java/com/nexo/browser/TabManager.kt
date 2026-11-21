@@ -905,6 +905,17 @@ object TabManager {
                 return
             }
 
+            // Ejecutable desde una página que el escáner marcó como fraudulenta: no se descarga.
+            val ctx = requireContext()
+            if (com.nexo.browser.shield.MalwareScan.blocksDownload(ctx, tab, download.uri)) {
+                download.discard()
+                listener?.onMessage("Descarga bloqueada: esta página parece fraudulenta y el archivo instala programas.")
+                return
+            }
+            if (com.nexo.browser.shield.MalwareScan.warnsDownload(ctx, tab, download.uri)) {
+                listener?.onMessage("Atención: estás descargando un instalador desde una página con señales sospechosas.")
+            }
+
             // Sin proxy ni Burner, un archivo grande puede repartirse en varias conexiones
             // y reanudarse si se corta (misma sesión: cookies y modo privado).
             val source = if (tab.networkProfile == null && tab.burnerId == null) {

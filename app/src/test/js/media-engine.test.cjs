@@ -114,7 +114,7 @@ test('media_command set_speed and seek_relative clamp bounds and update video cl
   h.send({ type: 'media_command', action: 'set_speed', speed: 1.75 });
   assert.equal(v.playbackRate, 1.75);
   h.send({ type: 'media_command', action: 'set_speed', speed: 9.0 });
-  assert.equal(v.playbackRate, 2.5);
+  assert.equal(v.playbackRate, 3);
   h.send({ type: 'media_command', action: 'seek_relative', delta: 15 });
   assert.equal(v.currentTime, 45);
   h.send({ type: 'media_command', action: 'seek_relative', delta: -100 });
@@ -159,4 +159,28 @@ test('media_command set_caption_offset shifts track cues without ever mutating v
   assert.equal(timeWrites, 0);
   actives = h.reports.filter(r => r.type === 'captions_active');
   assert.deepEqual(Array.from(actives[actives.length - 1].ids), [0]);
+});
+
+test('fullscreen gestures: hold speed restores the previous rate, seek_to clamps, fit and loop apply', () => {
+  const h = harness();
+  const v = h.addVideo({ currentTime: 30, playbackRate: 1.25 });
+  const styles = {};
+  v.style = { setProperty(k, val) { styles[k] = val; }, removeProperty(k) { delete styles[k]; } };
+  h.send({ type: 'media_command', action: 'hold_speed', active: true, speed: 2 });
+  assert.equal(v.playbackRate, 2);
+  h.send({ type: 'media_command', action: 'hold_speed', active: true, speed: 2 });
+  h.send({ type: 'media_command', action: 'hold_speed', active: false });
+  assert.equal(v.playbackRate, 1.25, 'releasing restores the rate the user had');
+  h.send({ type: 'media_command', action: 'seek_to', time: 500 });
+  assert.equal(v.currentTime, 120);
+  h.send({ type: 'media_command', action: 'seek_to', time: -4 });
+  assert.equal(v.currentTime, 120, 'negative targets are ignored');
+  h.send({ type: 'media_command', action: 'seek_relative', delta: -300 });
+  assert.equal(v.currentTime, 0, 'large scrubs are allowed and clamped to the seekable range');
+  h.send({ type: 'media_command', action: 'set_fit', fit: 'cover' });
+  assert.equal(styles['object-fit'], 'cover');
+  h.send({ type: 'media_command', action: 'set_fit', fit: 'url(evil)' });
+  assert.equal(styles['object-fit'], undefined, 'unknown values fall back to contain');
+  h.send({ type: 'media_command', action: 'set_loop', loop: true });
+  assert.equal(v.loop, true);
 });

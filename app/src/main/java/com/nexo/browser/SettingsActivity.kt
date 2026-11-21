@@ -473,7 +473,41 @@ class SettingsActivity : Activity() {
             NexoUi.glassToast(this, if (it && com.nexo.browser.ai.AiHub.master(this) == null) "Configura una conexión en Nexo AI para usarla" else "Guardado")
         }.apply { setPadding(0, paddingTop, 0, paddingBottom) }
         card.addView(local, idx++)
-        card.addView(ai, idx)
+        card.addView(ai, idx++)
+        val blocked = com.nexo.browser.shield.MalwareScan.blockedCount(this)
+        val trusted = com.nexo.browser.shield.MalwareScan.trustedOrigins(this)
+        val manage = NexoUi.actionRow(
+            this,
+            R.drawable.ic_menu_shield,
+            "Sitios de confianza del escáner",
+            buildString {
+                append(if (trusted.isEmpty()) "Ninguno" else "${trusted.size}")
+                if (blocked > 0) append(" · ${if (blocked == 1) "1 página frenada" else "$blocked páginas frenadas"}")
+            }
+        ) { showTrustedSites() }.apply { setPadding(0, paddingTop, 0, paddingBottom) }
+        card.addView(manage, idx)
+    }
+
+    private fun showTrustedSites() {
+        val origins = com.nexo.browser.shield.MalwareScan.trustedOrigins(this)
+        if (origins.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Sitios de confianza")
+                .setMessage("Cuando marques un sitio como de confianza desde Control del sitio, aparecerá aquí y el escáner no lo analizará.")
+                .setPositiveButton("Entendido", null)
+                .show()
+            return
+        }
+        val checked = BooleanArray(origins.size)
+        AlertDialog.Builder(this)
+            .setTitle("Quitar de confianza")
+            .setMultiChoiceItems(origins.map { it.substringAfter("://") }.toTypedArray(), checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Quitar") { _, _ ->
+                origins.filterIndexed { i, _ -> checked[i] }.forEach { com.nexo.browser.shield.MalwareScan.untrust(this, it) }
+                NexoUi.glassToast(this, "Guardado")
+            }
+            .show()
     }
 
     private fun updateDefaultBrowserVisibility() {

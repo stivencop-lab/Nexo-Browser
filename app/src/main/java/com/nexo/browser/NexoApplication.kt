@@ -44,6 +44,9 @@ class NexoApplication : Application() {
         CrashLog.install(this)
         MigrationMode.initialize(this)
         if (!MigrationMode.cold) BrowserPrefs.purgeLegacyKeys(this)
+        // Notificaciones que sobrevivieron a un proceso anterior (cierre forzado, fallo).
+        MediaPlaybackService.clearStale(this)
+        DownloadStore.clearStaleProgress(this)
 
         if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
             StrictMode.setThreadPolicy(

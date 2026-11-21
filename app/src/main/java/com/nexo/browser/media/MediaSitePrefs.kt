@@ -14,6 +14,7 @@ object MediaSitePrefs {
     private const val KEY_GESTURES = "fullscreen_gestures"
     private const val KEY_CAPTION_FONT = "caption_font"
     private const val KEY_DEFAULT_OFFSET_MS = "default_caption_offset_ms"
+    private const val KEY_AUTO_ROTATE = "fullscreen_auto_rotate"
     private const val MAX_SITES = 300
 
     const val BG_INHERIT = "inherit"
@@ -25,7 +26,7 @@ object MediaSitePrefs {
     const val FONT_MONO = "mono"
 
     val SEEK_STEPS = listOf(5, 10, 15, 30)
-    val SPEEDS = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f)
+    val SPEEDS = listOf(0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f)
 
     data class SiteConfig(
         val speed: Float = 1.0f,
@@ -90,6 +91,13 @@ object MediaSitePrefs {
 
     fun setFullscreenGestures(context: Context, enabled: Boolean) =
         prefs(context).edit().putBoolean(KEY_GESTURES, enabled).apply()
+
+    /** Pantalla completa: girar según la forma del video (horizontal o vertical). */
+    fun autoRotate(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_AUTO_ROTATE, true)
+
+    fun setAutoRotate(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean(KEY_AUTO_ROTATE, enabled).apply()
 
     fun captionFont(context: Context): String =
         prefs(context).getString(KEY_CAPTION_FONT, FONT_SANS)?.takeIf { it in setOf(FONT_SANS, FONT_SERIF, FONT_MONO) } ?: FONT_SANS
