@@ -1,8 +1,8 @@
 # Auditoría de Nexo Browser v0.39.2
 
-Base auditada `7750425` (v0.39.1). Motor Chromium 156 con Cefrium 0.21.0, minSdk 29 y targetSdk 35. La maqueta HTML facilitada describe el objetivo visual y simula la reanudación.
+Base auditada `7750425` (v0.39.1). La aplicación v0.39.2 corresponde al commit de integración `33fc71c`. Motor Chromium 156 con Cefrium 0.21.0, minSdk 29 y targetSdk 35. La maqueta HTML facilitada describe el objetivo visual y simula la reanudación.
 
-| Área | Cambio en esta rama | Verificación pendiente |
+| Área | Cambio en v0.39.2 | Verificación pendiente |
 | --- | --- | --- |
 | Liquid Glass | Paleta, tipografía y radios compartidos. Isla de 56 dp y satélite de pestañas sobre el contenido web. Captura compartida a un cuarto de escala, RenderEffect desde API 31 y StackBlur en API 29–30. La intensidad se guarda en DataStore. | Trazas de scroll a 120 Hz y comprobación visual del cristal y ventanas en API 29, 31 y 35. |
 | Reanudación | Snapshot en onPause, validación del SurfaceHolder, reactivación al recibir foco, fundido de 90 ms y reconstrucción limitada tras 450 ms. El estado de navegación de Chromium incluye la posición. El flujo existente de recuperación del renderer conserva la última posición de scroll observada. | Diez ciclos por API, con vídeo, PiP y páginas de color uniforme. Medir negro visible y latencia de copia. |
@@ -24,3 +24,29 @@ Base auditada `7750425` (v0.39.1). Motor Chromium 156 con Cefrium 0.21.0, minSdk
 | uBlock Origin Lite 2026.1116.1650 | CRX3/MV3 con tres firmas verificadas. El compilador admitió 11.624 reglas estáticas y bloqueó las solicitudes de prueba a `doubleclick.net`, `adservice.google.com` y `pagead2.googlesyndication.com`. Permitió el control negativo `example.org`. |
 
 La comprobación JVM cubre firma, extracción, manifiesto y decisiones DNR. La aceptación de los popups, la consola de Chromium, el tiempo por fotograma y la reanudación se evalúan en Android ARM.
+
+## Publicación
+
+La release v0.39.2 se compiló desde `33fc71c` con `versionCode 76`. El flujo de GitHub completó las regresiones JavaScript, JVM y Robolectric, la compilación, lint, la verificación de identidad y la firma de los APK ARM64 y ARMv7. [Ejecución de publicación](https://github.com/stivencop414-bot/Nexo-Browser/actions/runs/44904929736) · [APK y sumas de la release](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.39.2)
+
+## Interfaz Liquid Glass
+
+| Tema | Fondo | Uso |
+| --- | --- | --- |
+| Obsidian | `#09090B` | Carbón neutro para el tema oscuro. |
+| OLED | `#000000` | Negro puro para el fondo de la interfaz. |
+| Paper | `#F5F4F0` | Marfil para el tema claro. |
+
+Los acentos son Monocromo, Cobalto Editorial (`#2B59FF`), Bermellón (`#E84E24`) y Salvia (`#1F9D63`). Usa **Configuración › Apariencia** para cambiar tema y acento. En **Configuración › Navegación**, **Intensidad del cristal** ofrece **Sutil** (16 dp), **Equilibrado** (28 dp) y **Máximo Cristal** (36 dp). La zona táctil del modo compacto conserva 48 dp.
+
+Los tokens viven en `NexoTokens.kt` y `BrowserColors.kt`. `NexoGlassBackdrop` comparte una captura reducida entre los controles flotantes. Android 12 o posterior usa RenderEffect. En Android 10 y 11, el desenfoque de la captura web se calcula con StackBlur fuera del hilo principal.
+
+## Repetir la prueba de reanudación
+
+Este filtro muestra el primer búfer y el watchdog mientras alternas entre Nexo y la pantalla de inicio.
+
+```bash
+adb logcat -s NexoResumeBridge
+```
+
+Con un APK ARM de la release, deja visible una página con texto o vídeo y repite diez veces la salida y el regreso. Registra por separado los casos en API 29, 31 y 35 y anota si la superficie quedó negra, si se reconstruyó el navegador y si se conservó la posición. Para evaluar el objetivo de 120 Hz se necesita una traza de fotogramas en un dispositivo con esa frecuencia. El tiempo que registra el puente mide la disponibilidad del búfer, mientras que el negro visible requiere observar o grabar la pantalla.

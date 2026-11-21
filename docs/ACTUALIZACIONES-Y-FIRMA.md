@@ -1,108 +1,67 @@
-# Firma e identidad de Android
+# Actualizaciones, firma y publicación de Nexo
 
-**Desde 0.25.0 el paquete es `com.nexo.browser`.** Android lo instala como otra app:
-no reemplaza las versiones anteriores ni transfiere automáticamente sus datos,
-aunque la firma sea la misma. Ver [identidad de Nexo](IDENTIDAD-NEXO.md).
+El paquete Android actual es `com.nexo.browser`. Android actualiza en el sitio una instalación con el mismo paquete y certificado de firma cuando el nuevo APK tiene un `versionCode` mayor. Desde v0.25.0, las instalaciones del paquete anterior `com.ejemplo.navegador` siguen la ruta de importación. [Cambio de identidad](IDENTIDAD-NEXO.md) · [Transferencia de perfil](TRANSFERENCIA-PERFIL.md)
 
-## Antecedentes: firma persistente desde 0.14.1
+## Actualizar en el teléfono
 
-Android conserva los datos al reemplazar una app si mantiene `applicationId`, un
-`versionCode` superior y la misma identidad de firma. En 0.14.1 Nexo mantuvo
-`com.ejemplo.navegador` y subió versionCode de 28 a 29. Esa línea de identidad
-se conserva hasta 0.24.0; las secciones históricas siguientes se refieren a ella.
+1. Abre [GitHub Releases](https://github.com/stivencop414-bot/Nexo-Browser/releases/latest) y descarga el APK firmado para tu ABI.
+2. Compara el hash del archivo con `SHA256SUMS.txt` de esa misma release.
+3. Abre el APK para actualizar. Si Android indica que el paquete entra en conflicto con una app existente, comprueba el paquete y el certificado del APK instalado antes de desinstalar. Las compilaciones debug se firman con otra clave.
 
-El propietario confirmó que usa un APK debug de Artifacts y no conserva su keystore.
-Por su indicación se creó una nueva clave persistente RSA-4096 para iniciar la línea de
-firma de 0.14.1. No se regenera en CI. Se preparó un respaldo privado fuera del checkout
-con el keystore, el alias y las credenciales; el propietario debe descargarlo y conservarlo
-en almacenamiento privado permanente. Ninguna clave privada ni contraseña se incluye en
-el repositorio, APK, Releases o artefactos de CI.
-
-## Configurar la firma en GitHub
-
-En **Settings → Secrets and variables → Actions** del repositorio, crear o reemplazar:
-
-- `ANDROID_KEYSTORE_BASE64`: contenido del archivo homónimo del respaldo (sin `.txt`).
-- `ANDROID_KEYSTORE_PASSWORD`: contraseña del almacén incluida en el respaldo.
-- `ANDROID_KEY_ALIAS`: `nexo`.
-- `ANDROID_KEY_PASSWORD`: contraseña de la clave incluida en el respaldo.
-
-La compilación no recibe estos secretos; solo el paso de firma los utiliza. Esta tarea
-no pudo configurarlos: la integración devuelve `403 Resource not accessible by integration`
-al consultar sus nombres y no se intentó eludir ese permiso. Los APK candidatos locales
-sí se firmaron y verificaron con la nueva clave.
-
-## Identidad fijada
-
-`config/android-signing-certificate.sha256` contiene la huella pública de la nueva clave.
-El workflow verifica cada firma con apksigner y exige ese certificado antes de subir o
-publicar. Así una sustitución accidental del keystore bloquea la release. No cambies esa
-huella para hacer pasar una clave distinta: restaura el respaldo original.
-
-El verificador acepta los APK 0.14.1 firmados con la clave persistente y rechaza tanto un
-APK debug con otra clave como la release antigua 0.13.6. La huella de 0.13.6 se verificó
-contra su APK público y su SHA256SUMS: era
-`8a2bf18b515d613aeb8b0da920a5f102d3a1741e9b3a736be2fc70e29aef3d0b`.
-Ese certificado anterior no corresponde a la nueva clave ni permite reconstruirla.
-
-## Primera transición desde Artifacts
-
-Los APK debug del CI utilizan el `debug.keystore` del runner, que este workflow no conserva
-entre ejecuciones. Como falta esa clave anterior, la nueva firma no permite instalar encima
-de la app actual. Subir versionCode, mantener el paquete o firmar la extensión con Mozilla
-no elimina esa comprobación de Android.
-
-Esta primera transición necesita una migración con copia comprobada y reinstalación. No
-se ejecutó ninguna desinstalación ni se garantiza conservación del historial antes de
-preparar y verificar esa copia. No desinstales la app actual mientras falte ese paso.
-Tras la transición, usa siempre APKs firmados con el respaldo de 0.14.1: las siguientes
-versiones podrán instalarse encima conservando los datos, sujeto a comprobarlo en el dispositivo.
-
-## Publicación y validación
-
-Antes de preparar una actualización, revisar también las ramas con trabajo reciente:
-el entorno puede tener configurado `git fetch origin` para traer únicamente `main`.
-`git fetch origin '+refs/heads/*:refs/remotes/origin/*' --tags --prune` permite inspeccionarlas.
-Un PR fusionado no incorpora los commits añadidos después a su rama. Comparar esos cambios
-con `main` y resolver su integración antes de elegir la versión. El `versionCode` nuevo
-debe superar al del APK más reciente distribuido, también si salió de otra rama.
-
-Nexo 0.15.3 integra las correcciones de arranque y diagnóstico de la rama 0.15.2
-(versionCode 32) junto con la interfaz y traducción en línea de `main`. Usa versionCode 33;
-no recupera los modelos ML Kit retirados ni cambia la identidad de firma.
-
-Tras revisar y fusionar el PR: **Nexo Secure CI and Release → Run workflow**, desde `main`,
-`mode=release`, tag vacío. Conservar los cuatro secrets y el respaldo privado para todas las
-versiones. Si el tag ya existe, corregir y publicar una versión nueva; no borrar releases.
-
-Verificar SHA256SUMS, certificado, instalación sobre una versión de la misma línea de firma,
-conservación del historial/pestañas, PiP, descargas y traducción. El keystore no debe incluirse
-nunca en los artefactos subidos ni en el código fuente. Los tests locales verificaron la firma
-y los assets del APK; la migración de datos y la instalación en un teléfono siguen pendientes.
-
-## Firmar localmente (sin CI)
-
-Con el respaldo privado fuera del repositorio y las contraseñas en variables de entorno
-(nunca en archivos versionados):
+En Linux puedes verificar el archivo desde la carpeta de descargas.
 
 ```bash
-gradle :app:assembleRelease
-export KEYSTORE_PASSWORD='…' KEY_PASSWORD='…'
+sha256sum --ignore-missing -c SHA256SUMS.txt
+```
+
+En macOS, calcula el hash con `shasum -a 256 Nexo-v0.39.2-arm64-v8a.apk`. En PowerShell, usa `Get-FileHash -Algorithm SHA256 .\Nexo-v0.39.2-arm64-v8a.apk`. Compara el resultado con la línea de ese archivo en `SHA256SUMS.txt`.
+
+## Publicar una versión
+
+1. Integra los cambios de la app en `main`. Comprueba que `versionName` y `versionCode` en `app/build.gradle.kts` coinciden con la versión y superan la última distribución.
+2. Ejecuta **Nexo Secure CI and Release › Run workflow** sobre `main`, con `mode=release` y el campo tag vacío para usar `v<versionName>`. También puedes publicar un tag `v<versionName>` que apunte al commit integrado. Usa uno de los dos disparadores por versión.
+3. Comprueba que GitHub Releases muestra los APK `arm64-v8a` y `armeabi-v7a`, además de `SHA256SUMS.txt`. Contrasta el paquete, versión y huella con el APK firmado antes de actualizar los enlaces del README. [Workflow de publicación](../.github/workflows/main.yml)
+
+El flujo de publicación valida constructores de arranque tras R8, identidad del paquete y certificado de firma. La compilación se ejecuta antes de acceder al keystore. La release conserva sus APK y sumas, por lo que una corrección requiere otra versión y otro tag.
+
+## Firma y certificado fijado
+
+El paso de firma usa cuatro secretos de GitHub Actions. Guarda el keystore y sus credenciales en el respaldo privado del proyecto.
+
+| Secreto | Contenido |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | Keystore persistente codificado en Base64. |
+| `ANDROID_KEYSTORE_PASSWORD` | Contraseña del almacén. |
+| `ANDROID_KEY_ALIAS` | Alias de firma del almacén. |
+| `ANDROID_KEY_PASSWORD` | Contraseña de la clave. |
+
+La huella pública en [`config/android-signing-certificate.sha256`](../config/android-signing-certificate.sha256) permite verificar la continuidad de firma. Si la huella de un APK difiere, recupera el keystore de la misma línea de firma. Puedes comprobar el certificado del APK descargado con el verificador del proyecto.
+
+```bash
+python3 tools/verify_apk_signature.py \
+  --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner" \
+  --certificate config/android-signing-certificate.sha256 \
+  /ruta/descargas/Nexo-v0.39.2-arm64-v8a.apk
+```
+
+<details>
+<summary>Firma local y antecedentes del certificado</summary>
+
+Para producir APK firmados localmente, usa el respaldo privado del proyecto y carga las contraseñas en `KEYSTORE_PASSWORD` y `KEY_PASSWORD` en tu entorno de ejecución.
+
+```bash
+./gradlew :app:assembleRelease
 APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
 for abi in arm64-v8a armeabi-v7a; do
   "$APKSIGNER" sign --ks /ruta/privada/nexo-release.jks --ks-key-alias nexo \
     --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+    --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true \
     --out "Nexo-$abi.apk" "app/build/outputs/apk/release/app-$abi-release-unsigned.apk"
   python3 tools/verify_apk_signature.py --apksigner "$APKSIGNER" \
     --certificate config/android-signing-certificate.sha256 "Nexo-$abi.apk"
 done
 ```
 
-`tools/verify_apk_signature.py` acepta la salida de apksigner 36 (`Signer #1 …`) y la de
-apksigner 37 (`V3.0 Signer: …`); exige un único firmante con la huella fijada.
+La línea de firma persistente empezó en v0.14.1 con una clave RSA de 4096 bits. El certificado de v0.13.6 tenía la huella `8a2bf18b515d613aeb8b0da920a5f102d3a1741e9b3a736be2fc70e29aef3d0b`. Para migrar de una compilación firmada con otro certificado, conserva primero una copia comprobada de tus datos. [Transferencia de perfil](TRANSFERENCIA-PERFIL.md)
 
-## Cambios preparados para 0.16.0 (código 34)
-
-El código de versión aumenta para permitir actualizar 0.15.3 con la misma firma
-persistente. Esta rama prepara el próximo lanzamiento; no publica ni reemplaza
-los APK de 0.15.3.
+</details>

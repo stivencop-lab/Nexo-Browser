@@ -1,5 +1,7 @@
 # Nexo UI 7.0 «Liquid Craft»
 
+> Referencia histórica de UI 7.0. La interfaz de v0.39.2 usa UI 9.0 «Liquid Glass». [Cambios de interfaz en v0.39.2](AUDITORIA-0.39.2.md#interfaz-liquid-glass)
+
 Rediseño visual de Nexo Browser sobre la arquitectura existente (Kotlin + Android Views, Cefrium).
 No cambia la lógica de navegación, PhantomShield, NXR ni Nexo AI (`NexoAiController`, `NexoAiStore`
 y `PageBinding` intactos: minimizar sigue sin cancelar el SSE).
