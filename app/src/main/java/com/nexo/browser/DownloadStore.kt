@@ -640,8 +640,11 @@ object DownloadStore {
                     style = Notification.ProgressStyle()
                         .setStyledByProgress(true)
                         .apply { if (job.total > 0) setProgress(job.percent.coerceIn(0, 100)) else setProgressIndeterminate(true) }
-                    setRequestPromotedOngoing(true)
-                    if (job.total > 0) setShortCriticalText("${job.percent.coerceIn(0, 100)}%")
+                    // La promoción a Live Update llegó en Android 16 QPR1 (API 36.1).
+                    if (Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1) {
+                        setRequestPromotedOngoing(true)
+                        if (job.total > 0) setShortCriticalText("${job.percent.coerceIn(0, 100)}%")
+                    }
                 } else if (job.total > 0) setProgress(100, job.percent, false) else setProgress(0, 0, true)
             }
             .build()
