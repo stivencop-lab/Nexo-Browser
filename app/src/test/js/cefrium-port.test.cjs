@@ -67,6 +67,8 @@ const element = (tagName, props) => Object.assign({
   getBoundingClientRect: () => ({ left: 0, top: 0, width: 320, height: 180 })
 }, props);
 
+const idleDetails = { artist: '', album: '', artwork: '', duration: 0, position: 0, rate: 1, next: false, prev: false, seek: false, video: false };
+
 const bridgeMessages = (native, type) => native.received.filter(m => m.kind === 'bridge' && m.payload.type === type).map(m => m.payload);
 
 test('a subframe without media stays silent so it cannot clear the video of another frame', async () => {
@@ -88,11 +90,11 @@ test('audible media is reported once per change; muted background loops are igno
   tick();
   tick();
   await flush();
-  assert.deepEqual(bridgeMessages(native, 'media_state'), [{ type: 'media_state', active: true, playing: true, title: 'Canción' }]);
+  assert.deepEqual(bridgeMessages(native, 'media_state'), [Object.assign({ type: 'media_state', active: true, playing: true, title: 'Canción' }, idleDetails)]);
   audio.paused = true;
   tick();
   await flush();
-  assert.deepEqual(bridgeMessages(native, 'media_state').at(-1), { type: 'media_state', active: true, playing: false, title: 'Canción' });
+  assert.deepEqual(bridgeMessages(native, 'media_state').at(-1), Object.assign({ type: 'media_state', active: true, playing: false, title: 'Canción' }, idleDetails));
 });
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -247,4 +249,45 @@ test('alwaysPoll polls when hidden and subframe captions_offer schedules a fast 
   sub.tick();
   await flush();
   assert.deepEqual([...sub.context.got], ['captions_grant']);
+});
+
+test('media details: https artwork, position, site handlers drive next/previous and seeking', async () => {
+  const calls = [];
+  const audio = element('AUDIO', { paused: false, duration: 200, currentTime: 12.34, playbackRate: 1 });
+  const native = nativeSide(() => undefined);
+  const mediaSession = {
+    playbackState: 'playing',
+    metadata: { title: 'Pista', artist: 'Artista', album: 'Disco', artwork: [
+      { src: 'http://insecure.example/a.jpg', sizes: '2048x2048' },
+      { src: '/art/512.jpg', sizes: '512x512' },
+      { src: '/art/96.jpg', sizes: '96x96' }
+    ] },
+    setActionHandler() {}
+  };
+  const { context, tick } = page(native, { media: [audio], mediaSession });
+  context.location = { href: 'https://music.example/play' };
+  context.URL = URL;
+  context.Date = Date;
+  context.Number = Number;
+  context.String = String;
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' + mediaSource, context);
+  context.navigator.mediaSession.setActionHandler('nexttrack', () => calls.push('next'));
+  context.navigator.mediaSession.setActionHandler('seekto', d => calls.push(['seekto', d.seekTime]));
+  tick();
+  await flush();
+  const state = bridgeMessages(native, 'media_state').at(-1);
+  assert.equal(state.artwork, 'https://music.example/art/512.jpg', 'the largest https artwork, never http');
+  assert.equal(state.artist, 'Artista');
+  assert.equal(state.position, 12.3);
+  assert.equal(state.duration, 200);
+  assert.equal(state.next, true);
+  assert.equal(state.prev, false);
+  assert.equal(state.seek, true);
+  native.push(JSON.stringify({ event: 'bridge', message: { type: 'media_session_command', action: 'nexttrack' } }));
+  native.push(JSON.stringify({ event: 'bridge', message: { type: 'media_session_command', action: 'seekto', time: 90 } }));
+  tick();
+  await flush();
+  tick();
+  await flush();
+  assert.deepEqual(calls, ['next', ['seekto', 90]]);
 });

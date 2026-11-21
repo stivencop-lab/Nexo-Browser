@@ -651,4 +651,54 @@ class ScreenshotTest {
             snap.activeConversation?.messages?.last()?.text
         )
     }
+
+    @Test
+    fun nexoAiHistoryDark() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        seedTabs(*sampleTabs())
+        com.nexo.browser.ai.NexoAiController.initializeForTest(
+            storageFile = java.io.File(app.cacheDir, "shot_ai_history_${System.nanoTime()}.json"),
+            testTransport = com.nexo.browser.ai.NexoAiController.Transport { _, _, task, _, _, _, _, _, _ ->
+                Result.success(com.nexo.browser.ai.NexoAiClient.AiResponse("Respuesta a: $task", null))
+            }
+        )
+        val settings = com.nexo.browser.ai.NexoAiConfig.Settings(enabled = true, consentAccepted = true, provider = "openai", model = "gpt-4.1-mini")
+        for (q in listOf("Resume las noticias de economía", "¿Qué precio tiene el plan anual?", "Traduce la tabla de especificaciones")) {
+            com.nexo.browser.ai.NexoAiController.newConversation()
+            com.nexo.browser.ai.NexoAiController.sendPrompt(settings, "sk-test", q, "")
+        }
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        activity.setContentView(FrameLayout(activity))
+        com.nexo.browser.ai.NexoAiHistorySheet.show(activity)
+        dialogShot(null, "nexo-ai-history-dark")
+        org.robolectric.shadows.ShadowDialog.getLatestDialog()?.dismiss()
+        com.nexo.browser.ai.NexoAiSheet.show(activity)
+        dialogShot(null, "nexo-ai-thread-actions-dark")
+    }
+
+    @Test
+    @Config(qualifiers = "w900dp-h412dp-xhdpi")
+    fun fullscreenOverlayDark() {
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        val frame = PullRefreshLayout(activity).apply { setBackgroundColor(0xFF000000.toInt()) }
+        activity.setContentView(frame)
+        val overlay = com.nexo.browser.media.NexoMediaEngine.FullscreenOverlay(activity, frame) {}
+        overlay.setActive(true)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        val spec = View.MeasureSpec.makeMeasureSpec(1800, View.MeasureSpec.EXACTLY)
+        frame.measure(spec, View.MeasureSpec.makeMeasureSpec(824, View.MeasureSpec.EXACTLY))
+        frame.layout(0, 0, 1800, 824)
+        // Doble toque en el lateral derecho: salta y muestra el contador.
+        val t = android.os.SystemClock.uptimeMillis()
+        fun touch(action: Int, at: Long, x: Float) = android.view.MotionEvent.obtain(t, at, action, x, 400f, 0)
+        frame.dispatchTouchEvent(touch(android.view.MotionEvent.ACTION_DOWN, t, 1500f))
+        frame.dispatchTouchEvent(touch(android.view.MotionEvent.ACTION_UP, t + 60, 1500f))
+        frame.dispatchTouchEvent(touch(android.view.MotionEvent.ACTION_DOWN, t + 160, 1500f))
+        frame.dispatchTouchEvent(touch(android.view.MotionEvent.ACTION_UP, t + 220, 1500f))
+        frame.measure(spec, View.MeasureSpec.makeMeasureSpec(824, View.MeasureSpec.EXACTLY))
+        frame.layout(0, 0, 1800, 824)
+        save(frame, "fullscreen-overlay-dark")
+        overlay.detach()
+        org.junit.Assert.assertNull("al salir no deja el filtro de toques", frame.touchFilter)
+    }
 }

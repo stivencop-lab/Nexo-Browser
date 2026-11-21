@@ -113,6 +113,12 @@ object DownloadStore {
 
     fun activeDownloads(): List<ActiveDownload> = running.values.sortedBy { it.startedAt }
 
+    /** Al arrancar: el progreso de una descarga de un proceso que murió no debe quedarse en la barra. */
+    fun clearStaleProgress(context: Context) {
+        if (running.isNotEmpty()) return
+        runCatching { context.getSystemService(NotificationManager::class.java)?.cancel(NOTIFY_PROGRESS) }
+    }
+
     fun cancel(id: String) {
         val job = running[id] ?: return
         synchronized(job) {
@@ -627,7 +633,20 @@ object DownloadStore {
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(public)
             .setContentIntent(openDownloads(context))
-            .apply { if (job.total > 0) setProgress(100, job.percent, false) else setProgress(0, 0, true) }
+            .apply {
+                if (Build.VERSION.SDK_INT >= 36) {
+                    // Android 16 «Live Updates»: la descarga sube a la barra de estado / isla
+                    // (chip con el porcentaje) y a la pantalla de bloqueo.
+                    style = Notification.ProgressStyle()
+                        .setStyledByProgress(true)
+                        .apply { if (job.total > 0) setProgress(job.percent.coerceIn(0, 100)) else setProgressIndeterminate(true) }
+                    // La promoción a Live Update llegó en Android 16 QPR1 (API 36.1).
+                    if (Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1) {
+                        setRequestPromotedOngoing(true)
+                        if (job.total > 0) setShortCriticalText("${job.percent.coerceIn(0, 100)}%")
+                    }
+                } else if (job.total > 0) setProgress(100, job.percent, false) else setProgress(0, 0, true)
+            }
             .build()
         runCatching { manager.notify(NOTIFY_PROGRESS, notification) }
     }

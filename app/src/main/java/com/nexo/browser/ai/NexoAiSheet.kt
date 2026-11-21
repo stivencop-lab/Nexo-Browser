@@ -587,6 +587,21 @@ object NexoAiSheet {
                     setTextIsSelectable(true)
                     setPadding(0, dp(4f), 0, 0)
                 })
+                if (!msg.isInFlight) {
+                    wrap.addView(NexoUi.chipRow(activity, listOf(
+                        ghostAction(activity, "Editar") {
+                            promptField.setText(msg.text)
+                            promptField.setSelection(promptField.text.length)
+                            promptField.requestFocus()
+                        },
+                        ghostAction(activity, "Eliminar") {
+                            NexoAiHistorySheet.confirm(activity, "¿Eliminar esta pregunta?",
+                                "Se borrarán la pregunta y su respuesta de esta conversación.", "Eliminar") {
+                                NexoAiController.deleteMessage(convId, msg.id)
+                            }
+                        }
+                    )), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
+                }
                 return wrap
             }
 
@@ -679,6 +694,10 @@ object NexoAiSheet {
                         Toastish.show(activity, "Respuesta copiada.")
                     }
                 }
+                ghost += ghostAction(activity, "Eliminar") {
+                    NexoAiController.deleteMessage(convId, msg.id)
+                    Toastish.show(activity, "Respuesta eliminada.")
+                }
                 if ((msg.status == NexoAiModels.MessageStatus.ERROR ||
                         msg.status == NexoAiModels.MessageStatus.INTERRUPTED ||
                         msg.status == NexoAiModels.MessageStatus.CANCELLED) && !msg.retryPrompt.isNullOrBlank()
@@ -713,6 +732,11 @@ object NexoAiSheet {
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6f)
             })
+            threadRail.addView(NexoUi.chip(activity, "Historial", false) {
+                NexoAiHistorySheet.show(activity)
+            }.apply { contentDescription = "Ver, buscar y borrar conversaciones" }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = dp(6f)
+            })
             for (conv in snap.conversations.take(8)) {
                 val selected = conv.id == snap.activeConversationId
                 val prefix = if (conv.hasInFlight) "● " else ""
@@ -720,11 +744,9 @@ object NexoAiSheet {
                 val chip = NexoUi.chip(activity, title, selected) {
                     NexoAiController.selectConversation(conv.id)
                 }
+                // Pulsación larga: renombrar o eliminar (con confirmación; antes borraba al instante).
                 chip.setOnLongClickListener {
-                    if (snap.conversations.size > 1 || conv.messages.isNotEmpty()) {
-                        NexoAiController.deleteConversation(conv.id)
-                        Toastish.show(activity, "Conversación eliminada.")
-                    }
+                    if (conv.messages.isNotEmpty()) NexoAiHistorySheet.options(activity, conv)
                     true
                 }
                 threadRail.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -737,7 +759,7 @@ object NexoAiSheet {
             updateSendButton(generating)
 
             val msgs = conv?.messages.orEmpty()
-            threadRailWrap.visibility = if (snap.conversations.size > 1 || msgs.isNotEmpty()) View.VISIBLE else View.GONE
+            threadRailWrap.visibility = if (snap.conversations.any { it.messages.isNotEmpty() }) View.VISIBLE else View.GONE
             emptyStateBox.visibility = if (msgs.isEmpty()) View.VISIBLE else View.GONE
             if (msgs.isEmpty() && emptyStateBox.childCount == 0) renderEmptyState()
 
@@ -1070,6 +1092,26 @@ object NexoAiSheet {
 
         val privacyCard = NexoUi.card(activity, paddingDp = 4f)
         privacyCard.addView(NexoUi.switchRow(activity, "Permitir en pestañas privadas", null, allowPrivate) { allowPrivate = it })
+        privacyCard.addView(NexoUi.insetDivider(activity))
+        privacyCard.addView(NexoUi.actionRow(
+            activity,
+            R.drawable.ic_menu_history,
+            "Historial de conversaciones"
+        ) {
+            NexoAiHistorySheet.show(activity)
+        })
+        privacyCard.addView(NexoUi.insetDivider(activity))
+        privacyCard.addView(NexoUi.actionRow(
+            activity,
+            R.drawable.ic_menu_delete,
+            "Borrar historial de conversaciones"
+        ) {
+            NexoAiHistorySheet.confirm(activity, "¿Borrar todo el historial de Nexo AI?",
+                "Se eliminarán todas las conversaciones guardadas en este dispositivo. No se puede deshacer.", "Borrar todo") {
+                NexoAiController.deleteAllConversations()
+                Toastish.show(activity, "Historial de Nexo AI borrado.")
+            }
+        })
         if (includeLogRow) {
             privacyCard.addView(NexoUi.insetDivider(activity))
             privacyCard.addView(NexoUi.actionRow(

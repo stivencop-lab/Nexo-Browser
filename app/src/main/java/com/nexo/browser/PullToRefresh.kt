@@ -50,6 +50,18 @@ class PullRefreshLayout @JvmOverloads constructor(
         visibility = GONE
     }
 
+    /**
+     * Gestos del reproductor en pantalla completa: ven cada toque antes que la página y deciden
+     * si lo dejan pasar (`pass`) o lo consumen. Una vista hermana encima no puede hacerlo: al no
+     * aceptar el primer toque deja de recibir el resto del gesto.
+     */
+    var touchFilter: ((MotionEvent, (MotionEvent) -> Boolean) -> Boolean)? = null
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        val filter = touchFilter ?: return super.dispatchTouchEvent(ev)
+        return filter(ev) { super.dispatchTouchEvent(it) }
+    }
+
     override fun onFinishInflate() {
         super.onFinishInflate()
         // Siempre por encima de la página y de los controles flotantes.

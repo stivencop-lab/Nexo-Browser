@@ -143,7 +143,9 @@ object PageBridge {
                 currentTimeSec = json.optDouble("time", 0.0),
                 durationSec = json.optDouble("duration", 0.0),
                 drmProtected = json.optBoolean("drm", false),
-                hasTextTracks = json.optBoolean("tracks", false)
+                hasTextTracks = json.optBoolean("tracks", false),
+                loop = json.optBoolean("loop", false),
+                bufferedAheadSec = json.optDouble("buffered", 0.0)
             )
         }
     }
@@ -155,6 +157,22 @@ object PageBridge {
         if (!active && owner != null && owner != frame) return
         state.mediaFrame = if (active) frame else null
         session.onMediaState(active, json.optBoolean("playing"), json.optString("title").take(200))
+        TabManager.tabForSession(session)?.let { tab ->
+            BrowserMediaController.updateDetails(
+                tab.id,
+                if (active) MediaDetails.fromJson(json, android.os.SystemClock.elapsedRealtime()) else null
+            )
+        }
+    }
+
+    /**
+     * Controles del sistema (notificación, pantalla de bloqueo, isla dinámica): saltar, ±N s y
+     * pista siguiente/anterior, solo al marco que tiene el audio.
+     */
+    fun sendMediaSessionCommand(session: EngineSession?, action: String, extra: JSONObject? = null): Boolean {
+        val cefrium = cefrium(session) ?: return false
+        val msg = JSONObject(extra?.toString() ?: "{}").put("type", "media_session_command").put("action", action)
+        return send(cefrium, msg, states[cefrium]?.mediaFrame)
     }
 
     private fun captions(session: EngineSession, state: State, frame: String, json: JSONObject) {
