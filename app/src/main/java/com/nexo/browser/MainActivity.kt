@@ -66,6 +66,13 @@ class MainActivity :
     private lateinit var aiButton: ImageButton
     private lateinit var nexoAiPill: com.nexo.browser.ai.NexoAiPillView
     private var aiControllerObserver: ((com.nexo.browser.ai.NexoAiModels.ControllerSnapshot) -> Unit)? = null
+    /** Resultados del escáner de páginas: aviso discreto en la barra o pantalla de bloqueo. */
+    private val malwareObserver = com.nexo.browser.shield.MalwareScan.Observer { tabId, result ->
+        if (isFinishing || isDestroyed) return@Observer
+        val tab = TabManager.activeTab()?.takeIf { it.id == tabId } ?: return@Observer
+        styleTabToolsButton(tab)
+        if (result.decision.block) com.nexo.browser.shield.MalwareWarning.show(this, tab, result)
+    }
     private lateinit var backButton: ImageButton
     private lateinit var forwardButton: ImageButton
     private lateinit var compactBackButton: ImageButton
@@ -393,6 +400,7 @@ class MainActivity :
             }
         }
         aiControllerObserver?.let { com.nexo.browser.ai.NexoAiController.observe(it) }
+        com.nexo.browser.shield.MalwareScan.addObserver(malwareObserver)
         backButton = findViewById(R.id.backButton)
         forwardButton = findViewById(R.id.forwardButton)
         compactBackButton = findViewById(R.id.compactBackButton)
@@ -1316,8 +1324,12 @@ class MainActivity :
         val home = tab == null || BrowserPrefs.isNexoHome(tab.url)
         val sslBlocked = !home && !session?.lastBlockedSslHost().isNullOrBlank()
         val scheme = if (tab != null) UrlSafety.scheme(tab.url) else ""
+        val scanLevel = com.nexo.browser.shield.MalwareScan.resultFor(tab)?.decision?.level
+        val scanAlert = !home && scanLevel != null && scanLevel != com.nexo.browser.shield.MalwareSignals.Level.CLEAN
+        val scanDanger = scanAlert && scanLevel == com.nexo.browser.shield.MalwareSignals.Level.DANGEROUS
 
         val iconRes = when {
+            scanAlert -> R.drawable.ic_shield_alert
             tab?.burnerId != null -> R.drawable.ic_menu_burner
             tab?.isPrivate == true -> R.drawable.ic_menu_private
             muted -> R.drawable.ic_menu_volume_off
@@ -1328,9 +1340,11 @@ class MainActivity :
         }
         btn.setImageResource(iconRes)
 
-        val highlight = tab != null && (tab.burnerId != null || tab.networkProfile != null || muted || sslBlocked)
+        val highlight = tab != null && (tab.burnerId != null || tab.networkProfile != null || muted || sslBlocked || scanAlert)
         ThemeManager.styleIconButton(this, btn, highlight)
         when {
+            scanDanger -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.danger)
+            scanAlert -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
             sslBlocked -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.danger)
             tab?.burnerId != null -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
             !home && scheme == "http" -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
@@ -1339,6 +1353,8 @@ class MainActivity :
             tab?.isPrivate == true -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
         }
         btn.contentDescription = when {
+            scanDanger -> "Control del sitio (página posiblemente peligrosa)"
+            scanAlert -> "Control del sitio (página sospechosa)"
             sslBlocked -> "Control del sitio (certificado TLS bloqueado)"
             muted -> "Control del sitio (audio silenciado)"
             tab?.burnerId != null -> "Control del sitio (identidad Burner)"
@@ -2665,6 +2681,8 @@ class MainActivity :
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
         aiControllerObserver?.let { com.nexo.browser.ai.NexoAiController.unobserve(it) }
         aiControllerObserver = null
+        com.nexo.browser.shield.MalwareScan.removeObserver(malwareObserver)
+        com.nexo.browser.shield.MalwareWarning.dismiss()
         PageBridge.onScrollDirection = null
         unregisterPredictiveBack()
         PerfLog.detach(this)

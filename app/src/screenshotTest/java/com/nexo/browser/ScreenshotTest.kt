@@ -211,6 +211,21 @@ class ScreenshotTest {
         dialogShot(null, "site-control-dark")
     }
 
+    @Test fun malwareWarning() {
+        for ((theme, tag) in listOf(BrowserPrefs.THEME_MIDNIGHT to "dark", BrowserPrefs.THEME_LIGHT to "paper")) {
+            val tab = BrowserTab(url = "https://paypal-login.secure-check.xyz/signin", title = "PayPal")
+            val activity = themed(theme)
+            activity.setContentView(FrameLayout(activity))
+            val local = com.nexo.browser.shield.MalwareSignals.assess(tab.url,
+                com.nexo.browser.shield.MalwareSignals.PageFacts(title = "PayPal", passwordFields = 1, crossOriginCredentialForms = 1))
+            val result = com.nexo.browser.shield.MalwareScan.Result(
+                "https://paypal-login.secure-check.xyz", com.nexo.browser.shield.MalwareSignals.decide(local, null), local.score, 0L)
+            com.nexo.browser.shield.MalwareWarning.show(activity, tab, result)
+            dialogShot(null, "malware-warning-$tag")
+            com.nexo.browser.shield.MalwareWarning.dismiss()
+        }
+    }
+
     @Test fun bookmarksDark() {
         val app = org.robolectric.RuntimeEnvironment.getApplication()
         BrowserPrefs.setTheme(app, BrowserPrefs.THEME_MIDNIGHT)

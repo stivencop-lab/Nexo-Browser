@@ -271,6 +271,12 @@ object BrowserPrefs {
     /** Posición vertical guardada al arrastrar (0 = arriba, 1 = abajo del área visible). */
     fun captionCustomY(c: Context) = p(c).getFloat("caption_custom_y", 0.82f).coerceIn(0f, 1f)
     fun setCaptionCustomY(c: Context, v: Float) = p(c).edit().putFloat("caption_custom_y", v.coerceIn(0f, 1f)).apply()
+    /** Escáner de páginas: heurística local (sin red) activada por defecto. */
+    fun malwareScan(c: Context) = p(c).getBoolean("malware_scan", true)
+    fun setMalwareScan(c: Context, v: Boolean) = p(c).edit().putBoolean("malware_scan", v).apply()
+    /** Segunda opinión con IA para páginas dudosas: envía URL y texto al proveedor, así que es opcional. */
+    fun malwareScanAi(c: Context) = p(c).getBoolean("malware_scan_ai", false)
+    fun setMalwareScanAi(c: Context, v: Boolean) = p(c).edit().putBoolean("malware_scan_ai", v).apply()
     fun minimalStart(c: Context) = p(c).getBoolean("minimal_start", true)
     fun setMinimalStart(c: Context, v: Boolean) = p(c).edit().putBoolean("minimal_start", v).apply()
     fun autoHideBars(c: Context) = p(c).getBoolean("auto_hide_bars", true)
