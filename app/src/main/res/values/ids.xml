@@ -11,4 +11,6 @@
     <item name="accentSwatches" type="id" />
     <item name="chromeStyleSegmented" type="id" />
     <item name="nexo_glass_toast" type="id" />
+    <item name="nexo_caption_dragging" type="id" />
+    <item name="nexo_caption_area" type="id" />
 </resources>

@@ -1156,8 +1156,8 @@ object LiveCaptions {
         fun add(label: String, provider: String, endpoint: String, model: String, key: String) {
             if (key.isNotBlank() || provider == "custom") list += AiTranslator(label, provider, endpoint, model, key)
         }
-        add("Modelo 1", BrowserPrefs.aiTranslateProvider(context), BrowserPrefs.aiTranslateEndpoint(context),
-            BrowserPrefs.aiTranslateModel(context), BrowserPrefs.aiTranslateKey(context))
+        // «Una API para todo»: el modelo 1 es la conexión de Nexo AI cuando está configurada.
+        com.nexo.browser.ai.AiHub.translation(context)?.let { add("Modelo 1", it.provider, it.endpoint, it.model, it.key) }
         if (BrowserPrefs.aiTranslate2Enabled(context)) {
             add("Modelo 2", BrowserPrefs.aiTranslate2Provider(context), BrowserPrefs.aiTranslate2Endpoint(context),
                 BrowserPrefs.aiTranslate2Model(context), BrowserPrefs.aiTranslate2Key(context))

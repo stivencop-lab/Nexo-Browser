@@ -211,6 +211,21 @@ class ScreenshotTest {
         dialogShot(null, "site-control-dark")
     }
 
+    @Test fun malwareWarning() {
+        for ((theme, tag) in listOf(BrowserPrefs.THEME_MIDNIGHT to "dark", BrowserPrefs.THEME_LIGHT to "paper")) {
+            val tab = BrowserTab(url = "https://paypal-login.secure-check.xyz/signin", title = "PayPal")
+            val activity = themed(theme)
+            activity.setContentView(FrameLayout(activity))
+            val local = com.nexo.browser.shield.MalwareSignals.assess(tab.url,
+                com.nexo.browser.shield.MalwareSignals.PageFacts(title = "PayPal", passwordFields = 1, crossOriginCredentialForms = 1))
+            val result = com.nexo.browser.shield.MalwareScan.Result(
+                "https://paypal-login.secure-check.xyz", com.nexo.browser.shield.MalwareSignals.decide(local, null), local.score, 0L)
+            com.nexo.browser.shield.MalwareWarning.show(activity, tab, result)
+            dialogShot(null, "malware-warning-$tag")
+            com.nexo.browser.shield.MalwareWarning.dismiss()
+        }
+    }
+
     @Test fun bookmarksDark() {
         val app = org.robolectric.RuntimeEnvironment.getApplication()
         BrowserPrefs.setTheme(app, BrowserPrefs.THEME_MIDNIGHT)
@@ -237,6 +252,64 @@ class ScreenshotTest {
     }
 
     @Test fun chromeOled() = chrome(BrowserPrefs.THEME_OLED, "chrome-oled")
+
+    /** Barrido Liquid Craft: las pantallas principales en Paper y OLED (no solo Obsidian). */
+    @Test fun liquidCraftThemeSweep() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        for ((theme, tag) in listOf(BrowserPrefs.THEME_LIGHT to "paper", BrowserPrefs.THEME_OLED to "oled")) {
+            seedTabs(*sampleTabs())
+            var activity = themed(theme)
+            val page = StartPageView(activity, onOpen = {}, onPrivate = {}, onShield = {}, onExtensions = {})
+            activity.setContentView(FrameLayout(activity).apply { addView(page) })
+            page.render(false)
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            save(activity.window.decorView, "sweep-start-$tag")
+
+            activity = themed(theme); activity.setContentView(FrameLayout(activity))
+            TabSwitcher.show(activity) {}
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            save(org.robolectric.shadows.ShadowDialog.getLatestDialog().window!!.decorView, "sweep-tabs-$tag")
+
+            activity = themed(theme); activity.setContentView(FrameLayout(activity))
+            SiteControlSheet.show(activity)
+            dialogShot(null, "sweep-site-$tag")
+
+            activity = themed(theme); activity.setContentView(FrameLayout(activity))
+            com.nexo.browser.ai.NexoAiSheet.show(activity)
+            dialogShot(null, "sweep-ai-$tag")
+
+            BrowserPrefs.setTheme(app, theme)
+            val settings = Robolectric.buildActivity(SettingsActivity::class.java).setup().get()
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            save(settings.window.decorView, "sweep-settings-$tag")
+            val ext = Robolectric.buildActivity(ExtensionsActivity::class.java).setup().get()
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            save(ext.window.decorView, "sweep-extensions-$tag")
+        }
+    }
+
+    /** Subtítulos sin video conocido: nunca bajo el cromo flotante; arriba si se elige. */
+    @Test fun captionsPositions() {
+        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
+        val root = activity.layoutInflater.inflate(R.layout.activity_main, null)
+        root.findViewById<View>(R.id.pageView).setBackgroundColor(0xFF1F2937.toInt())
+        root.findViewById<View>(R.id.browserDock).visibility = View.GONE
+        activity.setContentView(root)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        val frame = root.findViewById<View>(R.id.browserFrame)
+        val chrome = root.findViewById<View>(R.id.bottomChrome)
+        val caption = root.findViewById<android.widget.TextView>(R.id.captionView)
+        val text = CaptionDisplay("Los subtítulos nunca quedan detrás de la barra flotante.", "", "")
+        for (position in listOf(BrowserPrefs.CAPTION_POS_BOTTOM, BrowserPrefs.CAPTION_POS_TOP)) {
+            BrowserPrefs.setCaptionPosition(activity, position)
+            CaptionsUi.render(activity, caption, frame.width, frame.height, null, text, false, bottomObstruction = chrome.height)
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            org.junit.Assert.assertTrue("El subtítulo no debe solaparse con el cromo",
+                caption.translationY + caption.measuredHeight <= frame.height - chrome.height)
+            save(activity.window.decorView, "captions-position-$position")
+        }
+        BrowserPrefs.setCaptionPosition(activity, BrowserPrefs.CAPTION_POS_VIDEO)
+    }
 
     @Test fun startPageDark() {
         val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
@@ -275,9 +348,9 @@ class ScreenshotTest {
         var sheet: android.app.Dialog? = null
         val dismiss = { sheet?.dismiss(); Unit }
         val primaryActions = listOf(
-            SheetAction(R.drawable.ic_nav_add, "Nueva pestaña") {},
+            SheetAction(R.drawable.ic_nav_add, "Nueva") {},
             SheetAction(R.drawable.ic_menu_private, "Privada") {},
-            SheetAction(R.drawable.ic_menu_burner, "Burner", subtitle = "Aislada + correo") {}
+            SheetAction(R.drawable.ic_menu_burner, "Burner") {}
         )
         val actions = listOf(
             SheetAction(R.drawable.ic_menu_bookmark, "Favoritos") {},
@@ -287,17 +360,17 @@ class ScreenshotTest {
             SheetAction(R.drawable.ic_menu_translate, "Traducir") {},
             SheetAction(R.drawable.ic_menu_reader, "Modo lectura") {},
             SheetAction(R.drawable.ic_menu_desktop, "Escritorio", active = true, checked = true) {},
-            SheetAction(R.drawable.ic_menu_copy, "Copiar URL") {},
+            SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") {},
             SheetAction(R.drawable.ic_menu_share, "Compartir") {},
             SheetAction(R.drawable.ic_menu_find, "Buscar") {},
-            SheetAction(R.drawable.ic_nexo_aperture, "Nexo AI", subtitle = "Asistente de página, selección y pestañas") {},
-            SheetAction(R.drawable.ic_menu_settings, "Ajustes") {},
+            SheetAction(R.drawable.ic_nexo_aperture, "Nexo AI") {},
+            SheetAction(R.drawable.ic_menu_settings, "Configuración") {},
             SheetAction(R.drawable.ic_menu_update, "Buscar actualizaciones") {}
         )
         val menu = MenuSections.arrange(actions)
         val content = NexoSheets.column(
             activity,
-            NexoSheets.header(activity, "Menú de Nexo", "youtube.com"),
+            NexoSheets.header(activity, "youtube.com"),
             NexoSheets.primaryActions(activity, primaryActions, dismiss)
         )
         if (menu.quick.isNotEmpty()) content.addView(NexoSheets.grid(activity, menu.quick, dismiss = dismiss))

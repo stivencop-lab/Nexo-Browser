@@ -1034,6 +1034,18 @@ object NexoAiSheet {
         container.addView(endpointView)
         container.addView(keyView)
 
+        // «Una API para todo»: esta conexión sirve también a Reader, traducción, subtítulos y PhantomShield.
+        val unifiedCard = NexoUi.card(activity, paddingDp = 4f)
+        unifiedCard.addView(NexoUi.switchRow(
+            activity,
+            "Usar esta API para todo",
+            "Asistente, Reader, traducción, subtítulos y PhantomShield",
+            com.nexo.browser.BrowserPrefs.unifiedAi(activity)
+        ) { com.nexo.browser.BrowserPrefs.setUnifiedAi(activity, it) })
+        container.addView(unifiedCard, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = NexoUi.dp(activity, 12f) })
+
         container.addView(NexoUi.section(activity, "Presupuesto de contexto"))
         val ctxHolder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         fun renderCtx() {

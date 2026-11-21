@@ -386,7 +386,11 @@ jobs:
           sign_one() {
             local input="$1"
             local output="$2"
+            # minSdk 29: la firma v1 (JAR) no aporta nada y añade ~230 KB de META-INF.
             "$APKSIGNER" sign \
+              --v1-signing-enabled false \
+              --v2-signing-enabled true \
+              --v3-signing-enabled true \
               --ks "$KEYSTORE" \
               --ks-key-alias "$KEY_ALIAS" \
               --ks-pass env:KEYSTORE_PASSWORD \

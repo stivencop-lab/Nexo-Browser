@@ -56,13 +56,15 @@ class NexoGlassDrawable(
     }
     private val rect = RectF()
     private val clip = Path()
+    private var edgeShaderTop = Float.NaN
+    private var edgeShaderHeight = Float.NaN
     private var blurNode: RenderNode? = null
     private var backdropView: View? = null
     private var hostLocation = IntArray(2)
     private var sourceLocation = IntArray(2)
 
     var smoked: Boolean = smoked
-        set(value) { if (field != value) { field = value; invalidateSelf() } }
+        set(value) { if (field != value) { field = value; edge.shader = null; invalidateSelf() } }
 
     /** Vista nativa situada detrás del cristal que se desenfoca en tiempo real (API 31+). */
     fun setBackdrop(view: View?) {
@@ -98,17 +100,24 @@ class NexoGlassDrawable(
         if (specularTop) {
             val top = if (palette.isDark) (if (smoked) 0x26FFFFFF else ColorUtils.setAlphaComponent(0xFFFFFFFF.toInt(), 56))
             else ColorUtils.setAlphaComponent(0xFFFFFFFF.toInt(), 242)
-            edge.shader = LinearGradient(0f, rect.top, 0f, rect.top + rect.height() * 0.55f,
-                top, 0x00FFFFFF, Shader.TileMode.CLAMP)
+            // El degradado solo se crea de nuevo si cambia el tamaño (no en cada fotograma).
+            if (edge.shader == null || edgeShaderTop != rect.top || edgeShaderHeight != rect.height()) {
+                edge.shader = LinearGradient(0f, rect.top, 0f, rect.top + rect.height() * 0.55f,
+                    top, 0x00FFFFFF, Shader.TileMode.CLAMP)
+                edgeShaderTop = rect.top
+                edgeShaderHeight = rect.height()
+            }
             val inset = edge.strokeWidth / 2f
             canvas.drawRoundRect(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset, r, r, edge)
         }
         if (!palette.isDark) {
             // Paper: el cristal blanco sobre páginas blancas necesita un contorno casi invisible.
+            val shader = edge.shader
             edge.shader = null
             edge.color = ColorUtils.setAlphaComponent(palette.text, 16)
             val inset = edge.strokeWidth / 2f
             canvas.drawRoundRect(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset, r, r, edge)
+            edge.shader = shader
         }
     }
 

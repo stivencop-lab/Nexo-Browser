@@ -457,6 +457,23 @@ class SettingsActivity : Activity() {
         }.apply { setPadding(0, paddingTop, 0, paddingBottom) })
         autoHideBars.text = "Contraer al desplazar"
         dockGestures.text = "Deslizar la barra para cambiar de pestaña"
+        addMalwareScanRows()
+    }
+
+    /** Escáner de páginas: local por defecto; la segunda opinión con IA es opcional. */
+    private fun addMalwareScanRows() {
+        val card = httpsOnly.parent as? ViewGroup ?: return
+        var idx = card.indexOfChild(httpsOnly) + 1
+        val local = NexoUi.switchRow(this, "Avisar de páginas fraudulentas", "Análisis en el dispositivo", BrowserPrefs.malwareScan(this)) {
+            BrowserPrefs.setMalwareScan(this, it)
+            NexoUi.glassToast(this, "Guardado")
+        }.apply { setPadding(0, paddingTop, 0, paddingBottom) }
+        val ai = NexoUi.switchRow(this, "Segunda opinión con IA", "Solo en páginas dudosas; envía la URL y el texto visible a tu proveedor de IA", BrowserPrefs.malwareScanAi(this)) {
+            BrowserPrefs.setMalwareScanAi(this, it)
+            NexoUi.glassToast(this, if (it && com.nexo.browser.ai.AiHub.master(this) == null) "Configura una conexión en Nexo AI para usarla" else "Guardado")
+        }.apply { setPadding(0, paddingTop, 0, paddingBottom) }
+        card.addView(local, idx++)
+        card.addView(ai, idx)
     }
 
     private fun updateDefaultBrowserVisibility() {

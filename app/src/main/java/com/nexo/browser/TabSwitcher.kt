@@ -959,8 +959,7 @@ private class TabCardAdapter(
             slot.addView(holder.header, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         val onImage = 0xFFF4F4F5.toInt()
-        holder.title.setTextColor(if (grid) onImage else p.text)
-        holder.close.imageTintList = ColorStateList.valueOf(if (grid) ColorUtils.setAlphaComponent(onImage, 200) else p.muted)
+        applyStageContrast(holder, grid && holder.image.visibility == View.VISIBLE)
         holder.activeChip.visibility = if (grid && active) View.VISIBLE else View.GONE
         if (active) holder.activeChip.setCompoundDrawablesRelativeWithIntrinsicBounds(GradientDrawable().apply {
             shape = GradientDrawable.OVAL
@@ -1081,12 +1080,28 @@ private class TabCardAdapter(
             holder.stage.visibility = View.VISIBLE
             holder.preview.visibility = View.VISIBLE
             bindPreview(holder, tab)
+            applyStageContrast(holder, holder.image.visibility == View.VISIBLE)
         } else {
             holder.stage.visibility = View.GONE
             holder.preview.visibility = View.GONE
             holder.shownPreview = null
             holder.image.setImageDrawable(null)
             holder.image.visibility = View.GONE
+        }
+    }
+
+    /**
+     * Degradado oscuro y texto claro solo sobre capturas reales; sobre el marcador del tema
+     * (p. ej. Paper) la cabecera usa la tinta normal y no se oscurece el fondo.
+     */
+    private fun applyStageContrast(holder: Holder, overImage: Boolean) {
+        val p = ThemeManager.palette(activity)
+        val onImage = 0xFFF4F4F5.toInt()
+        holder.scrim.visibility = if (overImage) View.VISIBLE else View.GONE
+        holder.title.setTextColor(if (overImage) onImage else p.text)
+        holder.close.imageTintList = ColorStateList.valueOf(if (overImage) ColorUtils.setAlphaComponent(onImage, 200) else p.muted)
+        if (holder.iconWell.background == null) {
+            holder.icon.imageTintList?.let { holder.icon.imageTintList = ColorStateList.valueOf(if (overImage) onImage else p.text) }
         }
     }
 
@@ -1111,6 +1126,7 @@ private class TabCardAdapter(
                 holder.shownPreview = null
                 holder.image.setImageDrawable(null)
                 holder.image.visibility = View.GONE
+                applyStageContrast(holder, false)
                 return
             }
             if (holder.shownPreview === bitmap && holder.image.visibility == View.VISIBLE) return
@@ -1118,6 +1134,7 @@ private class TabCardAdapter(
             holder.image.setBackgroundColor(ThemeManager.palette(activity).surfaceContainer)
             holder.image.setImageBitmap(bitmap)
             holder.image.visibility = View.VISIBLE
+            applyStageContrast(holder, true)
         }
         val cached = TabPreviewStore.cached(tab.id)
         if (cached != null) { show(cached); return }

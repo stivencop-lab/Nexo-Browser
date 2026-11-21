@@ -1130,6 +1130,7 @@ object TabManager {
             tab.session?.let { SitePermissionPrompts.cancelFor(it) }
             TranslatorManager.forget(session)
             PagePrompts.onPageStart(session)
+            com.nexo.browser.shield.MalwareScan.forget(tab.id)
             BrowserMediaController.resetVideo(tab.id)
             tab.url = url
             tab.isLoading = true
@@ -1159,6 +1160,7 @@ object TabManager {
             listener?.onProgress(tab, 100, false)
 
             if (success && !tab.isPrivate) {
+                com.nexo.browser.shield.MalwareScan.onPageLoaded(requireContext(), tab)
                 HistoryStore.add(
                     requireContext(),
                     tab.url,

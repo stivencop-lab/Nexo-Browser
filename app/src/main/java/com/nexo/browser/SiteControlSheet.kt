@@ -125,6 +125,38 @@ object SiteControlSheet {
         }
         header.addView(connRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         header.addView(details)
+        // Escáner de páginas: estado y motivos, sin caja propia.
+        val scan = com.nexo.browser.shield.MalwareScan.resultFor(tab)
+        if (isWeb && scan != null && BrowserPrefs.malwareScan(activity)) {
+            val level = scan.decision.level
+            val dot = when (level) {
+                com.nexo.browser.shield.MalwareSignals.Level.DANGEROUS -> p.danger
+                com.nexo.browser.shield.MalwareSignals.Level.SUSPICIOUS -> p.warning.color
+                else -> p.success.color
+            }
+            header.addView(TextView(activity).apply {
+                val headline = when (level) {
+                    com.nexo.browser.shield.MalwareSignals.Level.DANGEROUS -> "Posible página fraudulenta"
+                    com.nexo.browser.shield.MalwareSignals.Level.SUSPICIOUS -> "Página con señales sospechosas"
+                    else -> "Sin señales de engaño"
+                }
+                val source = if (scan.decision.byAi) " · revisado con IA" else ""
+                text = headline + source + scan.decision.reasons.joinToString("") { "\n–  $it" }
+                textSize = 13.5f
+                typeface = NexoUi.regular(activity)
+                setTextColor(if (level == com.nexo.browser.shield.MalwareSignals.Level.CLEAN) p.muted else p.text)
+                setLineSpacing(0f, 1.3f)
+                gravity = Gravity.CENTER_VERTICAL
+                minHeight = dp(40f)
+                compoundDrawablePadding = dp(8f)
+                setCompoundDrawablesRelative(android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(dot)
+                    setBounds(0, 0, dp(7f), dp(7f))
+                }, null, null, null)
+                contentDescription = "Análisis de seguridad: $text"
+            })
+        }
 
         // ===== Interruptores inmediatos: PhantomShield y Tema oscuro =====
         val shieldGlobalOn = PhantomShield.isEnabled()

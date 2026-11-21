@@ -377,7 +377,7 @@ object NexoReader {
             val base = when (family) {
                 ReaderPrefs.FONT_SERIF -> Typeface.SERIF
                 ReaderPrefs.FONT_MONO -> runCatching { activity.resources.getFont(R.font.jetbrains_mono) }.getOrDefault(Typeface.MONOSPACE)
-                else -> runCatching { activity.resources.getFont(R.font.inter_variable) }.getOrDefault(Typeface.SANS_SERIF)
+                else -> runCatching { activity.resources.getFont(R.font.plus_jakarta_sans) }.getOrDefault(Typeface.SANS_SERIF)
             }
             val style = when {
                 bold && italic -> Typeface.BOLD_ITALIC

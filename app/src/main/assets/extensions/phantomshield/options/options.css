@@ -6,38 +6,38 @@
   font-display:swap;
 }
 @font-face {
-  font-family:Inter;
-  src:url('../fonts/inter-variable.woff2') format('woff2');
-  font-weight:100 900;
+  font-family:"Plus Jakarta Sans";
+  src:url('../fonts/plus-jakarta-sans.woff2') format('woff2');
+  font-weight:200 800;
   font-style:normal;
   font-display:swap;
 }
 :root {
   color-scheme:dark light;
-  --canvas:#0c1222;
-  --input:#0c1222;
-  --surface:#131b30;
-  --raised:#1b2540;
-  --text:#edf1fa;
-  --muted:#96a2be;
-  --line:#27324f;
-  --green:#2fd6a0;
-  --green-text:#7eeac6;
-  --on-green:#0c1222;
+  --canvas:#09090b;
+  --input:#09090b;
+  --surface:#131316;
+  --raised:#1b1b20;
+  --text:#f4f4f5;
+  --muted:#8e8e98;
+  --line:rgba(255,255,255,.06);
+  --green:#57d98b;
+  --green-text:#7ee3a6;
+  --on-green:#09090b;
   --danger:#f87171;
-  font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-family:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   background:var(--canvas);
   color:var(--text);
 }
 @media(prefers-color-scheme:light) {
   :root {
-    --canvas:#f2f4f9;
-    --input:#f2f4f9;
+    --canvas:#f6f5f1;
+    --input:#eceae4;
     --surface:#fff;
-    --raised:#e8ecf5;
-    --text:#0f1626;
-    --muted:#5b6680;
-    --line:#d8deea;
+    --raised:#eceae4;
+    --text:#111113;
+    --muted:#64646d;
+    --line:rgba(17,17,19,.07);
     --green:#0a7656;
     --green-text:#0a7656;
     --on-green:#fff;
@@ -74,13 +74,13 @@ svg {
   font-weight:650;
   letter-spacing:.08em;
   color:var(--green);
-  text-transform:uppercase;
+  text-transform:none;
   margin:0 0 4px;
 }
 h1 {
   font-size:18px;
   letter-spacing:-.025em;
-  font-weight:700;
+  font-weight:600;
   line-height:1.35;
   margin:0;
 }
@@ -171,12 +171,12 @@ a {
   padding:16px;
   border-radius:16px;
   border-color:color-mix(in srgb,var(--green) 30%,transparent);
-  background:linear-gradient(90deg,color-mix(in srgb,var(--green) 7%,var(--surface)),var(--surface));
+  background:var(--surface);
   margin-bottom:14px;
 }
 .enable-card h2 {
   font-size:14px;
-  font-weight:700;
+  font-weight:600;
 }
 .enable-card p {
   font-size:11px;
@@ -235,10 +235,10 @@ fieldset {
   display:flex;
   align-items:center;
   gap:6px;
-  text-transform:uppercase;
+  text-transform:none;
   letter-spacing:.07em;
   font-size:10px;
-  font-weight:700;
+  font-weight:600;
   color:var(--text);
 }
 .card-heading h2 svg {
@@ -459,7 +459,7 @@ input:focus,textarea:focus {
 }
 .consent-row h3 {
   font-size:12px;
-  font-weight:700;
+  font-weight:600;
 }
 .consent-row p {
   font-size:11px;
@@ -475,7 +475,7 @@ input:focus,textarea:focus {
 .guarantees h4 {
   font-size:10px;
   letter-spacing:.07em;
-  text-transform:uppercase;
+  text-transform:none;
   color:var(--muted);
   font-weight:650;
   margin-bottom:8px;
@@ -520,8 +520,8 @@ input:focus,textarea:focus {
   padding:10px 16px;
 }
 .action-bar button:first-child {
-  font-weight:750;
-  background:linear-gradient(90deg,var(--green),color-mix(in srgb,var(--green) 80%,#34d399));
+  font-weight:600;
+  background:var(--surface);
   box-shadow:0 5px 16px color-mix(in srgb,var(--green) 15%,transparent);
 }
 button {
@@ -685,15 +685,15 @@ input:disabled+.slider {
 }
 
 /* Nexo prototype: midnight surfaces, cobalt actions, green protection states. */
-:root { --action:#3d6bf2; --action-text:#a9c0ff; }
+:root { --action:var(--text); --action-text:var(--text); }
 select { font:inherit; width:100%; min-height:48px; padding:12px; color:var(--text); background:var(--raised); border:1px solid var(--line); border-radius:14px; }
 .check-row { display:flex; align-items:center; gap:10px; min-height:44px; }
 .check-row input { width:20px; height:20px; accent-color:var(--action); }
 .budget-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-#save { background:var(--action); color:#fff; }
+#save { background:var(--text); color:var(--canvas); }
 #scope:focus-visible { outline:2px solid var(--action-text); outline-offset:3px; }
-.trust-pills .violet { background:#3d6bf21c; border-color:#3d6bf24a; color:var(--action-text); }
-@media(prefers-color-scheme:light) { :root { --action-text:#3156c4; } }
+.trust-pills .violet { background:var(--raised); border-color:transparent; color:var(--text); }
+
 @media(max-width:340px) { .budget-grid { grid-template-columns:1fr; } }
 
 .ai-usage { display:flex; gap:16px; margin:12px 0; color:var(--text); flex-wrap:wrap; }
