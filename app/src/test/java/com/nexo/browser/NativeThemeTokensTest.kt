@@ -40,7 +40,7 @@ class NativeThemeTokensTest {
     }
 
     @Test fun nativeColorsMatchViewTokens() {
-        val file = listOf(File("src/main/res/values/colors.xml"), File("app/src/main/res/values/colors.xml")).first { it.parentFile.exists() }
+        val file = listOf(File("src/main/res/values/colors.xml"), File("app/src/main/res/values/colors.xml")).first { it.parentFile?.exists() == true }
         val want = expected()
         if (System.getenv("NEXO_WRITE_TOKENS") == "true") file.writeText(want)
         assertEquals("Regenera con NEXO_WRITE_TOKENS=true", want, file.readText())

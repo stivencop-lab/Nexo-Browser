@@ -27,6 +27,9 @@ import java.util.WeakHashMap
  */
 object PageBridge {
     private const val OFFER_WINDOW_MS = 200L
+    private const val MAX_FRAMES = 32
+    private const val MAX_OFFERS = 16
+    private const val MIN_AUDIO_INTERVAL_MS = 40L
     private const val DARK_READER_ASSET = "nexo/bridge/darkreader.js"
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
@@ -41,6 +44,7 @@ object PageBridge {
         var offers: MutableMap<String, Int>? = null
         var pip: PipState? = null
         var mediaFrame: String? = null
+        var lastAudioAt = 0L
     }
 
     private val states = WeakHashMap<EngineSession, State>()
@@ -50,6 +54,17 @@ object PageBridge {
     @Volatile var onScrollDirection: ((EngineSession, Boolean, Int) -> Unit)? = null
 
     private fun state(session: EngineSession) = states.getOrPut(session) { State() }
+
+    private fun registerFrame(state: State, frame: String, isMainFrame: Boolean): Boolean {
+        if (frame in state.frames) return false
+        if (state.frames.size >= MAX_FRAMES) {
+            if (!isMainFrame) return false
+            // Preservar siempre el marco principal desplazando el marco secundario más antiguo.
+            val oldest = state.frames.firstOrNull { it != state.owner && it != state.mediaFrame }
+            if (oldest != null) state.frames.remove(oldest) else return false
+        }
+        return state.frames.add(frame)
+    }
 
     // --- Desde la página ---
 
@@ -68,7 +83,7 @@ object PageBridge {
             onConnect(session, state, frame, isMainFrame)
             return
         }
-        val fresh = state.frames.add(frame)
+        val fresh = registerFrame(state, frame, isMainFrame)
         if (isMainFrame) state.topConnected = true
         if (fresh && LiveCaptions.isActive(session) && !LiveCaptions.pageSuspended(session)) {
             LiveCaptions.onBridgeConnected(session)
@@ -76,7 +91,7 @@ object PageBridge {
         }
         when (type) {
             "video_state" -> if (isMainFrame) videoState(session, json)
-            "media_state" -> mediaState(session, state, frame, json)
+            "media_state" -> if (isMainFrame || frame in state.frames) mediaState(session, state, frame, json)
             "scroll_dir" -> if (isMainFrame) onScrollDirection?.invoke(session, json.optString("dir") == "down", json.optInt("y", 0))
             else -> captions(session, state, frame, json)
         }
@@ -86,8 +101,9 @@ object PageBridge {
     val LATER = Any()
 
     /** Llamada con respuesta (`sendNativeMessage`/`sendMessage`): el resultado, o [LATER] si llegará por [reply]. */
-    fun onCall(session: CefriumEngineSession, isMainFrame: Boolean, json: JSONObject, reply: (Any?) -> Unit): Any? =
-        when (json.optString("type")) {
+    fun onCall(session: CefriumEngineSession, isMainFrame: Boolean, json: JSONObject, reply: (Any?) -> Unit): Any? {
+        if (!BridgeLimits.accept(json)) return null
+        return when (json.optString("type")) {
             // Incluye el modo oscuro: el primer mensaje del marco ya lo trae, sin esperar a la conexión.
             "get_state" -> browserState(AppContext.get(), session).put("ok", true)
             // Dark Reader solo en el marco principal: es el único donde Nexo puede ejecutar código
@@ -98,9 +114,10 @@ object PageBridge {
             }
             else -> null
         }
+    }
 
     private fun onConnect(session: CefriumEngineSession, state: State, frame: String, isMainFrame: Boolean) {
-        state.frames += frame
+        if (!registerFrame(state, frame, isMainFrame) && frame !in state.frames) return
         if (isMainFrame && !state.topConnected) {
             com.nexo.browser.engine.cefrium.EngineDiagnostics.log("puente de Nexo conectado (marco principal)")
         }
@@ -184,7 +201,9 @@ object PageBridge {
             val score = json.optInt("score").coerceIn(0, 100_000_000)
             val pending = state.offers
             if (pending != null) {
-                pending[frame] = maxOf(score, pending[frame] ?: 0)
+                if (pending.size < MAX_OFFERS || frame in pending) {
+                    pending[frame] = maxOf(score, pending[frame] ?: 0)
+                }
             } else {
                 val offers = mutableMapOf(frame to score)
                 state.offers = offers
@@ -203,7 +222,13 @@ object PageBridge {
                 LiveCaptions.onRecordingStopped(session)
             }
             "captions_start" -> LiveCaptions.onRecordingStarted(context, session, json.optString("mime"))
-            "captions_audio" -> LiveCaptions.onAudio(session, json.optString("data"))
+            "captions_audio" -> {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - state.lastAudioAt >= MIN_AUDIO_INTERVAL_MS) {
+                    state.lastAudioAt = now
+                    LiveCaptions.onAudio(session, json.optString("data"))
+                }
+            }
             "captions_status" -> LiveCaptions.onStatus(session, json.optString("code"))
             "captions_stop" -> LiveCaptions.onRecordingStopped(session)
             "captions_error" -> json.optString("code").let { code ->

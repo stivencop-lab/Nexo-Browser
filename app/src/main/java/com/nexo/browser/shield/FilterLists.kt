@@ -30,6 +30,16 @@ internal object FilterLists {
         )),
         FilterList("easylist-es", "EasyList Spanish", listOf(
             "https://easylist-downloads.adblockplus.org/easylistspanish.txt"
+        ), optional = true),
+        FilterList("easylist-cookie", "Cookies y molestias", listOf(
+            "https://secure.fanboy.co.nz/fanboy-cookiemonster.txt",
+            "https://raw.githubusercontent.com/uBlockOrigin/uAssetsCDN/main/thirdparties/easylist-cookies.txt"
+        ), optional = true),
+        FilterList("ubo-badware", "uBlock Malware y Phishing", listOf(
+            "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/badware.txt"
+        ), optional = true),
+        FilterList("nocoin-miners", "NoCoin Criptomineros", listOf(
+            "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/nocoin.txt"
         ), optional = true)
     )
 
@@ -43,7 +53,12 @@ internal object FilterLists {
         val cosmeticRules: List<String>
     )
 
-    class Result(val network: NetworkEngine, val cosmetic: CosmeticEngine) {
+    class Result(
+        val network: NetworkEngine,
+        val cosmetic: CosmeticEngine,
+        val threatDomains: Set<String> = emptySet(),
+        val minerDomains: Set<String> = emptySet()
+    ) {
         val networkCount: Int get() = network.ruleCount()
         val cosmeticCount: Int get() = cosmetic.count()
     }
@@ -57,6 +72,7 @@ internal object FilterLists {
     private val HIDE_EXCEPTION = Regex("""\$(?:[^,]*,)*(?:elemhide|ehide|generichide|ghide)(?:,|$)""", RegexOption.IGNORE_CASE)
     private val GENERICBLOCK = Regex("""\$(?:[^,]*,)*genericblock(?:,|$)""", RegexOption.IGNORE_CASE)
     private val FIRST_PASS_BADFILTER = Regex("""^[^!]*\$(?:[^,]*,)*badfilter(?:,.*)?$""", RegexOption.IGNORE_CASE)
+    private val SIMPLE_HOST_RULE = Regex("""^\|\|([a-z0-9.-]+)\^?(?:\$(?:document|all|important|popup|frame))?$""", RegexOption.IGNORE_CASE)
 
     fun parseRule(input: String): Parsed? {
         val line = input.trim()
@@ -71,6 +87,20 @@ internal object FilterLists {
         if ((line.startsWith("/") && line.lastIndexOf('/') > 0) || UNSUPPORTED_NETWORK.containsMatchIn(line) ||
             GENERICBLOCK.containsMatchIn(line)) return null
         return Parsed(Kind.NETWORK, line)
+    }
+
+    /** Extrae dominios planos (`||dominio^`) de una lista temática (badware o mineros). */
+    fun extractPlainDomains(text: String?): Set<String> {
+        if (text.isNullOrEmpty()) return emptySet()
+        val out = HashSet<String>()
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("!") || line.startsWith("[") || line.startsWith("@@")) continue
+            val m = SIMPLE_HOST_RULE.matchEntire(line) ?: continue
+            val host = m.groupValues[1].lowercase().trim('.')
+            if ('.' in host && NetworkEngine.isValidHostname(host)) out.add(host)
+        }
+        return out
     }
 
     fun loadRulesText(text: String, engine: NetworkEngine, limit: Int, cosmetic: CosmeticEngine?): Int {
@@ -103,7 +133,9 @@ internal object FilterLists {
         var total = 0
         for (text in ordered) total += loadRulesText(text, engine, MAX_DYNAMIC_RULES - total, cosmetic)
         engine.finalizeRules()
-        return Result(engine, cosmetic)
+        val threats = extractPlainDomains(texts["ubo-badware"])
+        val miners = extractPlainDomains(texts["nocoin-miners"])
+        return Result(engine, cosmetic, threats, miners)
     }
 
     /** Lista de una descarga: texto declarativo, no una página de error. */

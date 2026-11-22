@@ -21,6 +21,8 @@ function createNxrScope(config) {
     : (typeof globalThis.cefriumQuery === 'function' ? globalThis.cefriumQuery : null);
   const jsonStringify = JSON.stringify;
   const jsonParse = JSON.parse;
+  const objectAssign = Object.assign;
+  const createNullObj = Object.create;
   const MAX_ENVELOPE_CHARS = 32 * 1024;
 
   let nextCallId = 1;
@@ -29,7 +31,7 @@ function createNxrScope(config) {
   const installedListeners = [];
   const actionClickedListeners = [];
   const storageChangedListeners = [];
-  const sessionStore = Object.create(null);
+  const sessionStore = createNullObj(null);
 
   function callNative(kind, payload) {
     return new Promise(function(resolve, reject) {
@@ -40,11 +42,14 @@ function createNxrScope(config) {
       const id = nextCallId++;
       let envelope;
       try {
-        envelope = jsonStringify({
-          id: id,
-          kind: kind,
-          payload: Object.assign({}, payload || {}, { extId: extId, token: token })
-        });
+        const inner = objectAssign(createNullObj(null), payload || {});
+        inner.extId = extId;
+        inner.token = token;
+        const msg = createNullObj(null);
+        msg.id = id;
+        msg.kind = kind;
+        msg.payload = inner;
+        envelope = jsonStringify(msg);
       } catch (err) {
         reject(err);
         return;
@@ -54,26 +59,29 @@ function createNxrScope(config) {
         return;
       }
       try {
-        queryFn({
-          request: jsonStringify({ m: envelope, s: -1 }),
-          onSuccess: function(raw) {
-            try {
-              const parsed = typeof raw === 'string' && raw ? jsonParse(raw) : null;
-              const replyText = parsed && typeof parsed.reply === 'string' ? parsed.reply : null;
-              const reply = replyText ? jsonParse(replyText) : null;
-              if (reply && reply.error) {
-                reject(new Error(String(reply.error)));
-              } else {
-                resolve(reply ? reply.result : null);
-              }
-            } catch (err) {
-              reject(err);
+        const req = createNullObj(null);
+        req.m = envelope;
+        req.s = -1;
+        const opts = createNullObj(null);
+        opts.request = jsonStringify(req);
+        opts.onSuccess = function(raw) {
+          try {
+            const parsed = typeof raw === 'string' && raw ? jsonParse(raw) : null;
+            const replyText = parsed && typeof parsed.reply === 'string' ? parsed.reply : null;
+            const reply = replyText ? jsonParse(replyText) : null;
+            if (reply && reply.error) {
+              reject(new Error(String(reply.error)));
+            } else {
+              resolve(reply ? reply.result : null);
             }
-          },
-          onFailure: function(code, msg) {
-            reject(new Error(String(msg || code || 'Error NXR')));
+          } catch (err) {
+            reject(err);
           }
-        });
+        };
+        opts.onFailure = function(code, msg) {
+          reject(new Error(String(msg || code || 'Error NXR')));
+        };
+        queryFn(opts);
       } catch (err) {
         reject(err);
       }

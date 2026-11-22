@@ -49,7 +49,7 @@ class NexoAiStore(private val storageFile: File) {
         if (parent != null && !parent.exists()) parent.mkdirs()
 
         val bounded = conversations
-            .sortedByDescending { it.updatedAtMs }
+            .sortedWith(compareByDescending<NexoAiModels.AiConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
             .take(MAX_CONVERSATIONS)
             .map { conv ->
                 if (conv.messages.size > MAX_MESSAGES_PER_CONVERSATION) {
@@ -83,6 +83,7 @@ class NexoAiStore(private val storageFile: File) {
             .put("provider", conv.provider)
             .put("model", conv.model)
             .put("hostHint", conv.hostHint)
+            .put("pinned", conv.pinned)
             .put("messages", JSONArray().apply {
                 conv.messages.forEach { put(serializeMessage(it)) }
             })
@@ -134,6 +135,16 @@ class NexoAiStore(private val storageFile: File) {
                     }
                 })
             }
+            if (msg.agentSteps.isNotEmpty()) {
+                put("agentSteps", JSONArray().apply {
+                    msg.agentSteps.forEach { st ->
+                        put(JSONObject()
+                            .put("tool", st.tool)
+                            .put("summary", st.summary)
+                            .put("ok", st.ok))
+                    }
+                })
+            }
             msg.pageBinding?.let { b ->
                 put("pageBinding", JSONObject()
                     .put("tabId", b.tabId)
@@ -160,7 +171,8 @@ class NexoAiStore(private val storageFile: File) {
             messages = messages,
             provider = obj.optString("provider"),
             model = obj.optString("model"),
-            hostHint = obj.optString("hostHint")
+            hostHint = obj.optString("hostHint"),
+            pinned = obj.optBoolean("pinned", false)
         )
     }
 
@@ -220,6 +232,17 @@ class NexoAiStore(private val storageFile: File) {
                 }
             }
         }
+        val agentSteps = ArrayList<NexoAiModels.AgentStep>()
+        obj.optJSONArray("agentSteps")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val st = arr.optJSONObject(i) ?: continue
+                val tool = st.optString("tool")
+                val summary = st.optString("summary")
+                if (tool.isNotBlank() && summary.isNotBlank()) {
+                    agentSteps += NexoAiModels.AgentStep(tool, summary, st.optBoolean("ok", true))
+                }
+            }
+        }
         val pageBinding = obj.optJSONObject("pageBinding")?.let { b ->
             NexoAiModels.PageBinding(
                 tabId = b.optString("tabId"),
@@ -246,13 +269,14 @@ class NexoAiStore(private val storageFile: File) {
             errorMessage = errorMessage,
             pageBinding = pageBinding,
             scope = obj.optString("scope", "page"),
-            retryPrompt = obj.optString("retryPrompt").takeIf { it.isNotBlank() }
+            retryPrompt = obj.optString("retryPrompt").takeIf { it.isNotBlank() },
+            agentSteps = agentSteps
         )
     }
 
     companion object {
-        private const val STORE_VERSION = 1
-        const val MAX_CONVERSATIONS = 25
-        const val MAX_MESSAGES_PER_CONVERSATION = 80
+        private const val STORE_VERSION = 2
+        const val MAX_CONVERSATIONS = 60
+        const val MAX_MESSAGES_PER_CONVERSATION = 100
     }
 }

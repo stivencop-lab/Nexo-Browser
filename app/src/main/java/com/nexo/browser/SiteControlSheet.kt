@@ -125,7 +125,7 @@ object SiteControlSheet {
         }
         header.addView(connRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         header.addView(details)
-        // Escáner de páginas: estado y motivos, sin caja propia.
+        // Escáner de páginas: estado, categoría de amenaza, puntuación y motivos.
         val scan = com.nexo.browser.shield.MalwareScan.resultFor(tab)
         if (isWeb && scan != null && BrowserPrefs.malwareScan(activity)) {
             val level = scan.decision.level
@@ -135,12 +135,17 @@ object SiteControlSheet {
                 else -> p.success.color
             }
             header.addView(TextView(activity).apply {
+                val category = scan.decision.threatType.takeIf { it != com.nexo.browser.shield.MalwareSignals.ThreatType.NONE }?.label
                 val headline = when (level) {
-                    com.nexo.browser.shield.MalwareSignals.Level.DANGEROUS -> "Posible página fraudulenta"
-                    com.nexo.browser.shield.MalwareSignals.Level.SUSPICIOUS -> "Página con señales sospechosas"
+                    com.nexo.browser.shield.MalwareSignals.Level.DANGEROUS -> "${category ?: "Posible página fraudulenta"} (${scan.localScore}/100)"
+                    com.nexo.browser.shield.MalwareSignals.Level.SUSPICIOUS -> "${category ?: "Señales sospechosas"} (${scan.localScore}/100)"
                     else -> "Sin señales de engaño"
                 }
-                val source = if (scan.decision.byAi) " · revisado con IA" else ""
+                val source = when {
+                    scan.decision.byAi -> " · IA"
+                    tab.isPrivate -> " · local"
+                    else -> ""
+                }
                 text = headline + source + scan.decision.reasons.joinToString("") { "\n–  $it" }
                 textSize = 13.5f
                 typeface = NexoUi.regular(activity)
@@ -337,7 +342,7 @@ object SiteControlSheet {
             sheet.dismiss()
             activity.startActivity(Intent(activity, ExtensionsActivity::class.java))
         })
-        groupAdd(more, NexoUi.actionRow(activity, R.drawable.ic_tab_tools, "Red, identidad y grupos", tab.networkState.toString()) {
+        groupAdd(more, NexoUi.actionRow(activity, R.drawable.ic_tab_tools, "Red, identidad y grupos", tab.networkState) {
             sheet.dismiss()
             TabTools.show(activity)
         })

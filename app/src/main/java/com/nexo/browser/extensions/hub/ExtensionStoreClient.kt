@@ -55,6 +55,10 @@ object ExtensionStoreClient {
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .dns(com.nexo.browser.NativeImagePolicy.publicDns(okhttp3.Dns.SYSTEM))
+            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+            .authenticator(okhttp3.Authenticator.NONE)
+            .proxyAuthenticator(okhttp3.Authenticator.NONE)
             .followRedirects(false)
             .followSslRedirects(false)
             .connectTimeout(15, TimeUnit.SECONDS)

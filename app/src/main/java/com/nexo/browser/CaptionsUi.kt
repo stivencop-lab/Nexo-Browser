@@ -29,7 +29,7 @@ object CaptionsUi {
         listOf("" to "No traducir") + CaptionProtocol.TARGET_LANGUAGES.map { it.code to it.label }
     /** Los primeros que se ven como píldoras; el resto en "Más idiomas". */
     private val QUICK_TARGETS = listOf("es", "en", "pt", "fr", "de", "it", "ja", "zh")
-    private val SIZES = listOf(11 to "Mínimo", 13 to "Pequeño", 16 to "Normal", 19 to "Grande", 22 to "Muy grande")
+    private val SIZES = listOf(10 to "Mínimo", 12 to "Pequeño", 13 to "Normal", 16 to "Grande", 19 to "Muy grande")
 
     // Estilo ya aplicado al texto: solo se cambia lo que cambió (cada cambio de fondo,
     // tamaño o líneas obliga a recolocar la pantalla, y eso con video resta fluidez).
@@ -44,31 +44,48 @@ object CaptionsUi {
         return if (target == "No traducir") "Idioma: $language" else "$language → $target"
     }
 
-    /** Píldora translúcida como la de "Mini"; con el acento cuando está activa. */
-    fun styleChip(activity: Activity, button: Button, active: Boolean) {
+    /**
+     * Píldora compacta Liquid Glass (32 dp visuales dentro de un área táctil de 48 dp),
+     * coherente con la mini-píldora del cromo inferior; usa el acento cuando está activa.
+     */
+    internal fun styleChip(
+        activity: Activity,
+        button: Button,
+        active: Boolean,
+        backdrop: NexoGlassBackdrop? = null,
+        backdropSource: View? = null,
+        smoked: Boolean = false
+    ) {
         val p = ThemeManager.palette(activity)
-        val density = activity.resources.displayMetrics.density
+        val insetY = dp(activity, 8f)
+        val visual: android.graphics.drawable.Drawable = if (active) {
+            ThemeManager.rounded(activity, p.accent, NexoTokens.PILL_RADIUS)
+        } else {
+            NexoGlassDrawable(activity, p, NexoTokens.PILL_RADIUS, smoked = smoked).also {
+                if (backdrop != null && backdropSource != null) {
+                    it.setWebBackdrop(backdrop, backdropSource, button)
+                }
+            }
+        }
+        val inset = android.graphics.drawable.InsetDrawable(visual, 0, insetY, 0, insetY)
         button.background = ThemeManager.ripple(
             activity,
-            GradientDrawable().apply {
-                setColor(if (active) p.accent else p.surfaceContainerHighest)
-                cornerRadius = 24f * density
-                setStroke(density.toInt().coerceAtLeast(1), if (active) p.accent else p.outlineVariant)
-            },
-            24f,
+            inset,
+            NexoTokens.PILL_RADIUS,
             androidx.core.graphics.ColorUtils.setAlphaComponent(if (active) p.onAccent else p.text, 26)
         )
         button.backgroundTintList = null
         button.setTextColor(if (active) p.onAccent else p.text)
         button.stateListAnimator = null
-        button.elevation = 0f
+        NexoGlass.float(button, p, if (p.isDark) 3f else 6f)
         button.contentDescription = if (button.id == R.id.miniPlayerButton) "Abrir mini reproductor"
             else if (active) "Subtítulos activos. Abrir opciones" else "Activar subtítulos en vivo"
     }
 
     /**
-     * Coloca el texto sobre la parte baja del video. Si no se conoce su
-     * posición (o en la ventana mini), al pie de la página.
+     * Coloca el texto sobre la parte baja del video con tamaño proporcionado al contenedor
+     * (evitando subtítulos desproporcionados en videos pequeños o PiP) y siempre respetando
+     * la barra de estado y el cromo inferior.
      */
     fun render(
         activity: Activity,
@@ -87,22 +104,50 @@ object CaptionsUi {
             view.visibility = View.GONE
             return
         }
-        val size = BrowserPrefs.captionSize(activity).toFloat()
+        val margin = dp(activity, if (pip) 6f else 8f)
+        val position = if (pip || hint) BrowserPrefs.CAPTION_POS_VIDEO else BrowserPrefs.captionPosition(activity)
+        // Área visible real: nunca detrás del cromo inferior ni de la barra de estado.
+        val visibleTop = if (pip) 0 else topObstruction
+        val visibleBottom = if (pip) frameHeight else (frameHeight - maxOf(bottomObstruction, dp(activity, 10f)))
+        val safeBottom = visibleBottom.coerceAtLeast(visibleTop + dp(activity, 48f))
+        val videoArea = if (!pip && videoRect != null && position == BrowserPrefs.CAPTION_POS_VIDEO) {
+            Rect(videoRect).takeIf {
+                it.intersect(0, visibleTop, frameWidth, safeBottom) &&
+                    it.width() > dp(activity, 150f) && it.height() > dp(activity, 84f)
+            }
+        } else null
+        val area = videoArea ?: Rect(0, visibleTop, frameWidth, safeBottom)
+
+        val baseSize = BrowserPrefs.captionSize(activity).toFloat()
+        // Limita la escala del sistema para que fuentes accesibles gigantes no tapen el 50 % del video.
+        val fontScale = activity.resources.configuration.fontScale.coerceAtLeast(1f)
+        val scaleCompensation = if (fontScale > 1.15f) 1.15f / fontScale else 1f
+        val compactInline = !pip && videoArea != null && videoArea.height() < dp(activity, 250f)
+        val textSize = when {
+            hint -> (baseSize * 0.82f).coerceIn(10.5f, 13f)
+            pip -> (baseSize * 0.66f).coerceIn(9.5f, 12f)
+            compactInline -> (baseSize * 0.86f).coerceIn(10.5f, 15f)
+            else -> (baseSize * scaleCompensation).coerceIn(10f, 22f)
+        }
         val background = if (hint) "hint" else BrowserPrefs.captionBackground(activity)
         val color = if (BrowserPrefs.captionColor(activity) == "yellow" && !hint) 0xFFFFE45C.toInt() else Color.WHITE
         val lines = BrowserPrefs.captionLines(activity)
-        val maxLines = if (display.secondary.isNotBlank()) lines + 2 else lines
-        val textSize = when {
-            hint -> (size * 0.8f).coerceAtLeast(12f)
-            pip -> (size * 0.72f).coerceAtLeast(10f)
-            else -> size
+        val maxLines = when {
+            pip -> minOf(lines, 2)
+            display.secondary.isNotBlank() -> lines + 1
+            else -> lines
         }
+        val padH = dp(activity, when { pip -> 7f; compactInline -> 9f; else -> 10f })
+        val padV = dp(activity, when { pip -> 3f; compactInline -> 4f; else -> 5f })
+        val radiusDp = when { pip -> 6f; compactInline -> 7.5f; else -> 8.5f }
         val font = com.nexo.browser.media.MediaSitePrefs.captionFont(activity)
-        val style = "$textSize|$background|$color|$maxLines|$hint|$font"
+        val style = "$textSize|$background|$color|$maxLines|$hint|$font|$padH|$padV"
         if (style != appliedStyle || view.tag !== CaptionsUi) {
             appliedStyle = style
             view.tag = CaptionsUi
             view.textSize = textSize
+            view.setPadding(padH, padV, padH, padV)
+            view.setLineSpacing(0f, 1.12f)
             // El aviso de estado se distingue del subtítulo: cursiva y fondo más ligero.
             val fontStyle = if (hint) Typeface.ITALIC else Typeface.NORMAL
             view.typeface = when (font) {
@@ -112,12 +157,12 @@ object CaptionsUi {
             }
             view.setTextColor(color)
             // Sin fondo, un contorno oscuro marcado mantiene el texto legible sobre cualquier imagen.
-            if (background == "none") view.setShadowLayer(dp(activity, 2.5f).toFloat(), 0f, 0f, 0xF0000000.toInt())
-            else view.setShadowLayer(3f, 0f, 1f, 0x99000000.toInt())
-            view.background = if (background == "none") null else backgrounds.getOrPut(background) {
+            if (background == "none") view.setShadowLayer(dp(activity, 2.2f).toFloat(), 0f, 0f, 0xF0000000.toInt())
+            else view.setShadowLayer(2.5f, 0f, 1f, 0x99000000.toInt())
+            view.background = if (background == "none") null else backgrounds.getOrPut("$background|$radiusDp") {
                 GradientDrawable().apply {
-                    setColor(when (background) { "hint" -> 0x99000000.toInt(); "soft" -> 0x66000000; else -> 0xB8000000.toInt() })
-                    cornerRadius = dp(activity, 10f).toFloat()
+                    setColor(when (background) { "hint" -> 0x94000000.toInt(); "soft" -> 0x62000000; else -> 0xB2000000.toInt() })
+                    cornerRadius = dp(activity, radiusDp).toFloat()
                 }
             }
             view.maxLines = maxLines
@@ -141,19 +186,7 @@ object CaptionsUi {
         }
         view.text = text
 
-        val margin = dp(activity, 8f)
-        val position = if (pip || hint) BrowserPrefs.CAPTION_POS_VIDEO else BrowserPrefs.captionPosition(activity)
-        val videoArea = if (!pip && videoRect != null && position == BrowserPrefs.CAPTION_POS_VIDEO) {
-            Rect(videoRect).takeIf {
-                it.intersect(0, 0, frameWidth, frameHeight) &&
-                    it.width() > dp(activity, 160f) && it.height() > dp(activity, 90f)
-            }
-        } else null
-        // Área visible: nunca bajo el cromo flotante ni bajo la barra de estado.
-        val visibleTop = if (pip) 0 else topObstruction
-        val visibleBottom = if (pip) frameHeight else (frameHeight - maxOf(bottomObstruction, dp(activity, 12f)))
-        val area = videoArea ?: Rect(0, visibleTop, frameWidth, visibleBottom.coerceAtLeast(visibleTop + dp(activity, 48f)))
-        val maxWidth = (area.width() - margin * 2).coerceAtLeast(dp(activity, 120f))
+        val maxWidth = minOf(area.width() - margin * 2, dp(activity, if (pip) 240f else 336f)).coerceAtLeast(dp(activity, 112f))
         view.maxWidth = maxWidth
         view.measure(
             View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST),
@@ -162,15 +195,15 @@ object CaptionsUi {
         val width = view.measuredWidth
         val height = view.measuredHeight
         val maxX = (frameWidth - width - margin).coerceAtLeast(margin)
-        val maxY = (frameHeight - height - margin).coerceAtLeast(margin)
+        val maxY = (safeBottom - height - margin).coerceAtLeast(visibleTop + margin)
         val minY = (area.top + margin).coerceAtMost(maxY)
         view.translationX = (area.centerX() - width / 2f).coerceIn(margin.toFloat(), maxX.toFloat())
         val maxVisibleY = (area.bottom - height - margin).coerceAtLeast(minY).coerceAtMost(maxY)
         val y = when (position) {
-            BrowserPrefs.CAPTION_POS_TOP -> (area.top + dp(activity, 16f)).toFloat()
+            BrowserPrefs.CAPTION_POS_TOP -> (area.top + dp(activity, 10f)).toFloat()
             BrowserPrefs.CAPTION_POS_CENTER -> area.centerY() - height / 2f
             BrowserPrefs.CAPTION_POS_CUSTOM -> area.top + (area.height() - height) * BrowserPrefs.captionCustomY(activity)
-            else -> (area.bottom - height - dp(activity, if (pip) 6f else 14f)).toFloat()
+            else -> (area.bottom - height - dp(activity, if (pip) 4f else 10f)).toFloat()
         }
         // Mientras se arrastra, la posición la marca el dedo.
         if (view.getTag(R.id.nexo_caption_dragging) != true) {

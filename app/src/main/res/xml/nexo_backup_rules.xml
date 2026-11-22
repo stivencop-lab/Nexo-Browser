@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Excluir claves, perfiles Chromium, historial, descargas, IA y extensiones en Android 10–11 (API 29–30). -->
+    <exclude domain="sharedpref" path="nexo_secrets.xml" />
+    <exclude domain="sharedpref" path="nexo_browser_settings.xml" />
+    <exclude domain="sharedpref" path="nexo_ai.xml" />
+    <exclude domain="sharedpref" path="nexo_downloads.xml" />
+    <exclude domain="sharedpref" path="nexo_history.xml" />
+    <exclude domain="root" path="app_cefrium" />
+    <exclude domain="file" path="phantomshield" />
+    <exclude domain="file" path="nxr_extensions" />
+</full-backup-content>

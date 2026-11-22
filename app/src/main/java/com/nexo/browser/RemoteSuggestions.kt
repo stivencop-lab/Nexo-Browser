@@ -22,6 +22,10 @@ object RemoteSuggestions {
 
     private val client by lazy {
         OkHttpClient.Builder()
+            .dns(NativeImagePolicy.publicDns(okhttp3.Dns.SYSTEM))
+            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+            .authenticator(okhttp3.Authenticator.NONE)
+            .proxyAuthenticator(okhttp3.Authenticator.NONE)
             .followRedirects(false).followSslRedirects(false)
             .connectTimeout(3, TimeUnit.SECONDS).readTimeout(3, TimeUnit.SECONDS).callTimeout(4, TimeUnit.SECONDS)
             .retryOnConnectionFailure(false)

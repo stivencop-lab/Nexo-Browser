@@ -16,11 +16,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     field('message').className = error ? 'message error' : 'message';
   }
   function controls() {
+    const adblockOn = field('adblock-toggle').checked;
     field('adblock-toggle').disabled = !loaded || busy;
     field('privacy-toggle').disabled = !loaded || busy;
-    field('popup-block-toggle').disabled = !loaded || busy || !field('adblock-toggle').checked;
+    field('popup-block-toggle').disabled = !loaded || busy || !adblockOn;
+    field('annoyances-toggle').disabled = !loaded || busy || !adblockOn;
+    field('cryptominer-toggle').disabled = !loaded || busy || !adblockOn;
     field('anti-block-toggle').disabled = !loaded || busy;
-    field('site-toggle').disabled = !loaded || busy || !domain || !field('adblock-toggle').checked;
+    field('level-balanced').disabled = !loaded || busy;
+    field('level-strict').disabled = !loaded || busy;
+    field('level-aggressive').disabled = !loaded || busy;
+    field('site-toggle').disabled = !loaded || busy || !domain || !adblockOn;
+    field('start-zapper').disabled = !loaded || busy || !domain || !adblockOn || !field('site-toggle').checked;
+    field('clear-zaps').disabled = !loaded || busy || !domain;
     field('scan-ai').disabled = !loaded || busy || !scanAvailable;
     field('exclude-ai').disabled = !loaded || busy;
     field('allow-ai').disabled = !loaded || busy;
@@ -32,6 +40,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     const error = new Error(message);
     error.userFacing = true;
     return error;
+  }
+  const LEVEL_HINTS = {
+    balanced: 'Equilibrado · sin romper sitios',
+    strict: 'Estricto · anti-huellas + beacons',
+    aggressive: 'Máximo · bloquea telemetría agresiva'
+  };
+  const CAT_LABELS = { ad: 'Anuncio', tracker: 'Rastreador', popup: 'Popup', miner: 'Minero', threat: 'Amenaza', dnr: 'Regla' };
+  function renderActivityLog(entries, allowedDomains) {
+    const card = field('activity-card');
+    const listEl = field('activity-list');
+    const countEl = field('activity-count');
+    const items = Array.isArray(entries) ? entries : [];
+    card.hidden = !domain || items.length === 0;
+    countEl.textContent = items.length + (items.length === 1 ? ' bloqueo' : ' bloqueos');
+    if (typeof document.createElement !== 'function' || !listEl || typeof listEl.appendChild !== 'function') return;
+    while (listEl.firstChild) listEl.removeChild(listEl.firstChild);
+    const allowedSet = new Set(Array.isArray(allowedDomains) ? allowedDomains : []);
+    for (const item of items.slice(0, 25)) {
+      if (!item || !item.host) continue;
+      const row = document.createElement('div');
+      row.className = 'activity-row';
+      const info = document.createElement('div');
+      info.className = 'activity-info';
+      const hostSpan = document.createElement('span');
+      hostSpan.className = 'activity-host';
+      hostSpan.textContent = String(item.host);
+      const tag = document.createElement('span');
+      tag.className = 'activity-tag ' + String(item.category || 'ad');
+      tag.textContent = (CAT_LABELS[item.category] || 'Bloqueado') + (item.type ? ' · ' + item.type : '');
+      info.appendChild(hostSpan);
+      info.appendChild(tag);
+      row.appendChild(info);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'activity-allow';
+      const cleanHost = normalizeHost(item.host);
+      const isAllowed = allowedSet.has(cleanHost);
+      btn.textContent = isAllowed ? 'Bloq.' : 'Permitir';
+      btn.addEventListener('click', () => mutate(async () => {
+        await browser.runtime.sendMessage({ type: isAllowed ? 'UNALLOW_DOMAIN' : 'ALLOW_DOMAIN', domain: cleanHost });
+        showMessage((isAllowed ? 'Bloqueo restaurado para ' : 'Permitido ') + cleanHost + '. Recarga para aplicar.');
+      }));
+      row.appendChild(btn);
+      listEl.appendChild(row);
+    }
   }
   async function refresh() {
     const id = ++refreshId;
@@ -46,7 +99,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     field('adblock-toggle').checked = globalOn;
     field('privacy-toggle').checked = stats.settings.privacyEnabled === true;
     field('popup-block-toggle').checked = stats.settings.popupBlockEnabled !== false;
+    field('annoyances-toggle').checked = stats.settings.annoyancesEnabled !== false;
+    field('cryptominer-toggle').checked = stats.settings.cryptominerEnabled !== false;
     field('anti-block-toggle').checked = stats.settings.antiBlockEnabled === true;
+    const level = ['balanced', 'strict', 'aggressive'].includes(stats.settings.protectionLevel) ? stats.settings.protectionLevel : 'balanced';
+    field('level-balanced').className = 'level-btn' + (level === 'balanced' ? ' active' : '');
+    field('level-strict').className = 'level-btn' + (level === 'strict' ? ' active' : '');
+    field('level-aggressive').className = 'level-btn' + (level === 'aggressive' ? ' active' : '');
+    field('level-hint').textContent = LEVEL_HINTS[level] || LEVEL_HINTS.balanced;
     field('site-toggle').checked = globalOn && siteOn;
     field('site-control').hidden = !domain;
     field('current-domain').textContent = domain || 'Página segura de Nexo';
@@ -60,6 +120,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       : siteOn ? 'Protección activa en este sitio.' : 'Protección pausada en este sitio.';
     field('site-blocks').textContent = domain ? Number(stats.tabBlocked || 0).toLocaleString('es') : '—';
     field('total-blocks').textContent = Number(stats.blockedCount || 0).toLocaleString('es');
+    const cats = stats.categories && typeof stats.categories === 'object' ? stats.categories : null;
+    const catTotal = cats ? (Number(cats.ads) || 0) + (Number(cats.trackers) || 0) + (Number(cats.popups) || 0) + (Number(cats.miners) || 0) + (Number(cats.threats) || 0) : 0;
+    field('category-bar').hidden = !domain || catTotal === 0;
+    if (cats) {
+      field('cat-ads').textContent = String(Number(cats.ads) || 0);
+      field('cat-trackers').textContent = String(Number(cats.trackers) || 0);
+      field('cat-popups').textContent = String(Number(cats.popups) || 0);
+      field('cat-miners').textContent = String(Number(cats.miners) || 0);
+      const threats = Number(cats.threats) || 0;
+      field('cat-threats').textContent = String(threats);
+      field('cat-threats-pill').hidden = threats === 0;
+    }
+    const zaps = Number(stats.userZaps) || 0;
+    field('tools-card').hidden = !domain;
+    field('clear-zaps').hidden = zaps <= 0;
+    field('zaps-badge').textContent = zaps > 0 ? zaps + (zaps === 1 ? ' oculto' : ' ocultos') : 'Selector visual';
+    renderActivityLog(stats.tabLog, stats.allowedDomains);
     const badge = field('shield-status');
     badge.textContent = !globalOn ? 'Apagado' : !domain ? 'Listo' : siteOn ? 'Activo' : 'Pausado aquí';
     badge.className = 'status-badge' + (!globalOn ? ' off' : siteOn && domain ? ' active' : '');
@@ -163,6 +240,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (_) { showMessage('No se pudo leer la pestaña. Abre el panel de nuevo desde una web.', true); }
   field('close-panel').addEventListener('click', () => window.close());
+  for (const [id, level, label] of [
+    ['level-balanced', 'balanced', 'Estándar'],
+    ['level-strict', 'strict', 'Estricto'],
+    ['level-aggressive', 'aggressive', 'Máximo']
+  ]) {
+    field(id).addEventListener('click', () => mutate(async () => {
+      const res = await browser.runtime.sendMessage({ type: 'SET_LEVEL', level });
+      if (!res || !res.ok) throw userError('No se pudo cambiar el nivel de protección.');
+      showMessage('Nivel ' + label + ' aplicado. Recarga para reforzar esta página.');
+    }));
+  }
+  field('start-zapper').addEventListener('click', () => mutate(async () => {
+    if (!currentTab) return;
+    const res = await browser.runtime.sendMessage({ type: 'START_ZAPPER', tabId: currentTab.id });
+    if (!res || !res.ok) throw userError(res && res.error || 'No se pudo iniciar el selector visual.');
+  }));
+  field('clear-zaps').addEventListener('click', () => mutate(async () => {
+    if (!domain) return;
+    await browser.runtime.sendMessage({ type: 'CLEAR_SITE_ZAPS', host: domain });
+    showMessage('Elementos ocultados manualmente restaurados en ' + domain + '.');
+  }));
   field('configure-ai').addEventListener('click', () => {
     browser.runtime.openOptionsPage().catch(() => showMessage('No se pudieron abrir los ajustes de IA.', true));
   });
@@ -223,9 +321,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       showMessage(enabled ? 'Bloqueo local activado.' : 'Bloqueo local desactivado.');
     });
   });
+  field('annoyances-toggle').addEventListener('change', () => {
+    const enabled = field('annoyances-toggle').checked;
+    mutate(async () => {
+      await browser.storage.local.set({ annoyancesEnabled: enabled });
+      showMessage(enabled ? 'Avisos de cookies y molestias ocultos.' : 'Avisos de cookies permitidos.');
+    });
+  });
+  field('cryptominer-toggle').addEventListener('change', () => {
+    const enabled = field('cryptominer-toggle').checked;
+    mutate(async () => {
+      await browser.storage.local.set({ cryptominerEnabled: enabled });
+      showMessage(enabled ? 'Bloqueo de criptomineros activado.' : 'Bloqueo de criptomineros desactivado.');
+    });
+  });
   field('anti-block-toggle').addEventListener('change', () => {
     const enabled=field('anti-block-toggle').checked;
-    mutate(async()=>{await browser.storage.local.set({antiBlockEnabled:enabled});showMessage('Parcheador '+(enabled?'activado':'desactivado')+'. Recarga para aplicarlo.');});
+    mutate(async()=>{await browser.storage.local.set({antiBlockEnabled:enabled});showMessage('Scriptlets anti-bloqueo '+(enabled?'activados':'desactivados')+'. Recarga para aplicarlo.');});
   });
   field('popup-block-toggle').addEventListener('change', () => {
     const enabled = field('popup-block-toggle').checked;
@@ -236,7 +348,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   field('privacy-toggle').addEventListener('change', () => {
     const enabled = field('privacy-toggle').checked;
-    mutate(async () => { await browser.storage.local.set({ privacyEnabled: enabled }); showMessage('El cambio de Canvas se aplica al recargar la página.'); });
+    mutate(async () => { await browser.storage.local.set({ privacyEnabled: enabled }); showMessage('Protección anti-huellas ' + (enabled ? 'activada' : 'desactivada') + '. Recarga para aplicarla.'); });
   });
   field('update-lists').addEventListener('click', () => mutate(async () => {
     showMessage('Descargando listas…');
@@ -256,7 +368,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showMessage('Contadores reiniciados.');
   }));
   const changed = (values, area) => {
-    if (area === 'local' && ['adblockEnabled','privacyEnabled','popupBlockEnabled','antiBlockEnabled','disabled_domains','aiConfig','aiStats','aiStatus','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
+    if (area === 'local' && ['adblockEnabled','privacyEnabled','popupBlockEnabled','antiBlockEnabled','protectionLevel','annoyancesEnabled','cryptominerEnabled','gpcEnabled','disabled_domains','allowed_domains','user_cosmetic_rules','aiConfig','aiStats','aiStatus','blockedCount','phantom_last_update','phantom_update_results'].some(key => key in values)) {
       refresh().catch(() => showMessage('No se pudo actualizar el estado de protección.', true));
     }
   };

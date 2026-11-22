@@ -1035,6 +1035,9 @@ private class TabCardAdapter(
             holder.icon.setImageDrawable(null)
             holder.placeholderIcon.setImageDrawable(null)
             holder.placeholderLetter.visibility = View.GONE
+            holder.shownPreview = null
+            holder.image.setImageDrawable(null)
+            holder.image.visibility = View.GONE
         }
         val origin = BrowserPagePresentation.shortcut(tab.url)?.origin
         when {
@@ -1123,7 +1126,7 @@ private class TabCardAdapter(
             return
         }
         fun show(bitmap: Bitmap?) {
-            if (bitmap == null) {
+            if (bitmap == null || bitmap.isRecycled) {
                 holder.shownPreview = null
                 holder.image.setImageDrawable(null)
                 holder.image.visibility = View.GONE
@@ -1151,7 +1154,8 @@ private class TabCardAdapter(
 }
 
 /**
- * Muestra la parte superior de la miniatura (como un navegador real).
+ * Muestra la parte superior de la miniatura cubriendo toda la tarjeta (tanto capturas verticales
+ * como horizontales de video), centrada en el eje X y anclada arriba.
  * La app usa Activity del framework (no AppCompat), así que extender
  * ImageView directamente es lo correcto.
  */
@@ -1173,8 +1177,15 @@ private class TopCropImageView(context: Context) : ImageView(context) {
 
     private fun updateMatrix() {
         val d = drawable ?: return
-        if (width == 0 || d.intrinsicWidth <= 0) return
-        val scale = width.toFloat() / d.intrinsicWidth.toFloat()
-        imageMatrix = Matrix().apply { setScale(scale, scale) }
+        if (width <= 0 || height <= 0 || d.intrinsicWidth <= 0 || d.intrinsicHeight <= 0) return
+        val scale = maxOf(
+            width.toFloat() / d.intrinsicWidth.toFloat(),
+            height.toFloat() / d.intrinsicHeight.toFloat()
+        )
+        val dx = (width - d.intrinsicWidth * scale) / 2f
+        imageMatrix = Matrix().apply {
+            setScale(scale, scale)
+            postTranslate(dx, 0f)
+        }
     }
 }

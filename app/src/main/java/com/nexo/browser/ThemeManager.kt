@@ -592,6 +592,7 @@ object ThemeManager {
     }
 
     /** Rebote físico del pulgar al cambiar (SpringAnimation 380 / 0.82). */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
     private fun Switch.setOnCheckedChangeListenerSpring() {
         if (getTag(R.id.nexo_spring_switch) != null) return
         setTag(R.id.nexo_spring_switch, true)

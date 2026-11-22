@@ -34,6 +34,9 @@ object TabManager {
 
         /** Un sitio pidió (o dejó) pantalla completa, p. ej. el botón de YouTube. */
         fun onFullScreenChanged(tab: BrowserTab, fullScreen: Boolean) = Unit
+
+        /** Aviso justo antes de dejar una pestaña activa (para guardar su última miniatura). */
+        fun onBeforeTabSwitch(leaving: BrowserTab) = Unit
     }
 
     private val tabs = CopyOnWriteArrayList<BrowserTab>()
@@ -313,7 +316,10 @@ object TabManager {
         val old = activeTab()
 
         if (old?.id != target.id) {
-            if (old != null) old.inactiveSince = android.os.SystemClock.elapsedRealtime()
+            if (old != null) {
+                listener?.onBeforeTabSwitch(old)
+                old.inactiveSince = android.os.SystemClock.elapsedRealtime()
+            }
             // No dejar una pestaña en segundo plano en pantalla completa.
             if (old?.isFullScreen == true) {
                 old.isFullScreen = false
@@ -330,7 +336,11 @@ object TabManager {
                 session.setFocused(false)
                 ExtensionManager.setTabActive(session, false)
                 session.setHighPriority(keepMediaAlive)
-                session.setActive(keepMediaAlive)
+                if (keepMediaAlive && session is com.nexo.browser.engine.cefrium.CefriumEngineSession) {
+                    session.keepAudioInBackground()
+                } else {
+                    session.setActive(keepMediaAlive)
+                }
             }
 
             if (rememberPrevious && old != null) {
@@ -682,7 +692,11 @@ object TabManager {
             session.setSuspendMediaWhenInactive(!backgroundEnabled)
             ExtensionManager.setTabActive(session, false)
             session.setHighPriority(keepMediaAlive)
-            session.setActive(keepMediaAlive)
+            if (keepMediaAlive && session is com.nexo.browser.engine.cefrium.CefriumEngineSession) {
+                session.keepAudioInBackground()
+            } else {
+                session.setActive(keepMediaAlive)
+            }
         }
 
         if (keepMediaAlive) {
@@ -899,15 +913,15 @@ object TabManager {
                 return
             }
 
-            // Ejecutable desde una página que el escáner marcó como fraudulenta: no se descarga.
+            // Ejecutable desde una página fraudulenta o servidor malicioso: no se descarga.
             val ctx = requireContext()
-            if (com.nexo.browser.shield.MalwareScan.blocksDownload(ctx, tab, download.uri)) {
+            if (com.nexo.browser.shield.MalwareScan.blocksDownload(ctx, tab, download.uri, download.suggestedName, download.mimeType)) {
                 download.discard()
-                listener?.onMessage("Descarga bloqueada: esta página parece fraudulenta y el archivo instala programas.")
+                listener?.onMessage("Descarga bloqueada: el origen parece fraudulento y el archivo instala programas.")
                 return
             }
-            if (com.nexo.browser.shield.MalwareScan.warnsDownload(ctx, tab, download.uri)) {
-                listener?.onMessage("Atención: estás descargando un instalador desde una página con señales sospechosas.")
+            if (com.nexo.browser.shield.MalwareScan.warnsDownload(ctx, tab, download.uri, download.suggestedName, download.mimeType)) {
+                listener?.onMessage("Atención: estás descargando un instalador desde una página o enlace con señales sospechosas.")
             }
 
             // Sin proxy ni Burner, un archivo grande puede repartirse en varias conexiones
@@ -960,7 +974,8 @@ object TabManager {
                 if (SuggestionIndex.hostOf(tab.url) != SuggestionIndex.hostOf(url)) {
                     mainHandler.post { ExtensionManager.sendBrowserState(AppContext.get()) }
                 }
-                if (tab.url.substringBefore('#') != url.substringBefore('#')) {
+                val pathChanged = tab.url.substringBefore('#') != url.substringBefore('#')
+                if (pathChanged) {
                     if (LiveCaptions.pageSuspended(session)) LiveCaptions.stop(session)
                     else PlaybackAudioCapture.cancel(session)
                 }
@@ -969,8 +984,13 @@ object TabManager {
                 // Los permisos pedidos por la página anterior ya no valen.
                 tab.session?.let { SitePermissionPrompts.cancelFor(it) }
                 windowPrompt?.dismiss()
+                tab.url = url
+                if (pathChanged) {
+                    com.nexo.browser.shield.MalwareScan.onLocationChanged(requireContext(), tab, url)
+                }
+            } else {
+                tab.url = url
             }
-            tab.url = url
             persist()
             listener?.onTabChanged(tab)
         }
@@ -1109,6 +1129,7 @@ object TabManager {
             tab.lastScrollY = 0
             tab.isLoading = true
             tab.lastUsed = System.currentTimeMillis()
+            com.nexo.browser.shield.MalwareScan.onNavigationStart(requireContext(), tab, url)
             persist()
             listener?.onTabChanged(tab)
             listener?.onProgress(tab, 0, true)
@@ -1140,13 +1161,16 @@ object TabManager {
             persist()
             listener?.onProgress(tab, 100, false)
 
-            if (success && !tab.isPrivate) {
+            if (success) {
+                // Protección local también en pestañas privadas/Burner (sin caché ni IA en la nube).
                 com.nexo.browser.shield.MalwareScan.onPageLoaded(requireContext(), tab)
-                HistoryStore.add(
-                    requireContext(),
-                    tab.url,
-                    tab.title
-                )
+                if (!tab.isPrivate) {
+                    HistoryStore.add(
+                        requireContext(),
+                        tab.url,
+                        tab.title
+                    )
+                }
             }
         }
     }
@@ -1411,7 +1435,7 @@ object TabManager {
                 array.put(
                     JSONObject().apply {
                         put("id", tab.id)
-                        put("url", tab.url)
+                        put("url", UrlSafety.stripCredentials(tab.url))
                         put("title", tab.title)
                         put("desktopMode", tab.desktopMode)
                         put("pinned", tab.pinned)

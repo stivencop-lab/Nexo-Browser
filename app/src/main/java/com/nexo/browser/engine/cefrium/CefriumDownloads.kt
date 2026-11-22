@@ -18,31 +18,75 @@ import java.util.concurrent.TimeUnit
  * tramos en paralelo, carpeta elegida) en lugar del de Chromium.
  */
 internal object CefriumDownloads {
+    private const val MAX_REDIRECTS = 5
+
     private val client = OkHttpClient.Builder()
+        .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+        .authenticator(okhttp3.Authenticator.NONE)
+        .proxyAuthenticator(okhttp3.Authenticator.NONE)
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
     @Volatile var userAgent: String = UserAgents.mobile()
 
     val fetcher: DownloadFetcher = object : DownloadFetcher {
-        override fun fetch(url: String, headers: Map<String, String>, referrer: String?, isPrivate: Boolean): DownloadResponse =
-            request(url, headers, referrer, if (isPrivate) CefriumProfile.incognito() else CefriumProfile.getDefault(), null)
+        override fun fetch(
+            url: String,
+            headers: Map<String, String>,
+            referrer: String?,
+            isPrivate: Boolean,
+            burnerId: String?
+        ): DownloadResponse =
+            request(url, headers, referrer, CefriumProfiles.forSession(isPrivate, burnerId), null)
     }
 
     /** Bloquea: nunca en el hilo principal (las cookies de Cefrium responden en él). */
     fun request(url: String, headers: Map<String, String>, referrer: String?, profile: CefriumProfile, agent: String?): DownloadResponse {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Descarga en el hilo principal" }
-        if (!UrlSafety.isWebUrl(url)) throw IOException("Este recurso no se puede descargar directamente")
-        val builder = Request.Builder().url(url).header("User-Agent", agent ?: userAgent)
-        headers.forEach { (name, value) -> builder.header(name, value) }
-        cookieHeader(profile, url)?.let { builder.header("Cookie", it) }
-        referrer?.takeIf { UrlSafety.isWebUrl(it) }?.let { builder.header("Referer", it) }
-        val response = client.newCall(builder.build()).execute()
-        val merged = response.headers.toMultimap().mapValues { (_, values) -> values.joinToString(", ") }
-        return DownloadResponse(response.request.url.toString(), response.code, merged, response.body?.byteStream())
+        var currentUrl = url
+        var currentReferrer = referrer?.takeIf { UrlSafety.isWebUrl(it) }
+        var redirects = 0
+
+        while (true) {
+            if (!UrlSafety.isWebUrl(currentUrl)) throw IOException("Este recurso no se puede descargar directamente")
+            val builder = Request.Builder().url(currentUrl).header("User-Agent", agent ?: userAgent)
+            headers.forEach { (name, value) ->
+                if (!name.equals("Cookie", ignoreCase = true) && !name.equals("Authorization", ignoreCase = true)) {
+                    builder.header(name, value)
+                }
+            }
+            cookieHeader(profile, currentUrl)?.let { builder.header("Cookie", it) }
+            currentReferrer?.let { builder.header("Referer", it) }
+
+            val response = client.newCall(builder.build()).execute()
+            val code = response.code
+            val location = response.header("Location")
+            if (code in setOf(301, 302, 303, 307, 308) && !location.isNullOrBlank()) {
+                val resolved = response.request.url.resolve(location)
+                val prevUrl = response.request.url
+                response.close()
+                if (resolved == null || !UrlSafety.isWebUrl(resolved.toString())) {
+                    throw IOException("Redirección de descarga no permitida")
+                }
+                if (prevUrl.isHttps && !resolved.isHttps) {
+                    throw IOException("Redirección insegura de HTTPS a HTTP bloqueada")
+                }
+                if (++redirects > MAX_REDIRECTS) {
+                    throw IOException("Demasiadas redirecciones al descargar")
+                }
+                val sameOrigin = prevUrl.scheme == resolved.scheme &&
+                    prevUrl.host.equals(resolved.host, ignoreCase = true) &&
+                    prevUrl.port == resolved.port
+                currentReferrer = if (sameOrigin) prevUrl.toString() else null
+                currentUrl = resolved.toString()
+                continue
+            }
+            val merged = response.headers.toMultimap().mapValues { (_, values) -> values.joinToString(", ") }
+            return DownloadResponse(response.request.url.toString(), response.code, merged, response.body?.byteStream())
+        }
     }
 
     private fun cookieHeader(profile: CefriumProfile, url: String): String? {
@@ -61,8 +105,8 @@ internal object CefriumDownloads {
 internal class PageGeneratedDownload(
     override val uri: String,
     private val file: java.io.File,
-    private val suggestedName: String?,
-    private val mimeType: String?
+    override val suggestedName: String?,
+    override val mimeType: String?
 ) : EngineDownload {
     override fun discard() {
         file.delete()
@@ -99,8 +143,8 @@ internal class PageGeneratedDownload(
 /** Descarga que Chromium iba a guardar: se cancela allí y la hace el gestor de Nexo. */
 internal class CefriumDownload(
     override val uri: String,
-    private val suggestedName: String?,
-    private val mimeType: String?,
+    override val suggestedName: String?,
+    override val mimeType: String?,
     private val referrer: String?,
     private val profile: CefriumProfile,
     private val userAgent: String?

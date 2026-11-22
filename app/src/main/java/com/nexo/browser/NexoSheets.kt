@@ -230,10 +230,14 @@ object NexoSheets {
             return ((usable * ratio).toInt() - chromeAllowance).coerceAtLeast(dp(activity, 150f))
         }
 
+        var activeSpring: androidx.dynamicanimation.animation.SpringAnimation? = null
+
         fun applyRatio(ratio: Float, animated: Boolean) {
             activeRatio = ratio
             val targetH = computeTargetBodyHeight(ratio)
             heightAnimator?.cancel()
+            activeSpring?.cancel()
+            activeSpring = null
             val startH = scroll.currentMaxHeight()
             if (!animated || !android.animation.ValueAnimator.areAnimatorsEnabled() || kotlin.math.abs(targetH - startH) < 8) {
                 scroll.limitHeight(targetH, exact = true)
@@ -242,7 +246,7 @@ object NexoSheets {
             // Muelle Liquid Craft sobre la altura (sin curvas accelerate/decelerate).
             heightAnimator = null
             val holder = androidx.dynamicanimation.animation.FloatValueHolder(startH.toFloat())
-            androidx.dynamicanimation.animation.SpringAnimation(holder).apply {
+            activeSpring = androidx.dynamicanimation.animation.SpringAnimation(holder).apply {
                 spring = androidx.dynamicanimation.animation.SpringForce(targetH.toFloat())
                     .setStiffness(NexoMotion.STIFFNESS).setDampingRatio(NexoMotion.DAMPING)
                 addUpdateListener { _, value, _ -> scroll.limitHeight(value.toInt(), exact = true) }

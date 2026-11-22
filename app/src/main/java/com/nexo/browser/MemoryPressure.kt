@@ -5,7 +5,7 @@ object MemoryPressure {
     enum class CacheAction { KEEP, REDUCE, CLEAR }
 
     fun cacheAction(level: Int): CacheAction = when {
-        level == 15 || level >= 60 -> CacheAction.CLEAR
+        level == 15 || level >= 40 -> CacheAction.CLEAR
         level == 10 || level == 20 -> CacheAction.REDUCE
         else -> CacheAction.KEEP
     }

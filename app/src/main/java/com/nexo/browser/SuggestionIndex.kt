@@ -10,13 +10,31 @@ import java.text.Normalizer
  * Puro (sin Android): se prueba en la JVM, incluida la latencia.
  */
 class SuggestionIndex(entries: List<HistoryEntry>) {
-    private class Item(val entry: HistoryEntry, val host: String, val url: String, val title: String, val key: String)
+    private class Item(
+        val entry: HistoryEntry,
+        val host: String,
+        val hostLabels: List<String>,
+        val url: String,
+        val title: String,
+        val titleWords: List<String>,
+        val key: String
+    )
 
     private val items: List<Item> = entries.mapNotNull { entry ->
         val url = UrlSafety.stripCredentials(entry.url)
         if (!UrlSafety.isWebUrl(url)) return@mapNotNull null
         val host = hostOf(url)
-        Item(entry.copy(url = url), fold(host.removePrefix("www.")), fold(url.substringAfter("://")), fold(entry.title), dedupeKey(url))
+        val foldedHost = fold(host.removePrefix("www."))
+        val foldedTitle = fold(entry.title)
+        Item(
+            entry = entry.copy(url = url),
+            host = foldedHost,
+            hostLabels = foldedHost.split('.'),
+            url = fold(url.substringAfter("://")),
+            title = foldedTitle,
+            titleWords = foldedTitle.split(' '),
+            key = dedupeKey(url)
+        )
     }
 
     val size: Int get() = items.size
@@ -45,9 +63,9 @@ class SuggestionIndex(entries: List<HistoryEntry>) {
     private fun score(item: Item, q: String, words: List<String>): Int {
         if (item.host.startsWith(q)) return 100
         if (item.url.startsWith(q)) return 90
-        if (item.host.split('.').any { it.startsWith(q) }) return 80
+        if (item.hostLabels.any { it.startsWith(q) }) return 80
         if (item.title.startsWith(q)) return 70
-        if (words.all { w -> item.title.split(' ').any { it.startsWith(w) } }) return 60
+        if (words.all { w -> item.titleWords.any { it.startsWith(w) } }) return 60
         if (item.title.contains(q)) return 40
         if (item.url.contains(q)) return 30
         if (words.size > 1 && words.all { item.title.contains(it) || item.url.contains(it) }) return 20
@@ -56,10 +74,11 @@ class SuggestionIndex(entries: List<HistoryEntry>) {
 
     companion object {
         private val marks = Regex("\\p{Mn}+")
+        private val spaces = Regex("\\s+")
 
         /** Minúsculas y sin tildes: "Canción" → "cancion". */
         fun fold(text: String): String =
-            marks.replace(Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD), "").replace(Regex("\\s+"), " ")
+            spaces.replace(marks.replace(Normalizer.normalize(text.lowercase(), Normalizer.Form.NFD), ""), " ")
 
         fun hostOf(url: String): String =
             url.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')

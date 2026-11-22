@@ -6,26 +6,30 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.util.LruCache
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 
 /**
  * Miniaturas de pestañas: WebP en disco y una caché en memoria.
  *
  * - Solo se guarda la parte superior de la página (lo que muestra la
  *   tarjeta) en RGB_565: caben cuatro veces más miniaturas en memoria.
- * - Una captura en blanco o negro (al salir de la app o antes de pintar) no
- *   sustituye a una miniatura buena.
- * - Quien muestra miniaturas puede escuchar los cambios y actualizar solo esa
- *   tarjeta, sin recargar el selector entero.
+ * - Una captura completamente en blanco o negro (superficie aún sin pintar
+ *   o ya destruida) jamás se guarda ni sustituye a una miniatura válida.
+ * - Lectura y escritura usan colas separadas para que precargar tarjetas
+ *   al abrir el selector nunca bloquee el guardado inmediato de la pestaña activa.
  */
 object TabPreviewStore {
-    private const val MAX_WIDTH = 420
+    private const val TAG = "TabPreviewStore"
+    private const val MAX_WIDTH = 440
     /** Alto máximo respecto al ancho: la tarjeta solo enseña la parte de arriba. */
-    private const val MAX_ASPECT = 1.35f
+    private const val MAX_ASPECT = 1.45f
 
     private fun dir(context: Context): File =
         File(context.filesDir, "tab_previews").apply { mkdirs() }
@@ -33,15 +37,18 @@ object TabPreviewStore {
     private fun file(context: Context, id: String) = File(dir(context), "$id.webp")
     private fun legacyFile(context: Context, id: String) = File(dir(context), "$id.jpg")
 
-    private val webpFormat = if (android.os.Build.VERSION.SDK_INT >= 30) {
+    private val webpFormat = if (Build.VERSION.SDK_INT >= 30) {
         Bitmap.CompressFormat.WEBP_LOSSY
     } else {
         @Suppress("DEPRECATION")
         Bitmap.CompressFormat.WEBP
     }
 
-    private val io = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
-        Thread(task, "NexoPreviews").apply { isDaemon = true }
+    private val writeIo = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "NexoPreviewsWrite").apply { isDaemon = true }
+    }
+    private val readIo = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "NexoPreviewsRead").apply { isDaemon = true }
     }
     private val main = Handler(Looper.getMainLooper())
     private val listeners = CopyOnWriteArrayList<(String) -> Unit>()
@@ -59,30 +66,45 @@ object TabPreviewStore {
 
     fun save(context: Context, id: String, bitmap: Bitmap) {
         val app = context.applicationContext
-        io.execute { saveNow(app, id, bitmap) }
+        writeIo.execute { saveNow(app, id, bitmap) }
     }
 
     /** Vuelve a poner una miniatura conocida (p. ej. al deshacer el cierre de una pestaña). */
     fun restore(context: Context, id: String, bitmap: Bitmap) {
         memory.put(id, bitmap)
         val app = context.applicationContext
-        io.execute {
+        writeIo.execute {
             runCatching { write(app, id, bitmap) }
         }
         notify(id)
     }
 
     private fun saveNow(context: Context, id: String, bitmap: Bitmap) {
-        runCatching {
-            if (isBlank(bitmap) && (memory.get(id) != null || file(context, id).exists() || legacyFile(context, id).exists())) {
-                bitmap.recycle()
+        var working: Bitmap = bitmap
+        try {
+            if (working.isRecycled) return
+            if (Build.VERSION.SDK_INT >= 26 && working.config == Bitmap.Config.HARDWARE) {
+                val copy = working.copy(Bitmap.Config.ARGB_8888, false)
+                working.recycle()
+                if (copy == null) return
+                working = copy
+            }
+            // Jamás guardar una captura completamente uniforme (negra/blanca), ni siquiera la primera vez.
+            if (isBlank(working)) {
+                working.recycle()
                 return
             }
-            val thumbnail = thumbnail(bitmap)
-            if (thumbnail !== bitmap) bitmap.recycle()
-            write(context, id, thumbnail)
+            val thumbnail = thumbnail(working)
+            if (thumbnail !== working) working.recycle()
+            // Publicar en memoria y notificar a la UI de inmediato, antes de comprimir WebP a disco.
             memory.put(id, thumbnail)
             notify(id)
+            write(context, id, thumbnail)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to save tab preview for $id", t)
+            if (!working.isRecycled && memory.get(id) !== working) {
+                runCatching { working.recycle() }
+            }
         }
     }
 
@@ -90,7 +112,7 @@ object TabPreviewStore {
         val file = android.util.AtomicFile(file(context, id))
         val output = file.startWrite()
         try {
-            check(bitmap.compress(webpFormat, 80, output))
+            check(bitmap.compress(webpFormat, 82, output))
             file.finishWrite(output)
             legacyFile(context, id).delete()
         } catch (error: Throwable) {
@@ -137,16 +159,16 @@ object TabPreviewStore {
     }
 
     /** Miniatura ya decodificada, si está en memoria. */
-    fun cached(id: String): Bitmap? = memory.get(id)
+    fun cached(id: String): Bitmap? = memory.get(id)?.takeUnless { it.isRecycled }
 
     /** Decodifica la miniatura fuera del hilo principal. */
     fun loadAsync(context: Context, id: String, onLoaded: (Bitmap?) -> Unit) {
-        memory.get(id)?.let {
+        cached(id)?.let {
             onLoaded(it)
             return
         }
         val app = context.applicationContext
-        io.execute {
+        readIo.execute {
             val bitmap = load(app, id)
             main.post { onLoaded(bitmap) }
         }
@@ -155,9 +177,9 @@ object TabPreviewStore {
     /** Decodifica de antemano las miniaturas que el selector va a mostrar. */
     fun prefetch(context: Context, ids: List<String>) {
         val app = context.applicationContext
-        val missing = ids.filter { memory.get(it) == null }.take(12)
+        val missing = ids.filter { cached(it) == null }.take(12)
         if (missing.isEmpty()) return
-        io.execute { missing.forEach { if (memory.get(it) == null) load(app, it) } }
+        readIo.execute { missing.forEach { if (cached(it) == null) load(app, it) } }
     }
 
     private fun load(context: Context, id: String): Bitmap? =
@@ -174,7 +196,7 @@ object TabPreviewStore {
     fun remove(context: Context, id: String) {
         memory.remove(id)
         val app = context.applicationContext
-        io.execute {
+        writeIo.execute {
             memory.remove(id)
             runCatching {
                 android.util.AtomicFile(file(app, id)).delete()
@@ -189,13 +211,13 @@ object TabPreviewStore {
     }
 
     /**
-     * Antes se vaciaba todo con cualquier aviso, incluido el de "la app pasó a
-     * segundo plano": al volver, el selector recargaba cada miniatura del disco.
+     * Compatible con Android 14/15 (`TRIM_MEMORY_UI_HIDDEN = 20`, `TRIM_MEMORY_BACKGROUND = 40`):
+     * libera la caché al pasar a segundo plano sin saturar RAM.
      */
     fun trimMemory(level: Int = 80 /* COMPLETE */) {
         when {
-            level >= 80 /* COMPLETE */ || level == 15 /* RUNNING_CRITICAL */ -> memory.evictAll()
-            level >= 60 /* MODERATE */ || level == 10 /* RUNNING_LOW */ -> memory.trimToSize(memoryBytes / 2)
+            level >= 40 /* BACKGROUND / MODERATE / COMPLETE */ || level == 15 /* RUNNING_CRITICAL */ -> memory.evictAll()
+            level >= 20 /* UI_HIDDEN */ || level == 10 /* RUNNING_LOW */ -> memory.trimToSize(memoryBytes / 3)
             else -> Unit
         }
     }

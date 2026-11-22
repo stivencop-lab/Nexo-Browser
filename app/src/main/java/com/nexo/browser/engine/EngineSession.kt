@@ -22,6 +22,7 @@ interface EngineSession {
 
     fun loadUrl(url: String)
     fun reload(bypassCache: Boolean = false)
+    fun stop() = Unit
     fun goBack()
     fun goForward()
 
@@ -108,6 +109,8 @@ enum class LoadDecision {
 /** Respuesta que el motor no puede mostrar y que Nexo debe descargar. */
 interface EngineDownload {
     val uri: String
+    val suggestedName: String? get() = null
+    val mimeType: String? get() = null
     fun discard()
 
     /** Respuesta lista para leer. Bloquea: llamar fuera del hilo principal. */
@@ -126,10 +129,16 @@ class DownloadResponse(
     }
 }
 
-/** Peticiones de descarga con las cookies del perfil normal o privado. */
+/** Peticiones de descarga con las cookies del perfil normal, privado o Burner. */
 interface DownloadFetcher {
     /** Bloquea: llamar fuera del hilo principal. Lanza IOException si no hay respuesta. */
-    fun fetch(url: String, headers: Map<String, String>, referrer: String?, isPrivate: Boolean): DownloadResponse
+    fun fetch(
+        url: String,
+        headers: Map<String, String>,
+        referrer: String?,
+        isPrivate: Boolean,
+        burnerId: String? = null
+    ): DownloadResponse
 }
 
 /** Reproductor multimedia de una página, controlable desde la notificación. */

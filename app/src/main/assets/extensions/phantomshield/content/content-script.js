@@ -7,7 +7,9 @@
   const DEFAULT_SETTINGS = {
     adblockEnabled: true,
     privacyEnabled: false,
-    popupBlockEnabled: true
+    popupBlockEnabled: true,
+    antiBlockEnabled: false,
+    gpcEnabled: true
   };
 
   let current = Object.assign({}, DEFAULT_SETTINGS);
@@ -22,6 +24,8 @@
     setBooleanAttribute(root, 'data-phantomshield-adblock', current.adblockEnabled);
     setBooleanAttribute(root, 'data-phantomshield-privacy', current.privacyEnabled);
     setBooleanAttribute(root, 'data-phantomshield-popups', current.popupBlockEnabled);
+    setBooleanAttribute(root, 'data-phantomshield-antiblock', current.antiBlockEnabled);
+    setBooleanAttribute(root, 'data-phantomshield-gpc', current.gpcEnabled);
     document.dispatchEvent(new CustomEvent('phantomshield:settings'));
   }
 
@@ -37,7 +41,15 @@
       // El bloqueo se apaga si el usuario desactivó este sitio en el popup.
       if (results[1] && typeof results[1].enabled === 'boolean') {
         current.adblockEnabled = results[1].enabled;
-        current.privacyEnabled = Boolean(current.privacyEnabled && results[1].enabled);
+        current.privacyEnabled = Boolean((typeof results[1].privacyEnabled === 'boolean' ? results[1].privacyEnabled : current.privacyEnabled) && results[1].enabled);
+        if (typeof results[1].antiBlockEnabled === 'boolean') {
+          current.antiBlockEnabled = Boolean(results[1].antiBlockEnabled && results[1].enabled);
+        } else {
+          current.antiBlockEnabled = Boolean(current.antiBlockEnabled && results[1].enabled);
+        }
+        if (typeof results[1].gpcEnabled === 'boolean') {
+          current.gpcEnabled = results[1].gpcEnabled;
+        }
       }
       publishSettings();
     }).catch(function() {});

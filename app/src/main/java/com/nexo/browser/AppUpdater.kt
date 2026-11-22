@@ -87,10 +87,14 @@ object AppUpdater {
 
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .dns(NativeImagePolicy.publicDns(okhttp3.Dns.SYSTEM))
+            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+            .authenticator(okhttp3.Authenticator.NONE)
+            .proxyAuthenticator(okhttp3.Authenticator.NONE)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(45, TimeUnit.SECONDS)
             .followRedirects(true)
-            .followSslRedirects(true)
+            .followSslRedirects(false)
             .addNetworkInterceptor { chain ->
                 val url = chain.request().url
                 if (!url.isHttps || url.host.lowercase(Locale.US) !in ALLOWED_HOSTS) {
@@ -99,6 +103,23 @@ object AppUpdater {
                 chain.proceed(chain.request())
             }
             .build()
+    }
+
+    private fun readBoundedBytes(body: okhttp3.ResponseBody?, maxBytes: Int): ByteArray {
+        val stream = body?.byteStream() ?: return ByteArray(0)
+        return stream.use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > maxBytes) throw IllegalArgumentException("La respuesta excede el tamaño máximo ($maxBytes B)")
+                out.write(buf, 0, n)
+            }
+            out.toByteArray()
+        }
     }
 
     private fun prefs(context: Context) =
@@ -300,7 +321,7 @@ object AppUpdater {
                     .build()
                 http.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) error("HTTP ${response.code}")
-                    val body = response.body?.string().orEmpty()
+                    val body = String(readBoundedBytes(response.body, 512 * 1024), Charsets.UTF_8)
                     parseRelease(body, current, abis, app.packageName)
                 }
             }
@@ -494,8 +515,7 @@ object AppUpdater {
                     val req = Request.Builder().url(sumsUrl).header("User-Agent", "NexoBrowser").build()
                     http.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) error("No se pudo descargar SHA256SUMS.txt (HTTP ${resp.code})")
-                        val bytes = resp.body?.bytes() ?: ByteArray(0)
-                        require(bytes.size <= MAX_SUMS_BYTES) { "SHA256SUMS.txt excede el tamaño máximo" }
+                        val bytes = readBoundedBytes(resp.body, MAX_SUMS_BYTES)
                         parseSha256Sums(String(bytes, Charsets.UTF_8))[asset.name]
                             ?: error("SHA256SUMS.txt no contiene el hash de ${asset.name}")
                     }

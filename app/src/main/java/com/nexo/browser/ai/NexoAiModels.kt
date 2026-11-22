@@ -3,9 +3,9 @@ package com.nexo.browser.ai
 import java.util.Locale
 
 /**
- * Modelos de dominio inmutables para Nexo AI 5.1:
- * conversaciones persistentes, vinculación segura de página, métricas reales
- * medidas con reloj monotónico y estados de panel / indicador.
+ * Modelos de dominio inmutables para Nexo AI:
+ * conversaciones persistentes (con fijado), trazas del agente de navegador, vinculación segura de página,
+ * métricas reales medidas con reloj monotónico y estados de panel / indicador.
  */
 object NexoAiModels {
 
@@ -16,6 +16,13 @@ object NexoAiModels {
         val host: String,
         val title: String,
         val documentGeneration: Long
+    )
+
+    /** Paso individual ejecutado por el agente autónomo de Nexo AI. */
+    data class AgentStep(
+        val tool: String,
+        val summary: String,
+        val ok: Boolean = true
     )
 
     /** Métricas reales medidas con reloj monotónico (`elapsedRealtimeNanos`). Nunca inventa valores. */
@@ -93,7 +100,8 @@ object NexoAiModels {
         val errorMessage: String? = null,
         val pageBinding: PageBinding? = null,
         val scope: String = "page",
-        val retryPrompt: String? = null
+        val retryPrompt: String? = null,
+        val agentSteps: List<AgentStep> = emptyList()
     ) {
         val isInFlight: Boolean
             get() = status == MessageStatus.SENDING || status == MessageStatus.STREAMING
@@ -107,7 +115,8 @@ object NexoAiModels {
         val messages: List<AiMessage> = emptyList(),
         val provider: String = "",
         val model: String = "",
-        val hostHint: String = ""
+        val hostHint: String = "",
+        val pinned: Boolean = false
     ) {
         val hasInFlight: Boolean
             get() = messages.any { it.isInFlight }

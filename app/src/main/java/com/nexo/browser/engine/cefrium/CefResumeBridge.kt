@@ -18,6 +18,9 @@ internal class CefResumeBridge(
     private val overlay: ImageView,
     private val invalidateContainer: () -> Unit,
     private val frameAvailable: () -> Unit,
+    private val resolveSurface: () -> SurfaceView?,
+    private val isMediaActive: () -> Boolean,
+    private val onRecoveryChanged: (Boolean) -> Unit,
     private val recreateBrowser: (CefriumBrowser) -> Boolean
 ) : SurfaceHolder.Callback {
     private val main = Handler(Looper.getMainLooper())
@@ -30,6 +33,8 @@ internal class CefResumeBridge(
     private var stopped = false
     private var recovering = false
     private var rebuilt = false
+    private var surfaceDestroyedWhilePip = false
+    private var copyEverSucceeded = false
     private var documentAvailable = false
     private var armed = false
     private var generation = 0L
@@ -39,31 +44,39 @@ internal class CefResumeBridge(
     private var wakeTime = 0L
 
     private val watchdog = Runnable {
-        if (canProbe()) {
-            val target = browser ?: return@Runnable
-            if (!rebuilt) {
+        if (!canProbe()) {
+            // Si perdió condiciones transitorias con cubierta activa, revelar en lugar de quedar bloqueado.
+            if (recovering && resumed && !pip) revealNow()
+            return@Runnable
+        }
+        val target = browser ?: run { revealNow(); return@Runnable }
+        val action = CefResumePolicy.watchdogAction(
+            rebuilt = rebuilt,
+            mediaActive = isMediaActive(),
+            copyEverSucceeded = copyEverSucceeded
+        )
+        when (action) {
+            CefResumePolicy.WatchdogAction.RECREATE_BROWSER -> {
                 rebuilt = true
-                Log.w(TAG, "No usable surface buffer after ${WATCHDOG_MS} ms. Recreating Cefrium browser.")
+                Log.w(TAG, "No usable surface buffer after ${SystemClock.uptimeMillis() - wakeTime} ms. Recreating Cefrium browser.")
                 cancelProbe()
-                if (!recreateBrowser(target)) Log.w(TAG, "Cefrium browser recreation failed.")
-            } else {
-                // Keep the cover over a failed surface. A subsequent load, focus
-                // change or surface creation can attempt presentation again.
-                cancelProbe()
-                Log.w(TAG, "Replacement surface has no usable buffer.")
+                if (!recreateBrowser(target)) {
+                    Log.w(TAG, "Cefrium browser recreation failed; revealing live surface.")
+                    revealNow()
+                }
+            }
+            CefResumePolicy.WatchdogAction.REVEAL -> {
+                Log.w(TAG, "Watchdog revealing live surface (rebuilt=$rebuilt, media=${isMediaActive()}, copyOk=$copyEverSucceeded).")
+                revealNow()
             }
         }
     }
     private val probe = Runnable { probeSurface() }
-    private val prefetch = Runnable {
-        if (resumed && !recovering && !pip && snapshot == null) captureSnapshot()
-    }
 
     fun selectTab(id: String) {
         if (tabId == id) return
         tabId = id
         snapshotRequest++
-        main.removeCallbacks(prefetch)
         finishRecovery()
     }
 
@@ -86,8 +99,8 @@ internal class CefResumeBridge(
     }
 
     fun onStop() {
-        if (pip) return
         stopped = true
+        if (pip) return
         if (browser != null) cover()
     }
 
@@ -95,17 +108,33 @@ internal class CefResumeBridge(
         stopped = false
         resumed = true
         focused = hasWindowFocus
+        if (!pip) {
+            // Reasegurar visibilidad del compositor aunque no hubiera cubierta pendiente (p. ej. tras cerrar PiP).
+            ensureBrowserVisible()
+        }
         wakeIfReady()
     }
 
     fun onWindowFocusChanged(hasFocus: Boolean) {
         focused = hasFocus
-        if (hasFocus) wakeIfReady() else cancelProbe()
+        if (hasFocus) {
+            runCatching { browser?.takeUnless { it.isClosed }?.setFocus(true) }
+            wakeIfReady()
+        }
     }
 
     fun onPictureInPictureChanged(enabled: Boolean) {
         pip = enabled
-        if (enabled) finishRecovery() else wakeIfReady()
+        if (enabled) {
+            surfaceDestroyedWhilePip = false
+            finishRecovery()
+        } else {
+            if (CefResumePolicy.needsRecoveryAfterPipExit(stopped, surfaceDestroyedWhilePip)) {
+                surfaceDestroyedWhilePip = false
+                markRecoveringWithoutBlackCover()
+            }
+            wakeIfReady()
+        }
     }
 
     fun onRendererTerminated(target: CefriumBrowser) {
@@ -119,35 +148,32 @@ internal class CefResumeBridge(
         if (target !== browser) return
         documentAvailable = false
         if (recovering) return
-        main.removeCallbacks(prefetch)
         snapshotRequest++
-        snapshot = null
-        snapshotIsBlack = false
+        clearSnapshot()
     }
 
     fun onDocumentAvailable(target: CefriumBrowser) {
         if (target !== browser) return
         documentAvailable = true
         if (recovering) wakeIfReady()
-        else if (resumed && !pip) {
-            main.removeCallbacks(prefetch)
-            main.postDelayed(prefetch, 150)
-        }
     }
 
     fun release() {
         bind(null, null)
         tabId = null
-        main.removeCallbacks(prefetch)
         finishRecovery()
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        if (holder === surface?.holder) wakeIfReady()
+        if (holder === surface?.holder) {
+            if (resumed && !pip) ensureBrowserVisible()
+            wakeIfReady()
+        }
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (holder === surface?.holder && width > 0 && height > 0) {
+            if (resumed && !pip) ensureBrowserVisible()
             wakeIfReady()
             if (!recovering) frameAvailable()
         }
@@ -156,57 +182,117 @@ internal class CefResumeBridge(
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         if (holder !== surface?.holder) return
         cancelProbe()
-        if (!pip) {
+        if (pip) {
+            surfaceDestroyedWhilePip = true
+        } else {
             cover()
             runCatching { browser?.takeUnless { it.isClosed }?.setPageVisible(false) }
         }
+    }
+
+    private fun currentSurface(): SurfaceView? {
+        val cur = surface
+        if (cur != null && surfaceReady(cur)) return cur
+        val fresh = resolveSurface()
+        if (fresh != null && fresh !== cur) {
+            cur?.holder?.removeCallback(this)
+            surface = fresh
+            fresh.holder.addCallback(this)
+        }
+        return surface
     }
 
     private fun surfaceReady(view: SurfaceView): Boolean =
         view.holder.surface.isValid && view.holder.surfaceFrame.width() > 0 &&
             view.holder.surfaceFrame.height() > 0 && view.width > 0 && view.height > 0
 
+    private fun ensureBrowserVisible() {
+        val target = browser?.takeUnless { it.isClosed } ?: return
+        val view = currentSurface()
+        if (view == null || !surfaceReady(view)) return
+        runCatching {
+            target.onResume()
+            target.setPageVisible(true)
+            if (focused) target.setFocus(true)
+            target.invalidate()
+            invalidateContainer()
+        }.onFailure { Log.w(TAG, "Cefrium visibility restore failed", it) }
+    }
+
+    private fun markRecoveringWithoutBlackCover() {
+        if (!recovering) rebuilt = false
+        recovering = true
+        copyEverSucceeded = false
+        onRecoveryChanged(true)
+        overlay.animate().cancel()
+        overlay.visibility = View.INVISIBLE
+        overlay.setImageDrawable(null)
+    }
+
     private fun cover() {
         if (!recovering) rebuilt = false
         recovering = true
+        copyEverSucceeded = false
+        onRecoveryChanged(true)
         overlay.animate().cancel()
-        overlay.alpha = 1f
-        overlay.setImageBitmap(snapshot)
-        overlay.visibility = View.VISIBLE
+        val snap = snapshot?.takeUnless { it.isRecycled }
+        if (snap != null && !snapshotIsBlack) {
+            overlay.alpha = 1f
+            overlay.setImageBitmap(snap)
+            overlay.visibility = View.VISIBLE
+        } else {
+            // Jamás tapar la superficie viva con un rectángulo negro opaco cuando no hay captura válida.
+            overlay.visibility = View.INVISIBLE
+            overlay.setImageDrawable(null)
+        }
     }
 
-    private fun canProbe(): Boolean =
-        resumed && focused && recovering && !pip && surface?.let(::surfaceReady) == true
+    private fun canProbe(): Boolean = CefResumePolicy.shouldWake(
+        resumed = resumed,
+        recovering = recovering,
+        pip = pip,
+        surfaceReady = currentSurface()?.let(::surfaceReady) == true
+    )
 
     private fun wakeIfReady() {
         if (armed || !canProbe()) return
         val target = browser?.takeUnless { it.isClosed } ?: return
         runCatching {
+            target.onResume()
             target.setPageVisible(true)
-            target.setFocus(true)
-            // In Surface mode Cefrium takes its viewport size from the holder.
+            if (focused) target.setFocus(true)
             target.invalidate()
             invalidateContainer()
         }.onFailure { Log.w(TAG, "Cefrium wakeup failed", it) }
         wakeTime = SystemClock.uptimeMillis()
+        copyEverSucceeded = false
         armed = true
-        main.postDelayed(watchdog, WATCHDOG_MS)
+        val timeout = CefResumePolicy.watchdogTimeoutMs(isMediaActive())
+        main.postDelayed(watchdog, timeout)
         main.postDelayed(probe, PROBE_INTERVAL_MS)
     }
 
     private fun probeSurface() {
-        val view = surface ?: return
+        val view = currentSurface() ?: return
         if (!armed || !canProbe()) return
         val expected = generation
-        // Success proves the Surface supplies a buffer. A tiny sample rejects a
-        // black buffer when the document was previously visible and non-black.
         copy(view, 24, 32) { bitmap, black ->
             bitmap?.recycle()
             if (generation != expected || !armed || !canProbe()) return@copy
-            if (bitmap != null && (!black || snapshotIsBlack || rebuilt && documentAvailable)) {
-                Log.d(TAG, "Surface buffer available in ${SystemClock.uptimeMillis() - wakeTime} ms")
-                frameAvailable()
-                crossfade()
+            if (bitmap != null) copyEverSucceeded = true
+            val elapsed = SystemClock.uptimeMillis() - wakeTime
+            val accepted = CefResumePolicy.acceptFrame(
+                copySucceeded = bitmap != null,
+                isBlack = black,
+                snapshotIsBlack = snapshotIsBlack,
+                rebuilt = rebuilt,
+                documentAvailable = documentAvailable,
+                mediaActive = isMediaActive(),
+                elapsedMs = elapsed
+            )
+            if (accepted) {
+                Log.d(TAG, "Surface buffer available in $elapsed ms (black=$black, media=${isMediaActive()})")
+                revealNow()
             } else {
                 main.postDelayed(probe, PROBE_INTERVAL_MS)
             }
@@ -214,21 +300,27 @@ internal class CefResumeBridge(
     }
 
     private fun captureSnapshot() {
-        val view = surface ?: return
+        val view = currentSurface() ?: return
         if (!surfaceReady(view)) return
         val request = ++snapshotRequest
         val target = browser
         val started = SystemClock.uptimeMillis()
-        copy(view, (view.width * 0.75f).toInt().coerceAtLeast(1), (view.height * 0.75f).toInt().coerceAtLeast(1)) { bitmap, black ->
+        copy(view, (view.width * 0.65f).toInt().coerceAtLeast(1), (view.height * 0.65f).toInt().coerceAtLeast(1)) { bitmap, black ->
             if (bitmap == null) return@copy
-            if (request != snapshotRequest || target !== browser || pip || black && snapshot != null && !snapshotIsBlack) {
+            if (request != snapshotRequest || target !== browser || pip) {
                 bitmap.recycle()
                 return@copy
             }
-            Log.d(TAG, "Surface snapshot in ${SystemClock.uptimeMillis() - started} ms")
+            Log.d(TAG, "Surface snapshot in ${SystemClock.uptimeMillis() - started} ms (black=$black)")
+            val previous = snapshot
             snapshot = bitmap
             snapshotIsBlack = black
-            if (recovering && overlay.alpha == 1f) overlay.setImageBitmap(bitmap)
+            if (recovering && overlay.visibility == View.VISIBLE && overlay.alpha == 1f && !black) {
+                overlay.setImageBitmap(bitmap)
+            }
+            if (previous != null && previous !== bitmap && !previous.isRecycled) {
+                if (overlay.visibility != View.VISIBLE) previous.recycle()
+            }
         }
     }
 
@@ -247,10 +339,22 @@ internal class CefResumeBridge(
         }
     }
 
+    private fun revealNow() {
+        frameAvailable()
+        crossfade()
+    }
+
     private fun crossfade() {
         cancelProbe()
         recovering = false
         rebuilt = false
+        copyEverSucceeded = false
+        onRecoveryChanged(false)
+        if (overlay.visibility != View.VISIBLE) {
+            overlay.animate().cancel()
+            overlay.setImageDrawable(null)
+            return
+        }
         overlay.animate().alpha(0f).setDuration(90L).withEndAction {
             overlay.visibility = View.INVISIBLE
             overlay.setImageDrawable(null)
@@ -261,12 +365,23 @@ internal class CefResumeBridge(
         cancelProbe()
         recovering = false
         rebuilt = false
+        copyEverSucceeded = false
+        onRecoveryChanged(false)
         overlay.animate().cancel()
         overlay.alpha = 1f
         overlay.visibility = View.INVISIBLE
         overlay.setImageDrawable(null)
+        clearSnapshot()
+    }
+
+    private fun clearSnapshot() {
+        val old = snapshot
         snapshot = null
         snapshotIsBlack = false
+        if (old != null && !old.isRecycled) {
+            overlay.setImageDrawable(null)
+            old.recycle()
+        }
     }
 
     private fun cancelProbe() {
@@ -276,9 +391,8 @@ internal class CefResumeBridge(
         main.removeCallbacks(watchdog)
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "NexoResumeBridge"
-        const val WATCHDOG_MS = 450L
         const val PROBE_INTERVAL_MS = 32L
         val pixelCopyHandler by lazy {
             Handler(HandlerThread("NexoPixelCopy").apply { start() }.looper)

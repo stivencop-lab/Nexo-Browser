@@ -285,7 +285,7 @@ object NxrExtensionPanel {
                 .setHeader("Cache-Control", "no-store")
                 .setHeader(
                     "Content-Security-Policy",
-                    "default-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' data:; script-src 'self' 'unsafe-inline'"
+                    "default-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' data:; script-src 'self'; object-src 'none'"
                 )
         }
 

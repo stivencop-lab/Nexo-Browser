@@ -45,7 +45,7 @@ internal class ShieldStore(private val dir: File) {
             values.keys().forEach { key ->
                 val value = values.get(key)
                 val old = data.opt(key)
-                if (old?.toString() == value.toString() && old != null) return@forEach
+                if (old != null && old.toString() == value.toString()) return@forEach
                 changes.put(key, JSONObject().put("newValue", value).apply { if (old != null) put("oldValue", old) })
                 data.put(key, value)
             }

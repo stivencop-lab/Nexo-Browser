@@ -244,21 +244,54 @@ object NexoGlass {
         }
     }
 
+    private fun unwrapGlass(drawable: android.graphics.drawable.Drawable?): NexoGlassDrawable? {
+        var cur = drawable
+        var depth = 0
+        while (cur != null && depth < 6) {
+            if (cur is NexoGlassDrawable) return cur
+            cur = when (cur) {
+                is android.graphics.drawable.DrawableWrapper -> cur.drawable
+                is android.graphics.drawable.LayerDrawable -> (0 until cur.numberOfLayers)
+                    .firstNotNullOfOrNull { unwrapGlass(cur.getDrawable(it)) }
+                else -> null
+            }
+            depth++
+        }
+        return null
+    }
+
     /**
      * Mantiene vivo el desenfoque del [glass] cuando su fondo [backdrop] cambia (desplazamiento,
-     * imágenes nuevas). Solo invalida si el fondo está realmente sucio: coste casi nulo en reposo.
+     * imágenes nuevas). Desenvuelve InsetDrawable/RippleDrawable y limpia el listener al desmontarse.
      */
     fun follow(glass: View, backdrop: View) {
         if (Build.VERSION.SDK_INT < 31) return
         val listener = ViewTreeObserver.OnPreDrawListener {
             @Suppress("DEPRECATION")
-            if (backdrop.visibility == View.VISIBLE && backdrop.isDirty) {
-                (glass.background as? NexoGlassDrawable)?.markBackdropDirty()
+            if (backdrop.visibility == View.VISIBLE && backdrop.isDirty && glass.visibility == View.VISIBLE) {
+                unwrapGlass(glass.background)?.markBackdropDirty()
                 glass.invalidate()
             }
             true
         }
-        glass.viewTreeObserver.addOnPreDrawListener(listener)
+        var registered = false
+        fun attach() {
+            if (!registered && glass.viewTreeObserver.isAlive) {
+                glass.viewTreeObserver.addOnPreDrawListener(listener)
+                registered = true
+            }
+        }
+        fun detach() {
+            if (registered && glass.viewTreeObserver.isAlive) {
+                glass.viewTreeObserver.removeOnPreDrawListener(listener)
+            }
+            registered = false
+        }
+        if (glass.isAttachedToWindow) attach()
+        glass.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = attach()
+            override fun onViewDetachedFromWindow(v: View) = detach()
+        })
     }
 
     /** Hoja sobre la web: desenfoque real de lo que hay detrás (incluida la superficie de Chromium). */

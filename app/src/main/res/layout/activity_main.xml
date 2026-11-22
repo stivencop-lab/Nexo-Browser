@@ -27,12 +27,12 @@
             android:layout_height="wrap_content"
             android:layout_gravity="top|start"
             android:gravity="center"
-            android:maxLines="3"
-            android:paddingStart="12dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="6dp"
-            android:textSize="16sp"
+            android:maxLines="2"
+            android:paddingStart="10dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="10dp"
+            android:paddingBottom="5dp"
+            android:textSize="13sp"
             android:visibility="gone" />
 
         <LinearLayout
@@ -40,8 +40,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|end"
-            android:layout_marginEnd="14dp"
-            android:layout_marginBottom="96dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="86dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -49,16 +49,16 @@
                 android:id="@+id/captionsButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
+                android:layout_marginEnd="6dp"
                 android:contentDescription="Subtítulos en vivo"
                 android:gravity="center"
-                android:minWidth="0dp"
+                android:minWidth="48dp"
                 android:minHeight="@dimen/touch_target"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
                 android:text="CC"
                 android:textAllCaps="false"
-                android:textSize="13.5sp"
+                android:textSize="12.5sp"
                 android:textFontWeight="600"
                 android:visibility="gone" />
 
@@ -67,15 +67,15 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:drawableStart="@drawable/ic_pip"
-                android:drawablePadding="8dp"
+                android:drawablePadding="6dp"
                 android:gravity="center"
-                android:minWidth="0dp"
+                android:minWidth="48dp"
                 android:minHeight="@dimen/touch_target"
-                android:paddingStart="16dp"
-                android:paddingEnd="18dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
                 android:text="@string/mini_video"
                 android:textAllCaps="false"
-                android:textSize="13.5sp"
+                android:textSize="12.5sp"
                 android:visibility="gone" />
         </LinearLayout>
 
@@ -85,8 +85,8 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|start"
-            android:layout_marginStart="14dp"
-            android:layout_marginBottom="96dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginBottom="86dp"
             android:visibility="gone" />
     </com.nexo.browser.PullRefreshLayout>
 

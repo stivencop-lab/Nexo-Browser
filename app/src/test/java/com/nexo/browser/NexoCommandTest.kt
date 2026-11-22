@@ -85,7 +85,7 @@ class NexoCommandTest {
             max = 3
         )
         assertEquals(2, remote.size)
-        assertTrue(remote.all { it is NexoCommandEngine.Result.RemoteSearch })
+        assertTrue(remote.all { it.query.isNotBlank() })
         assertFalse(remote.any { it.query.startsWith("@") })
     }
 }

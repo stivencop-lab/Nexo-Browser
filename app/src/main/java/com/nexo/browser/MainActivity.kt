@@ -322,13 +322,54 @@ class MainActivity :
         }
         // La página de inicio sí llega hasta arriba: reserva su propio aire.
         startPage.setSafeArea(top, if (hideBars) 0 else bottomChrome.height)
-        // Píldora AI y chips de video siempre por encima del cromo flotante.
-        val lift = if (hideBars) NexoUi.dp(this, 14f) else (bottomChrome.height - pageBottom).coerceAtLeast(0) + NexoUi.dp(this, 10f)
+        // Píldora AI y chips de video siempre por encima del cromo flotante y coordinados con el plegado.
+        val lift = if (hideBars) NexoUi.dp(this, 12f) else (bottomChrome.height - pageBottom).coerceAtLeast(0) + NexoUi.dp(this, 6f)
         (nexoAiPill.layoutParams as? android.widget.FrameLayout.LayoutParams)?.let { lp ->
             if (lp.bottomMargin != lift) { lp.bottomMargin = lift; nexoAiPill.layoutParams = lp }
         }
         (findViewById<View>(R.id.videoChips).layoutParams as? android.widget.FrameLayout.LayoutParams)?.let { lp ->
             if (lp.bottomMargin != lift) { lp.bottomMargin = lift; findViewById<View>(R.id.videoChips).layoutParams = lp }
+        }
+        syncFloatingControls(animated = false)
+    }
+
+    /**
+     * Alinea suavemente Mini video, CC y la píldora de Nexo AI cuando la barra inferior se pliega
+     * al hacer scroll, y compacta la píldora AI para evitar solapamientos en pantallas estrechas.
+     */
+    private fun syncFloatingControls(animated: Boolean) {
+        if (!::bottomChrome.isInitialized || !::nexoAiPill.isInitialized) return
+        val videoChips = findViewById<View>(R.id.videoChips) ?: return
+        val hideBars = fullScreenActive || isInPictureInPictureMode
+        val collapsed = !hideBars && (chromeCompact || dockScrollHidden)
+        val dropPx = when {
+            hideBars -> 0f
+            chromeCompact && liquidChrome -> {
+                val compactHeight = NexoUi.dp(this, 48f) + safeBottom
+                (bottomChrome.height - compactHeight).coerceAtLeast(0).toFloat()
+            }
+            dockScrollHidden && !liquidChrome -> {
+                browserDock.height.takeIf { it > 0 }?.toFloat() ?: NexoUi.dp(this, 52f).toFloat()
+            }
+            else -> 0f
+        }
+        val chipsVisible = miniPlayerButton.visibility == View.VISIBLE || captionsButton.visibility == View.VISIBLE
+        val narrowScreen = resources.displayMetrics.widthPixels < NexoUi.dp(this, 440f)
+        nexoAiPill.setCompact(collapsed || (chipsVisible && narrowScreen))
+        nexoAiPill.setChromeOffsetY(dropPx, animated = animated)
+
+        val targetScale = if (collapsed) 0.92f else 1f
+        val targetAlpha = if (collapsed) 0.88f else 1f
+        if (animated) {
+            NexoMotion.spring(videoChips, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, dropPx)
+            NexoMotion.spring(videoChips, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_X, targetScale)
+            NexoMotion.spring(videoChips, androidx.dynamicanimation.animation.DynamicAnimation.SCALE_Y, targetScale)
+            NexoMotion.spring(videoChips, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, targetAlpha)
+        } else {
+            videoChips.translationY = dropPx
+            videoChips.scaleX = targetScale
+            videoChips.scaleY = targetScale
+            videoChips.alpha = targetAlpha
         }
     }
 
@@ -458,13 +499,16 @@ class MainActivity :
         }
         miniPill.setOnClickListener { setChromeCompact(false) }
         val glassControls = listOf(chromeIsland, tabButton, miniPill)
+        val allGlassViews = listOf(chromeIsland, tabButton, miniPill, captionsButton, miniPlayerButton, nexoAiPill)
         glassControls.forEach { NexoGlass.follow(it, startPage) }
         val cefPage = engineView as? com.nexo.browser.engine.cefrium.CefriumPageView
         if (cefPage != null) {
             webBackdrop = NexoGlassBackdrop(pageView, {
                 cefPage.renderingSurface?.takeIf { liquidChrome && !immersive && startPage.visibility != View.VISIBLE }
-            }) { glassControls.forEach(View::invalidate) }
+            }) { allGlassViews.forEach { if (it.visibility == View.VISIBLE) it.invalidate() } }
+            nexoAiPill.bindWebBackdrop(webBackdrop, pageView)
             cefPage.onBackdropInvalidated = { webBackdrop?.markDirty() }
+            cefPage.onRecoveryStateChanged = { recovering -> webBackdrop?.setPaused(recovering) }
             pageView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
                 if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) webBackdrop?.markDirty()
             }
@@ -1182,47 +1226,65 @@ class MainActivity :
      * con la misma página: antes una captura tardía podía quedar asignada a la
      * pestaña equivocada o mostrar la página anterior.
      */
-    private fun captureCurrentTabPreview(force: Boolean = false) {
-        val tab = TabManager.activeTab() ?: return
-        val session = attachedSession ?: return
+    private fun captureCurrentTabPreview(force: Boolean = false, onCaptured: (() -> Unit)? = null) {
+        val tab = TabManager.activeTab()
+        val session = attachedSession
         if (
+            tab == null ||
+            session == null ||
             tab.isPrivate ||
             tab.session !== session ||
             BrowserPrefs.isNexoHome(tab.url) ||
-            tab.isLoading ||
+            (!force && tab.isLoading) ||
             isInPictureInPictureMode ||
             startPage.visibility == View.VISIBLE ||
-            (!force && BrowserMediaController.isPlaying(tab.id)) ||
             pageView.width <= 0 ||
             pageView.height <= 0
-        ) return
+        ) {
+            onCaptured?.invoke()
+            return
+        }
+        val tabId = tab.id
         val url = tab.url
-        engineView.capture { bitmap ->
-            if (bitmap == null) return@capture
-            if (attachedSession === session && tab.session === session && tab.url == url) {
-                TabPreviewStore.save(applicationContext, tab.id, bitmap)
-                lastAutoPreview[tab.id] = url to android.os.SystemClock.elapsedRealtime()
-            } else {
-                bitmap.recycle()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val timeout = if (onCaptured != null) {
+            Runnable { if (settled.compareAndSet(false, true)) onCaptured() }.also {
+                pageView.postDelayed(it, 95L)
             }
+        } else null
+        engineView.capture { bitmap ->
+            if (bitmap != null) {
+                if (attachedSession === session && tab.session === session && tab.id == tabId) {
+                    TabPreviewStore.save(applicationContext, tabId, bitmap)
+                    lastAutoPreview[tabId] = url to android.os.SystemClock.elapsedRealtime()
+                } else {
+                    bitmap.recycle()
+                }
+            }
+            timeout?.let { pageView.removeCallbacks(it) }
+            if (settled.compareAndSet(false, true)) onCaptured?.invoke()
         }
     }
 
     /**
-     * Miniatura automática al terminar de cargar, con la página ya asentada:
-     * siempre que cambia la página y, en la misma, como mucho una cada 30 s.
+     * Miniatura automática al terminar de cargar o al cambiar de vista (incluyendo SPAs y scroll):
+     * siempre que cambia la página y, en la misma, como mucho una cada 12 s.
      */
-    private fun scheduleIdlePreview(tab: BrowserTab) {
+    private fun scheduleIdlePreview(tab: BrowserTab, delayMs: Long = 1_100L) {
         pageView.removeCallbacks(idlePreview)
         val (lastUrl, lastAt) = lastAutoPreview[tab.id] ?: ("" to 0L)
         val now = android.os.SystemClock.elapsedRealtime()
-        if (lastUrl == tab.url && now - lastAt < 30_000L) return
-        pageView.postDelayed(idlePreview, 1_200L)
+        if (lastUrl == tab.url && now - lastAt < 12_000L) return
+        pageView.postDelayed(idlePreview, delayMs)
     }
 
     private fun showTabsDialog() {
-        captureCurrentTabPreview(force = true)
-        TabSwitcher.show(this) { private -> viewModel.newTab(private) }
+        // Espera breve (~95 ms máx.) para que PixelCopy guarde el último estado antes de cubrir la vista.
+        captureCurrentTabPreview(force = true) {
+            if (!isFinishing && !isDestroyed) {
+                TabSwitcher.show(this) { private -> viewModel.newTab(private) }
+            }
+        }
     }
 
     /** Mantener pulsado un enlace o imagen: hoja con las acciones disponibles. */
@@ -1313,6 +1375,15 @@ class MainActivity :
         // Descargar con el gestor de Nexo (cookies del perfil, modo privado) en lugar de
         // DownloadManager, que no tiene acceso a la sesión del navegador.
         val tab = TabManager.activeTab()
+        if (tab != null) {
+            if (com.nexo.browser.shield.MalwareScan.blocksDownload(this, tab, url)) {
+                Toast.makeText(this, "Descarga bloqueada: el sitio o el archivo instalador presenta riesgo alto.", Toast.LENGTH_LONG).show()
+                return
+            }
+            if (com.nexo.browser.shield.MalwareScan.warnsDownload(this, tab, url)) {
+                Toast.makeText(this, "Atención: estás descargando un instalador desde un origen con señales sospechosas.", Toast.LENGTH_LONG).show()
+            }
+        }
         if(tab?.networkProfile?.type?.let { it != "direct" } == true) {
             Toast.makeText(this,"Esta descarga requiere una conexión independiente. Ábrela directamente en la pestaña para conservar su ruta.",Toast.LENGTH_LONG).show();return
         }
@@ -1323,7 +1394,8 @@ class MainActivity :
             isPrivate = tab?.isPrivate == true,
             referrer = tab?.url,
             parallel = tab?.burnerId == null,
-            split = BrowserPrefs.parallelDownloads(this)
+            split = BrowserPrefs.parallelDownloads(this),
+            burnerId = tab?.burnerId
         ) { _, message ->
             runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
@@ -1377,7 +1449,7 @@ class MainActivity :
             !home && scheme == "http" -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.warning.color)
             !home && scheme == "https" && !highlight -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
             home -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.text)
-            tab?.isPrivate == true -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
+            tab.isPrivate -> btn.imageTintList = android.content.res.ColorStateList.valueOf(p.muted)
         }
         btn.contentDescription = when {
             scanDanger -> "Control del sitio (página posiblemente peligrosa)"
@@ -1532,6 +1604,9 @@ class MainActivity :
                 if (!chromeCompact) miniPill.visibility = View.GONE
             }
         }
+        syncFloatingControls(animated = true)
+        refreshCaptionsUi()
+        TabManager.activeTab()?.let { scheduleIdlePreview(it, delayMs = 700L) }
     }
 
     private fun stylePrivateBanner(tab: BrowserTab?) {
@@ -1668,6 +1743,8 @@ class MainActivity :
             NexoMotion.spring(browserDock, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 1f)
             NexoMotion.spring(browserDock, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_Y, 0f)
         }
+        syncFloatingControls(animated = true)
+        refreshCaptionsUi()
     }
 
     private fun fingerprint(): String =
@@ -1750,6 +1827,12 @@ class MainActivity :
         handleNavigationIntent(intent)
     }
 
+    override fun onBeforeTabSwitch(leaving: BrowserTab) {
+        if (leaving.session === attachedSession) {
+            captureCurrentTabPreview(force = true)
+        }
+    }
+
     override fun onActiveTabChanged(tab: BrowserTab, session: EngineSession) {
         if (attachedSession !== session) {
             hideFindBar()
@@ -1771,6 +1854,12 @@ class MainActivity :
             applyChromeVisibility()
         }
         renderTab(tab)
+        // Si esta pestaña fue marcada como peligrosa mientras cargaba en segundo plano, mostrar el aviso ahora.
+        com.nexo.browser.shield.MalwareScan.resultFor(tab)?.takeIf {
+            it.decision.block && !com.nexo.browser.shield.MalwareScan.isBypassed(it.origin)
+        }?.let { result ->
+            com.nexo.browser.shield.MalwareWarning.show(this, tab, result)
+        }
         updatePipParams()
     }
 
@@ -1812,6 +1901,7 @@ class MainActivity :
         if (hideChrome) extensionInstallBanner.visibility = View.GONE else tab?.let { updateExtensionInstallBanner(it) }
         progress.visibility =
             if (!hideChrome && tab?.isLoading == true) View.VISIBLE else View.GONE
+        nexoAiPill.setSuppressed(hideChrome)
 
         setSystemBarsHidden(fullScreenActive && !pip)
         fullscreenMediaOverlay?.setActive(fullScreenActive && !pip)
@@ -1846,14 +1936,19 @@ class MainActivity :
     }
 
     override fun onTabChanged(tab: BrowserTab) {
-        if (tab.id == TabManager.activeTab()?.id) renderTab(tab)
+        if (tab.id == TabManager.activeTab()?.id) {
+            renderTab(tab)
+            if (!tab.isLoading && !BrowserPrefs.isNexoHome(tab.url)) {
+                scheduleIdlePreview(tab, delayMs = 950L)
+            }
+        }
     }
 
-    override fun onProgress(tab: BrowserTab, progressValue: Int, loading: Boolean) {
+    override fun onProgress(tab: BrowserTab, progress: Int, loading: Boolean) {
         if (tab.id != TabManager.activeTab()?.id) return
         webBackdrop?.markDirty()
-        progress.progress = progressValue
-        progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
+        this.progress.progress = progress
+        this.progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
         if (!loading) {
             browserFrame.finishRefresh()
             scheduleIdlePreview(tab)
@@ -2095,6 +2190,7 @@ class MainActivity :
 
     override fun onPause() {
         if (!MigrationMode.enabled(this)) {
+            captureCurrentTabPreview(force = true)
             (engineView as? com.nexo.browser.engine.cefrium.CefriumPageView)?.onHostPause()
             webBackdrop?.setRunning(false)
             com.nexo.browser.engine.cefrium.SpareRendererPool.stop(this)
@@ -2257,10 +2353,18 @@ class MainActivity :
         val tab = TabManager.activeTab()
         val session = attachedSession
         val active = LiveCaptions.isActive(session)
-        // El CC está siempre a mano en páginas web (el video puede estar en un iframe), no en Inicio.
-        val available = tab != null && (active || (BrowserPrefs.captionsEnabled(this) && !BrowserPrefs.isNexoHome(tab.url)))
+        // Mostrar CC solo cuando hay video/audio en la página o subtítulos activos (evita saturar artículos de texto).
+        val hasMediaHere = tab != null && (hasMiniVideo(tab) || BrowserMediaController.isPlaybackActive(tab.id))
+        val available = tab != null && (active || (BrowserPrefs.captionsEnabled(this) && !BrowserPrefs.isNexoHome(tab.url) && hasMediaHere))
         captionsButton.visibility = if (available && !immersive && !isInPictureInPictureMode) View.VISIBLE else View.GONE
-        CaptionsUi.styleChip(this, captionsButton, active)
+        CaptionsUi.styleChip(
+            this,
+            captionsButton,
+            active,
+            backdrop = webBackdrop,
+            backdropSource = pageView,
+            smoked = tab?.isPrivate == true
+        )
         // Las líneas de estado (no subtítulos) no se muestran en la ventana mini.
         val display = (if (active) LiveCaptions.display(this, session) else null)
             ?.takeUnless { it.status && isInPictureInPictureMode }
@@ -2270,32 +2374,46 @@ class MainActivity :
             display,
             isInPictureInPictureMode,
             hint = display?.status == true,
-            bottomObstruction = captionBottomObstruction()
+            bottomObstruction = captionBottomObstruction(),
+            topObstruction = if (immersive) 0 else safeTop
         )
         // El aviso genérico caduca: volver a dibujar para retirarlo.
         captionView.removeCallbacks(captionHintExpiry)
         if (display?.status == true && LiveCaptions.statusExpires(session)) {
             captionView.postDelayed(captionHintExpiry, LiveCaptions.HINT_MS + 150L)
         }
+        syncFloatingControls(animated = false)
     }
 
     /** Parte del pie de la página tapada por el cromo flotante (la web fluye por detrás). */
     private fun captionBottomObstruction(): Int {
         if (!::bottomChrome.isInitialized || bottomChrome.visibility != View.VISIBLE || immersive) return 0
         val pageBottom = (browserFrame.layoutParams as? android.widget.FrameLayout.LayoutParams)?.bottomMargin ?: 0
-        val chrome = if (chromeCompact) NexoUi.dp(this, 48f) + safeBottom else bottomChrome.height
-        return (chrome - pageBottom).coerceAtLeast(0) + NexoUi.dp(this, 8f)
+        val chrome = when {
+            chromeCompact && liquidChrome -> NexoUi.dp(this, 48f) + safeBottom
+            dockScrollHidden && !liquidChrome -> (bottomChrome.height - browserDock.height).coerceAtLeast(safeBottom)
+            else -> bottomChrome.height
+        }
+        return (chrome - pageBottom).coerceAtLeast(0) + NexoUi.dp(this, 6f)
     }
 
     /**
-     * Píldora opaca sobre el video (se lee igual en tema claro u
-     * oscuro) con aparición suave en lugar de un botón que salta.
+     * Píldora compacta Liquid Glass sobre el video (32 dp visuales en objetivo táctil de 48 dp),
+     * coherente con la mini-píldora del cromo inferior.
      */
     private fun styleMiniPlayerChip() {
-        CaptionsUi.styleChip(this, miniPlayerButton, false)
+        val isPriv = TabManager.activeTab()?.isPrivate == true
+        CaptionsUi.styleChip(
+            this,
+            miniPlayerButton,
+            false,
+            backdrop = webBackdrop,
+            backdropSource = pageView,
+            smoked = isPriv
+        )
         miniPlayerButton.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(ThemeManager.palette(this).text)
         miniPlayerButton.isAllCaps = false
-        miniPlayerButton.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        miniPlayerButton.typeface = NexoUi.medium(this)
         miniPlayerButton.contentDescription = "Abrir el video en una ventana flotante. Mantén pulsado para ocultar este botón."
         miniPlayerButton.setOnLongClickListener {
             miniChipHiddenFor = TabManager.activeTab()?.let { it.id + "|" + it.url }
@@ -2326,8 +2444,10 @@ class MainActivity :
                 miniPlayerButton.alpha = 1f
                 miniPlayerButton.scaleX = 1f
                 miniPlayerButton.scaleY = 1f
+                syncFloatingControls(animated = false)
             }.start()
         }
+        syncFloatingControls(animated = false)
     }
 
     internal fun startMiniPlayer(
@@ -2479,11 +2599,15 @@ class MainActivity :
         builder.setActions(pipActions(tabId))
 
         if (Build.VERSION.SDK_INT >= 33) {
-            // Título y sitio del video en el menú de la ventana flotante.
+            // Título y sitio del video en el menú de la ventana flotante (enmascarado en pestañas privadas).
             TabManager.activeTab()?.takeIf { it.id == tabId }?.let { tab ->
-                val site = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()?.removePrefix("www.")
-                tab.title.takeIf { it.isNotBlank() }?.let { builder.setTitle(it.take(80)) }
-                site?.takeIf { it.isNotBlank() }?.let { builder.setSubtitle(it) }
+                if (tab.isPrivate) {
+                    builder.setTitle("Navegación privada")
+                } else {
+                    val site = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull()?.removePrefix("www.")
+                    tab.title.takeIf { it.isNotBlank() }?.let { builder.setTitle(it.take(80)) }
+                    site?.takeIf { it.isNotBlank() }?.let { builder.setSubtitle(it) }
+                }
             }
         }
 
@@ -2749,6 +2873,9 @@ class MainActivity :
         aiControllerObserver = null
         com.nexo.browser.shield.MalwareScan.removeObserver(malwareObserver)
         com.nexo.browser.shield.MalwareWarning.dismiss()
+        PhantomShieldPanel.dismiss()
+        com.nexo.browser.shield.PhantomShield.onActivityDestroyed()
+        com.nexo.browser.engine.cefrium.SpareRendererPool.stop(this)
         GlassPreferences.removeListener(glassSettingsChanged)
         webBackdrop?.setRunning(false)
         PageBridge.onScrollDirection = null
@@ -2769,6 +2896,8 @@ class MainActivity :
         permissionCallbacks.clear()
         pageView.removeCallbacks(idlePreview)
         captionView.removeCallbacks(captionHintExpiry)
+        captionView.removeCallbacks(captionRender)
+        captionRenderPending = false
         TabManager.attach(null)
         if (attachedSession != null) {
             engineView.release()

@@ -115,7 +115,22 @@ object LiveCaptions {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 800
     }
     private val client by lazy {
+        val publicDns = NativeImagePolicy.publicDns(okhttp3.Dns.SYSTEM)
+        val dns = object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<java.net.InetAddress> {
+                val clean = hostname.lowercase().trim('[', ']')
+                return if (clean == "localhost" || clean == "127.0.0.1" || clean == "::1") {
+                    okhttp3.Dns.SYSTEM.lookup(hostname)
+                } else {
+                    publicDns.lookup(hostname)
+                }
+            }
+        }
         OkHttpClient.Builder()
+            .dns(dns)
+            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+            .authenticator(okhttp3.Authenticator.NONE)
+            .proxyAuthenticator(okhttp3.Authenticator.NONE)
             // Las peticiones llevan claves: nunca seguir una redirección a otro destino.
             .followRedirects(false).followSslRedirects(false)
             .connectTimeout(10, TimeUnit.SECONDS)
