@@ -508,6 +508,21 @@
     return { ok: true, text: '' };
   }
 
+  /** Ajusta la velocidad de reproducción (0.5x–2.5x) de los elementos <video>/<audio> visibles. */
+  function setMediaSpeed(doc, speed) {
+    const rate = Math.max(0.5, Math.min(2.5, Number(speed) || 1.0));
+    if (!doc || !doc.querySelectorAll) return { ok: false, count: 0 };
+    const media = doc.querySelectorAll('video, audio');
+    let count = 0;
+    for (let i = 0; i < media.length; i++) {
+      try {
+        media[i].playbackRate = rate;
+        count++;
+      } catch (_) {}
+    }
+    return { ok: count > 0, count: count, rate: rate };
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       extractSafeSnapshot,
@@ -517,6 +532,7 @@
       clickElement,
       scrollPage,
       extractSection,
+      setMediaSpeed,
       sanitizeUrl,
       isSensitiveField,
       isHiddenElement,
@@ -531,6 +547,7 @@
       clickElement,
       scrollPage,
       extractSection,
+      setMediaSpeed,
       sanitizeUrl
     });
   }

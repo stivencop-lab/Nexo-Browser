@@ -44,15 +44,17 @@ class NexoGlassDrawable(
     private val density = context.resources.displayMetrics.density
     private val radius = radiusDp * density
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sheen = Paint(Paint.ANTI_ALIAS_FLAG)
     private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = (0.5f * density).coerceAtLeast(1f)
+        strokeWidth = (0.9f * density).coerceAtLeast(1f)
     }
     private val noise = Paint().apply {
         if (Build.VERSION.SDK_INT < 31) shader = noiseShader
     }
     private val sampling = Paint(Paint.FILTER_BITMAP_FLAG)
     private val rect = RectF()
+    private val edgeRect = RectF()
     private val bitmapBounds = RectF()
     private val clip = Path()
     private val intensity = GlassPreferences.intensity
@@ -88,6 +90,8 @@ class NexoGlassDrawable(
     override fun onBoundsChange(bounds: Rect) {
         super.onBoundsChange(bounds)
         rect.set(bounds)
+        val inset = edge.strokeWidth / 2f
+        edgeRect.set(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset)
         val r = radius.coerceAtMost(rect.height() / 2f)
         clip.reset()
         clip.addRoundRect(rect, r, r, Path.Direction.CW)
@@ -95,37 +99,74 @@ class NexoGlassDrawable(
         updateEdge()
     }
 
+    private fun scaledWhite(alpha: Int): Int =
+        ColorUtils.setAlphaComponent(0xFFFFFFFF.toInt(), (alpha * intensity.sheenStrength).toInt().coerceIn(0, 245))
+
     private fun updateEdge() {
-        if (rect.isEmpty || !specularTop) return
-        val upper = if (palette.isDark) (if (smoked) 0x26FFFFFF else 0x61FFFFFF) else 0xE0FFFFFF.toInt()
-        val lower = if (palette.isDark) 0x1CFFFFFF else 0x210D0803
+        if (rect.isEmpty) return
+        // Brillo interno refractivo adaptado a cada tema (Obsidian, OLED, Paper y Sistema).
+        val topSheen = when {
+            smoked && palette.isDark -> scaledWhite(18)
+            smoked -> scaledWhite(60)
+            palette.isAmoled -> scaledWhite(38)
+            palette.isDark -> scaledWhite(32)
+            else -> scaledWhite(124)
+        }
+        val midSheen = if (palette.isDark) 0x00FFFFFF else scaledWhite(34)
+        val bottomSheen = when {
+            palette.isAmoled -> scaledWhite(16)
+            palette.isDark -> scaledWhite(12)
+            else -> ColorUtils.setAlphaComponent(0xFF0D0803.toInt(), (14 * intensity.sheenStrength).toInt().coerceIn(0, 48))
+        }
+        sheen.shader = LinearGradient(
+            0f, rect.top, 0f, rect.bottom,
+            intArrayOf(topSheen, midSheen, bottomSheen),
+            floatArrayOf(0f, 0.45f, 1f),
+            Shader.TileMode.CLAMP
+        )
+
+        if (!specularTop) return
+        val upper = when {
+            smoked && palette.isDark -> scaledWhite(48)
+            palette.isAmoled -> scaledWhite(116)
+            palette.isDark -> scaledWhite(102)
+            else -> scaledWhite(232)
+        }
+        val lower = when {
+            palette.isAmoled -> scaledWhite(44)
+            palette.isDark -> scaledWhite(34)
+            else -> ColorUtils.setAlphaComponent(0xFF0D0803.toInt(), (36 * intensity.sheenStrength).toInt().coerceIn(0, 96))
+        }
         edge.shader = LinearGradient(0f, rect.top, 0f, rect.bottom,
             intArrayOf(upper, 0x00FFFFFF, 0x00FFFFFF, lower),
-            floatArrayOf(0f, 0.40f, 0.75f, 1f), Shader.TileMode.CLAMP)
+            floatArrayOf(0f, 0.38f, 0.72f, 1f), Shader.TileMode.CLAMP)
     }
 
     override fun draw(canvas: Canvas) {
         if (rect.isEmpty) return
         val blurred = drawBackdrop(canvas)
         val base = when {
-            smoked && palette.isDark -> 0xFF050507.toInt()
+            smoked && palette.isDark -> 0xFF07070B.toInt()
             smoked -> 0xFFDAD8D1.toInt()
-            palette.isAmoled -> NexoTokens.OLED
-            palette.isDark -> 0xFF141418.toInt()
-            else -> NexoTokens.PAPER
+            palette.isAmoled -> 0xFF0E0E12.toInt()
+            palette.isDark -> 0xFF16161C.toInt()
+            else -> 0xFFFBFBF8.toInt()
         }
-        val alpha = when {
-            !blurred -> 235
-            palette.isDark -> 143
-            else -> 184
+        val rawAlpha = when {
+            !blurred && palette.isDark -> intensity.fallbackDarkAlpha
+            !blurred -> intensity.fallbackLightAlpha
+            palette.isAmoled -> intensity.oledAlpha
+            palette.isDark -> intensity.darkAlpha
+            else -> intensity.lightAlpha
         }
+        val alpha = if (smoked) (rawAlpha + 22).coerceAtMost(236) else rawAlpha
         val r = radius.coerceAtMost(rect.height() / 2f)
         fill.color = ColorUtils.setAlphaComponent(base, alpha)
         canvas.drawRoundRect(rect, r, r, fill)
+        if (sheen.shader != null) canvas.drawRoundRect(rect, r, r, sheen)
         if (blurred && noise.shader != null) canvas.drawRoundRect(rect, r, r, noise)
         if (specularTop) {
-            val inset = edge.strokeWidth / 2f
-            canvas.drawRoundRect(rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset, r, r, edge)
+            canvas.drawRoundRect(edgeRect, r, r, edge)
         }
     }
 
@@ -294,12 +335,18 @@ object NexoGlass {
         })
     }
 
+    /** Indica si el dispositivo soporta desenfoque de ventana en tiempo real (API 31+). */
+    fun isCrossWindowBlurAvailable(activity: Activity): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return false
+        val wm = activity.getSystemService(WindowManager::class.java) ?: return false
+        return runCatching { wm.isCrossWindowBlurEnabled }.getOrDefault(false)
+    }
+
     /** Hoja sobre la web: desenfoque real de lo que hay detrás (incluida la superficie de Chromium). */
     fun blurBehind(dialog: Dialog, activity: Activity, radiusDp: Float = GlassPreferences.intensity.radiusDp) {
         if (Build.VERSION.SDK_INT < 31) return
         val window = dialog.window ?: return
-        val wm = activity.getSystemService(WindowManager::class.java) ?: return
-        if (!wm.isCrossWindowBlurEnabled) return
+        if (!isCrossWindowBlurAvailable(activity)) return
         window.setBackgroundBlurRadius((radiusDp * activity.resources.displayMetrics.density).toInt())
         window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
         window.attributes = window.attributes.apply {

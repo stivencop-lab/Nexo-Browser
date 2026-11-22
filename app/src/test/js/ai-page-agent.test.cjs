@@ -245,3 +245,25 @@ test('browser agent indexes interactives, clicks safely, blocks sensitive form s
   assert.ok(sec.text.includes('0 USD'));
 });
 
+test('setMediaSpeed clamps playback rate to [0.5, 2.5] and handles missing media', () => {
+  const emptyDoc = { querySelectorAll: () => [] };
+  const missing = agent.setMediaSpeed(emptyDoc, 1.5);
+  assert.equal(missing.ok, false);
+
+  const video = { playbackRate: 1.0, paused: false, currentTime: 10 };
+  const doc = { querySelectorAll: () => [video] };
+
+  const normal = agent.setMediaSpeed(doc, 1.5);
+  assert.equal(normal.ok, true);
+  assert.equal(video.playbackRate, 1.5);
+
+  const clampedHigh = agent.setMediaSpeed(doc, 10.0);
+  assert.equal(clampedHigh.ok, true);
+  assert.equal(video.playbackRate, 2.5);
+
+  const clampedLow = agent.setMediaSpeed(doc, 0.1);
+  assert.equal(clampedLow.ok, true);
+  assert.equal(video.playbackRate, 0.5);
+});
+
+

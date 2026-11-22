@@ -70,14 +70,32 @@ object NexoSheets {
     /** Relleno de tarjetas agrupadas dentro de una hoja (un escalón sobre la hoja). */
     fun groupFill(p: BrowserPalette): Int = if (p.isDark) p.surfaceContainerHigh else p.surfaceContainerLowest
 
-    /** Lámina de la hoja: radio superior continuo de 34dp, sin bordes. */
+    /** Lámina de la hoja: cristal líquido translúcido con radio superior de 34dp y borde especular. */
     private fun sheetBackground(activity: Activity): GradientDrawable {
         val p = ThemeManager.palette(activity)
         val radius = dp(activity, NexoUi.Tokens.RADIUS_SHEET).toFloat()
-        val sheetColor = if (p.isDark) p.surfaceContainerLow else p.background
+        val intensity = GlassPreferences.intensity
+        val blurActive = NexoGlass.isCrossWindowBlurAvailable(activity)
+        val baseColor = when {
+            p.isAmoled -> 0xFF0C0C10.toInt()
+            p.isDark -> p.surfaceContainerLow
+            else -> p.background
+        }
+        val alpha = if (blurActive) {
+            if (p.isDark) intensity.sheetAlphaDark else intensity.sheetAlphaLight
+        } else {
+            if (p.isDark) (intensity.sheetAlphaDark + 22).coerceAtMost(246)
+            else (intensity.sheetAlphaLight + 18).coerceAtMost(248)
+        }
+        val rimAlpha = when {
+            p.isAmoled -> (52 * intensity.sheenStrength).toInt().coerceIn(28, 96)
+            p.isDark -> (38 * intensity.sheenStrength).toInt().coerceIn(22, 82)
+            else -> (170 * intensity.sheenStrength).toInt().coerceIn(120, 225)
+        }
         return GradientDrawable().apply {
-            setColor(sheetColor)
+            setColor(ColorUtils.setAlphaComponent(baseColor, alpha))
             cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+            setStroke(dp(activity, 1f).coerceAtLeast(1), ColorUtils.setAlphaComponent(Color.WHITE, rimAlpha))
         }
     }
 

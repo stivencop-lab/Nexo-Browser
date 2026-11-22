@@ -522,8 +522,12 @@ object NexoAiPageAgent {
 
                 "navigate" -> {
                     val url = call.args["url"].orEmpty()
+                    val currentHost = SiteControlModel.hostOf(TabManager.activeTab()?.url.orEmpty())
+                    val urlCheck = NexoAiSecurity.validateAgentUrl(url, currentHost)
                     val host = SiteControlModel.hostOf(url)
-                    if (host.isNotEmpty() && !NexoAiConfig.isHostAllowed(app, host)) {
+                    if (!urlCheck.allowed) {
+                        NexoAiAgent.ToolOutcome(false, urlCheck.reason ?: "URL bloqueada por seguridad", urlCheck.reason ?: "URL bloqueada.")
+                    } else if (host.isNotEmpty() && !NexoAiConfig.isHostAllowed(app, host)) {
                         NexoAiAgent.ToolOutcome(false, "Bloqueado por Site Control ($host)", "Nexo AI está desactivado para $host.")
                     } else {
                         val prevUrl = TabManager.activeTab()?.url
@@ -564,21 +568,27 @@ object NexoAiPageAgent {
 
                 "open_tab" -> {
                     val url = call.args["url"].orEmpty()
-                    val latch = CountDownLatch(1)
-                    main.post {
-                        val isPriv = TabManager.activeTab()?.isPrivate == true
-                        TabManager.createTab(url, isPrivate = isPriv, activate = true)
-                        latch.countDown()
+                    val currentHost = SiteControlModel.hostOf(TabManager.activeTab()?.url.orEmpty())
+                    val urlCheck = NexoAiSecurity.validateAgentUrl(url, currentHost)
+                    if (!urlCheck.allowed) {
+                        NexoAiAgent.ToolOutcome(false, urlCheck.reason ?: "URL bloqueada por seguridad", urlCheck.reason ?: "URL bloqueada.")
+                    } else {
+                        val latch = CountDownLatch(1)
+                        main.post {
+                            val isPriv = TabManager.activeTab()?.isPrivate == true
+                            TabManager.createTab(url, isPrivate = isPriv, activate = true)
+                            latch.countDown()
+                        }
+                        latch.await(1000L, TimeUnit.MILLISECONDS)
+                        waitForPageReady(null)
+                        val (snap, err) = captureSync()
+                        val host = SiteControlModel.hostOf(url)
+                        NexoAiAgent.ToolOutcome(
+                            true,
+                            "Nueva pestaña: ${host.ifBlank { url.take(36) }}",
+                            snap?.toContextText("agent") ?: (err ?: "Pestaña abierta en $url.")
+                        )
                     }
-                    latch.await(1000L, TimeUnit.MILLISECONDS)
-                    waitForPageReady(null)
-                    val (snap, err) = captureSync()
-                    val host = SiteControlModel.hostOf(url)
-                    NexoAiAgent.ToolOutcome(
-                        true,
-                        "Nueva pestaña: ${host.ifBlank { url.take(36) }}",
-                        snap?.toContextText("agent") ?: (err ?: "Pestaña abierta en $url.")
-                    )
                 }
 
                 "list_tabs" -> {
@@ -702,20 +712,34 @@ object NexoAiPageAgent {
 
                 "click_element" -> {
                     val target = call.args["target"].orEmpty()
-                    val prevUrl = TabManager.activeTab()?.url
-                    val res = evalOnActivePage { src ->
-                        "(function(){try{$src;var r=window.__nexoAiPageAgent.clickElement(document,window,${JSONObject.quote(target)});return JSON.stringify(r);}catch(_){return null;}})();"
-                    }
-                    val ok = res?.optBoolean("ok") == true
-                    if (!ok) {
-                        val err = res?.optString("error")?.ifBlank { "No se pudo pulsar $target." } ?: "No se pudo pulsar $target."
-                        NexoAiAgent.ToolOutcome(false, err, err)
+                    val prevUrl = TabManager.activeTab()?.url.orEmpty()
+                    if (NexoAiSecurity.isSensitivePageUrl(prevUrl)) {
+                        NexoAiAgent.ToolOutcome(
+                            false,
+                            "Clic bloqueado en página sensible",
+                            "Por seguridad, el agente no pulsa botones automáticamente en páginas de login, pagos, OAuth o seguridad."
+                        )
+                    } else if (NexoAiSecurity.isSensitiveOrDestructiveTarget(target)) {
+                        NexoAiAgent.ToolOutcome(
+                            false,
+                            "Acción sensible bloqueada",
+                            "Por seguridad, el agente no ejecuta clics automáticos sobre pagos, compras, permisos o borrado de cuenta."
+                        )
                     } else {
-                        Thread.sleep(650L)
-                        if (TabManager.activeTab()?.isLoading == true) waitForPageReady(prevUrl)
-                        val (snap, _) = captureSync()
-                        val clicked = res.optString("clicked").ifBlank { target }
-                        NexoAiAgent.ToolOutcome(true, "Pulsado: ${clicked.take(36)}", snap?.toContextText("agent") ?: "Elemento activado.")
+                        val res = evalOnActivePage { src ->
+                            "(function(){try{$src;var r=window.__nexoAiPageAgent.clickElement(document,window,${JSONObject.quote(target)});return JSON.stringify(r);}catch(_){return null;}})();"
+                        }
+                        val ok = res?.optBoolean("ok") == true
+                        if (!ok) {
+                            val err = res?.optString("error")?.ifBlank { "No se pudo pulsar $target." } ?: "No se pudo pulsar $target."
+                            NexoAiAgent.ToolOutcome(false, err, err)
+                        } else {
+                            Thread.sleep(650L)
+                            if (TabManager.activeTab()?.isLoading == true) waitForPageReady(prevUrl)
+                            val (snap, _) = captureSync()
+                            val clicked = res.optString("clicked").ifBlank { target }
+                            NexoAiAgent.ToolOutcome(true, "Pulsado: ${clicked.take(36)}", snap?.toContextText("agent") ?: "Elemento activado.")
+                        }
                     }
                 }
 
@@ -729,6 +753,140 @@ object NexoAiPageAgent {
                         txt.isNotBlank(),
                         if (txt.isNotBlank()) "Sección extraída: ${query.take(30)}" else "Sección no encontrada",
                         txt.ifBlank { "No se encontró una sección que coincida con «$query»." }
+                    )
+                }
+
+                "set_volume" -> {
+                    val action = call.args["action"].orEmpty().lowercase(Locale.ROOT)
+                    val audio = app.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    if (audio == null) {
+                        NexoAiAgent.ToolOutcome(false, "Control de audio no disponible", "No se pudo acceder a AudioManager.")
+                    } else {
+                        val stream = android.media.AudioManager.STREAM_MUSIC
+                        val maxVol = audio.getStreamMaxVolume(stream).coerceAtLeast(1)
+                        val curVol = audio.getStreamVolume(stream)
+                        val step = maxOf(1, (maxVol * 0.15f).toInt())
+                        val targetVol = when (action) {
+                            "up" -> (curVol + step).coerceAtMost(maxVol)
+                            "down" -> (curVol - step).coerceAtLeast(0)
+                            "mute" -> 0
+                            "unmute" -> if (curVol == 0) maxOf(1, maxVol / 3) else curVol
+                            "set" -> {
+                                val pct = call.args["level"]?.toIntOrNull()?.coerceIn(0, 100) ?: 50
+                                ((pct / 100.0) * maxVol).toInt().coerceIn(0, maxVol)
+                            }
+                            else -> curVol
+                        }
+                        val latch = CountDownLatch(1)
+                        var errMsg: String? = null
+                        main.post {
+                            runCatching {
+                                audio.setStreamVolume(stream, targetVol, android.media.AudioManager.FLAG_SHOW_UI)
+                            }.onFailure { errMsg = it.message }
+                            latch.countDown()
+                        }
+                        latch.await(1000L, TimeUnit.MILLISECONDS)
+                        val pctAfter = ((targetVol.toDouble() / maxVol.toDouble()) * 100.0).toInt().coerceIn(0, 100)
+                        if (errMsg != null) {
+                            NexoAiAgent.ToolOutcome(false, "No se pudo cambiar el volumen", errMsg ?: "Error de audio.")
+                        } else {
+                            NexoAiAgent.ToolOutcome(
+                                true,
+                                "Volumen multimedia: $pctAfter%",
+                                "Volumen multimedia ajustado a $pctAfter% ($targetVol/$maxVol)."
+                            )
+                        }
+                    }
+                }
+
+                "media_control" -> {
+                    val action = call.args["action"].orEmpty().lowercase(Locale.ROOT)
+                    val tab = TabManager.activeTab()
+                    if (tab == null) {
+                        NexoAiAgent.ToolOutcome(false, "Sin pestaña activa", "No hay una pestaña activa para controlar medios.")
+                    } else if (action == "speed") {
+                        val rate = call.args["value"]?.toDoubleOrNull()?.coerceIn(0.5, 2.5) ?: 1.0
+                        val res = evalOnActivePage { src ->
+                            "(function(){try{$src;var r=window.__nexoAiPageAgent.setMediaSpeed(document,$rate);return JSON.stringify(r);}catch(_){return null;}})();"
+                        }
+                        val ok = res?.optBoolean("ok") == true
+                        NexoAiAgent.ToolOutcome(
+                            ok,
+                            if (ok) "Velocidad: ${rate}x" else "Sin video/audio en la página",
+                            if (ok) "Velocidad de reproducción ajustada a ${rate}x." else "No se encontró un reproductor activo."
+                        )
+                    } else {
+                        val latch = CountDownLatch(1)
+                        main.post {
+                            val sent = com.nexo.browser.ExtensionManager.sendPipCommand(tab.session, action)
+                            if (!sent) {
+                                when (action) {
+                                    "play" -> com.nexo.browser.BrowserMediaController.play(tab.id)
+                                    "pause" -> com.nexo.browser.BrowserMediaController.pause(tab.id)
+                                    "seek_forward" -> com.nexo.browser.BrowserMediaController.seekBy(10)
+                                    "seek_backward" -> com.nexo.browser.BrowserMediaController.seekBy(-10)
+                                }
+                            }
+                            latch.countDown()
+                        }
+                        latch.await(1000L, TimeUnit.MILLISECONDS)
+                        val label = when (action) {
+                            "play" -> "Reproducción iniciada"
+                            "pause" -> "Reproducción en pausa"
+                            "seek_forward" -> "Avanzado +10 s"
+                            "seek_backward" -> "Retrocedido -10 s"
+                            else -> "Control multimedia ejecutado"
+                        }
+                        NexoAiAgent.ToolOutcome(true, label, "$label en la pestaña activa.")
+                    }
+                }
+
+                "set_theme" -> {
+                    val themeArg = call.args["theme"].orEmpty().lowercase(Locale.ROOT)
+                    val prefVal = when (themeArg) {
+                        "system" -> BrowserPrefs.THEME_SYSTEM
+                        "dark" -> BrowserPrefs.THEME_MIDNIGHT
+                        "oled" -> BrowserPrefs.THEME_OLED
+                        "light" -> BrowserPrefs.THEME_LIGHT
+                        else -> BrowserPrefs.THEME_SYSTEM
+                    }
+                    val label = when (prefVal) {
+                        BrowserPrefs.THEME_SYSTEM -> "Sistema (automático)"
+                        BrowserPrefs.THEME_OLED -> "OLED"
+                        BrowserPrefs.THEME_LIGHT -> "Paper (claro)"
+                        else -> "Obsidian (oscuro)"
+                    }
+                    val latch = CountDownLatch(1)
+                    main.post {
+                        BrowserPrefs.setTheme(app, prefVal)
+                        (BrowserHosts.current() as? com.nexo.browser.MainActivity)?.applyLiveThemeFromAgent()
+                        latch.countDown()
+                    }
+                    latch.await(1000L, TimeUnit.MILLISECONDS)
+                    NexoAiAgent.ToolOutcome(true, "Tema: $label", "Tema de Nexo cambiado a $label.")
+                }
+
+                "toggle_desktop_mode" -> {
+                    val enabled = call.args["enabled"] != "false"
+                    val latch = CountDownLatch(1)
+                    main.post {
+                        TabManager.setDesktopMode(enabled)
+                        latch.countDown()
+                    }
+                    latch.await(1000L, TimeUnit.MILLISECONDS)
+                    Thread.sleep(300L)
+                    val label = if (enabled) "Modo escritorio activado" else "Modo móvil activado"
+                    NexoAiAgent.ToolOutcome(true, label, "$label en la pestaña actual.")
+                }
+
+                "task_checkpoint" -> {
+                    val pct = call.args["progress"]?.toIntOrNull()?.coerceIn(0, 100) ?: 50
+                    val done = call.args["completed"].orEmpty().ifBlank { "Avance registrado" }
+                    val next = call.args["next_step"].orEmpty()
+                    NexoAiAgent.ToolOutcome(
+                        true,
+                        "Hito $pct% · ${done.take(36)}",
+                        "Checkpoint guardado ($pct%): $done." + if (next.isNotBlank()) " Siguiente paso: $next." else ""
                     )
                 }
 

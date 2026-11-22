@@ -346,9 +346,23 @@ class SettingsActivity : Activity() {
             BrowserPrefs.THEME_OLED to "OLED", BrowserPrefs.THEME_LIGHT to "Paper"
         )
         val themeHolder = android.widget.FrameLayout(this).apply { id = R.id.themeSegmented }
+        val themeStatusLabel = TextView(this).apply {
+            textSize = 12.5f
+            typeface = NexoUi.regular(this@SettingsActivity)
+            setTextColor(p.muted)
+            tag = "muted"
+            setPadding(0, NexoUi.dp(this@SettingsActivity, 6f), 0, NexoUi.dp(this@SettingsActivity, 2f))
+        }
         fun renderTheme() {
             themeHolder.removeAllViews()
             val current = themes.getOrNull(theme.selectedItemPosition)?.second ?: BrowserPrefs.theme(this)
+            val sysMode = if (ThemeManager.isSystemDark(this)) "Oscuro" else "Claro"
+            themeStatusLabel.text = when (current) {
+                BrowserPrefs.THEME_SYSTEM -> "Automático según el teléfono · ahora: $sysMode"
+                BrowserPrefs.THEME_OLED -> "Negro puro OLED fijo (con cristal líquido)"
+                BrowserPrefs.THEME_LIGHT -> "Tema claro Paper fijo (con cristal líquido)"
+                else -> "Tema oscuro Obsidian fijo (con cristal líquido)"
+            }
             themeHolder.addView(NexoUi.segmented(this, themeOptions, current) { value ->
                 theme.setSelection(themes.indexOfFirst { it.second == value }.coerceAtLeast(0))
                 renderTheme()
@@ -356,7 +370,12 @@ class SettingsActivity : Activity() {
             })
         }
         renderTheme()
-        replaceSpinner(theme, themeHolder)
+        val themeBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(themeHolder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(themeStatusLabel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        replaceSpinner(theme, themeBox)
 
         // Acento: cinco círculos de 32dp en objetivos de 48dp, con aro en el seleccionado.
         val accentLabel = TextView(this).apply {

@@ -177,9 +177,11 @@ class NexoAiPillView @JvmOverloads constructor(
         val p = ThemeManager.palette(activity)
         val live = if (p.isMonochrome) p.success.color else p.accent
         val (dot, title) = if (agentReq != null) {
-            val stepPrefix = if (agentReq.currentStepIndex > 0) "Agente ${agentReq.currentStepIndex}/${agentReq.maxSteps}" else "Agente"
+            val kind = if (agentReq.longTask) "Tarea" else "Agente"
+            val stepPrefix = if (agentReq.currentStepIndex > 0) "$kind ${agentReq.currentStepIndex}/${agentReq.maxSteps}" else kind
+            val pctPrefix = agentReq.progressPercent?.let { " ($it%)" }.orEmpty()
             val stepDetail = agentReq.currentStepLabel.ifBlank { "Ejecutando…" }
-            live to "$stepPrefix · $stepDetail"
+            live to "$stepPrefix$pctPrefix · $stepDetail"
         } else {
             when (snapshot.indicatorState) {
                 NexoAiModels.IndicatorState.GENERATING -> live to "Escribiendo…"

@@ -68,10 +68,18 @@ object NexoAiSheet {
         QuickAction(
             icon = R.drawable.ic_nexo_aperture,
             title = "Agente autónomo",
-            subtitle = "Navega, busca e inspecciona por ti",
+            subtitle = "Navega, busca, controla volumen y actúa por ti",
             prompt = "Inspecciona esta página, identifica lo más relevante y dime qué acciones útiles puedes hacer aquí.",
             logLabel = "agente_inicio",
             forceScope = "agent"
+        ),
+        QuickAction(
+            icon = R.drawable.ic_menu_workspace,
+            title = "Tarea larga",
+            subtitle = "Investigación o flujo paso a paso con hitos (hasta 20 pasos)",
+            prompt = "Planifica y ejecuta paso a paso una investigación completa sobre el tema de esta página: busca fuentes complementarias, registra hitos de progreso con task_checkpoint y entrega un informe claro.",
+            logLabel = "tarea_larga_inicio",
+            forceScope = "long_agent"
         ),
         QuickAction(
             icon = R.drawable.ic_ai_benchmark,
@@ -129,7 +137,7 @@ object NexoAiSheet {
         val dp = { v: Float -> NexoUi.dp(activity, v) }
 
         var activeTab = initialTab
-        var scope = "page" // "page" | "agent" | "selection" | "tabs" | "free"
+        var scope = "page" // "page" | "agent" | "long_agent" | "selection" | "tabs" | "free"
         var reasoningEffort: String? = null
         var isExpanded = initialExpanded
         var lastRenderedKey = ""
@@ -364,16 +372,17 @@ object NexoAiSheet {
             modelPill.setTextColor(if (s.enabled && keyOk) p.muted else p.warning.color)
         }
 
-        // Selector de contexto inline «Página ▾» / «Agente ▾» (y razonamiento si el modelo lo admite).
+        // Selector de contexto inline «Página ▾» / «Agente ▾» / «Tarea larga ▾» (y razonamiento si el modelo lo admite).
         fun renderScopeAndReasoning() {
             val scopes = listOf(
                 "page" to "Página",
                 "agent" to "Agente",
+                "long_agent" to "Tarea larga",
                 "selection" to "Selección",
                 "tabs" to "Pestañas",
                 "free" to "Sin contexto"
             )
-            val isAgent = scope == "agent"
+            val isAgent = scope == "agent" || scope == "long_agent"
             scopeButton.text = scopes.firstOrNull { it.first == scope }?.second ?: "Página"
             scopeButton.setTextColor(if (isAgent) p.onAccent else p.text)
             scopeButton.background = ThemeManager.ripple(
@@ -388,7 +397,11 @@ object NexoAiSheet {
                 ),
                 NexoUi.Tokens.RADIUS_PILL
             )
-            promptField.hint = if (isAgent) "Pide al agente navegar, buscar o actuar…" else "Preguntar o pedir un gráfico…"
+            promptField.hint = when (scope) {
+                "long_agent" -> "Define una tarea larga (hasta 20 pasos con hitos)…"
+                "agent" -> "Pide al agente navegar, subir volumen, cambiar tema o actuar…"
+                else -> "Preguntar o pedir un gráfico…"
+            }
             scopeButton.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null,
                 activity.getDrawable(R.drawable.ic_chevron_down)?.mutate()?.apply {
                     setTint(if (isAgent) p.onAccent else p.muted); setBounds(0, 0, dp(14f), dp(14f))
@@ -457,7 +470,7 @@ object NexoAiSheet {
             sidebarDrawer.render(NexoAiController.snapshot(), activeTab, scope)
         }
 
-        // Ejecutar consulta contextual, agente multi-paso o libre delegando al controlador persistente
+        // Ejecutar consulta contextual, agente multi-paso, tarea larga o libre delegando al controlador persistente
         fun dispatchPrompt(userTask: String, logLabel: String, forceScope: String? = null) {
             val s = NexoAiConfig.read(activity)
             val apiKey = NexoAiConfig.apiKey(activity)
@@ -489,11 +502,12 @@ object NexoAiSheet {
             val currentBinding = NexoAiPageAgent.currentActiveBinding()
 
             when (chosenScope) {
-                "agent" -> {
+                "agent", "long_agent" -> {
+                    val isLongTask = chosenScope == "long_agent"
                     val executor = NexoAiPageAgent.createBrowserToolExecutor(activity, s.allowPrivateTabs, s.maxContextChars)
                     NexoAiPageAgent.captureActiveSnapshot(activity, s.maxContextChars, s.allowPrivateTabs) { snap, _ ->
-                        val initialCtx = snap?.toContextText("agent")
-                            ?: "Pestaña actual en Inicio de Nexo. Puedes usar web_search, navigate, list_tabs, search_bookmarks o search_history."
+                        val initialCtx = snap?.toContextText(chosenScope)
+                            ?: "Pestaña actual en Inicio de Nexo. Puedes usar web_search, navigate, list_tabs, search_bookmarks, search_history, set_volume, media_control, set_theme o task_checkpoint."
                         NexoAiController.sendAgentPrompt(
                             settings = s,
                             apiKey = apiKey,
@@ -503,7 +517,9 @@ object NexoAiSheet {
                             pageBinding = snap?.binding ?: currentBinding,
                             reasoningEffort = reasoningEffort,
                             preferStreaming = true,
-                            logLabel = logLabel
+                            logLabel = logLabel,
+                            maxSteps = if (isLongTask) NexoAiAgent.MAX_LONG_TASK_STEPS else NexoAiAgent.MAX_AGENT_STEPS,
+                            longTask = isLongTask
                         )
                         scrollToBottom()
                     }
@@ -712,7 +728,13 @@ object NexoAiSheet {
         }
 
         // Chat editorial: sin burbujas ni tarjetas contenedoras, con Markdown y gráficos nativos.
-        fun buildMessageBubble(msg: NexoAiModels.AiMessage, convId: String, first: Boolean): View {
+        fun buildMessageBubble(
+            msg: NexoAiModels.AiMessage,
+            convId: String,
+            first: Boolean,
+            activeTaskForConv: NexoAiModels.AgentTask? = null,
+            isLatestAssistant: Boolean = false
+        ): View {
             if (msg.role == NexoAiModels.Role.USER) {
                 val wrap = LinearLayout(activity).apply {
                     orientation = LinearLayout.VERTICAL
@@ -722,6 +744,7 @@ object NexoAiSheet {
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(0.6f).coerceAtLeast(1)).apply { bottomMargin = dp(18f) })
                 val scopeLabel = when (msg.scope) {
                     "agent" -> "Agente"
+                    "long_agent" -> "Tarea larga"
                     "selection" -> "Selección"
                     "tabs" -> "Pestañas"
                     "free" -> "Sin contexto"
@@ -766,9 +789,18 @@ object NexoAiSheet {
                 setPadding(0, 0, 0, dp(4f))
             }
 
+            val isAgentScope = msg.scope == "agent" || msg.scope == "long_agent"
             val statusLabel = when (msg.status) {
-                NexoAiModels.MessageStatus.SENDING -> (if (msg.scope == "agent") "Planificando pasos…" else "Consultando…") to p.muted
-                NexoAiModels.MessageStatus.STREAMING -> (if (msg.scope == "agent") "Agente trabajando…" else "Escribiendo…") to p.muted
+                NexoAiModels.MessageStatus.SENDING -> when (msg.scope) {
+                    "long_agent" -> "Planificando tarea larga…"
+                    "agent" -> "Planificando pasos…"
+                    else -> "Consultando…"
+                } to p.muted
+                NexoAiModels.MessageStatus.STREAMING -> when (msg.scope) {
+                    "long_agent" -> "Ejecutando tarea larga…"
+                    "agent" -> "Agente trabajando…"
+                    else -> "Escribiendo…"
+                } to p.muted
                 NexoAiModels.MessageStatus.CANCELLED -> "Detenida" to p.warning.color
                 NexoAiModels.MessageStatus.INTERRUPTED -> "Interrumpida" to p.warning.color
                 NexoAiModels.MessageStatus.ERROR -> "Error" to p.danger
@@ -803,7 +835,7 @@ object NexoAiSheet {
                 NexoAiRichRenderer.renderInto(activity, richBox, msg.text, isStreaming = msg.isInFlight)
             } else if (msg.status == NexoAiModels.MessageStatus.SENDING) {
                 richBox.addView(TextView(activity).apply {
-                    text = if (msg.scope == "agent") "Observando el navegador…" else "Analizando…"
+                    text = if (isAgentScope) "Observando el navegador…" else "Analizando…"
                     textSize = 15f
                     typeface = NexoUi.regular(activity)
                     setTextColor(p.muted)
@@ -848,11 +880,29 @@ object NexoAiSheet {
                 if (actionsWrap.childCount > 0) card.addView(actionsWrap)
             }
 
-            // Acciones fantasma: propuestas de página (Resaltar, Abrir, Confirmar…), Copiar, Reintentar / Detener.
+            // Acciones fantasma: propuestas de página (Resaltar, Abrir, Confirmar…), Continuar tarea, Copiar, Reintentar / Detener.
             val ghost = ArrayList<View>()
             if (msg.isInFlight && msg.requestId != null) {
                 ghost += ghostAction(activity, "Detener") { NexoAiController.cancelRequest(msg.requestId) }
             } else {
+                if (isLatestAssistant && activeTaskForConv != null && !activeTaskForConv.completed) {
+                    val resumeLabel = if (activeTaskForConv.progressPercent > 0) {
+                        "Continuar tarea (${activeTaskForConv.progressPercent}%)"
+                    } else {
+                        "Continuar tarea"
+                    }
+                    ghost += ghostAction(activity, resumeLabel) {
+                        NexoAiController.selectConversation(convId)
+                        scope = "long_agent"
+                        renderScopeAndReasoning()
+                        val nextHint = activeTaskForConv.nextStep.takeIf { it.isNotBlank() }?.let { " Siguiente paso: $it." }.orEmpty()
+                        dispatchPrompt(
+                            "Continúa la tarea pendiente desde el último hito (${activeTaskForConv.lastCheckpoint}).$nextHint",
+                            "continuar_tarea",
+                            "long_agent"
+                        )
+                    }
+                }
                 msg.actions.forEach { act ->
                     ghost += ghostAction(activity, act.label) { NexoAiPageAgent.confirmAndExecuteAction(activity, act, msg.pageBinding) }
                 }
@@ -944,7 +994,8 @@ object NexoAiSheet {
 
             // Actualización incremental durante streaming SSE (evita removeAllViews cada 60 ms: PERF-3).
             val lastMsg = msgs.lastOrNull()
-            val structureKey = "${conv?.id}|${msgs.size}|${msgs.joinToString(",") { "${it.id}:${it.status}:${it.actions.size}" }}"
+            val taskSig = snap.activeTaskForCurrentConversation?.let { "${it.progressPercent}:${it.completed}:${it.stepsExecuted}" }.orEmpty()
+            val structureKey = "${conv?.id}|${msgs.size}|$taskSig|${msgs.joinToString(",") { "${it.id}:${it.status}:${it.actions.size}" }}"
             val renderKey = "$structureKey|${lastMsg?.text?.length}|${lastMsg?.agentSteps?.size}"
 
             if (structureKey == lastStructureKey &&
@@ -955,7 +1006,11 @@ object NexoAiSheet {
             ) {
                 activeStreamingStepsBox?.let { renderAgentStepsInto(it, lastMsg.agentSteps, inFlight = true) }
                 activeStreamingStatusView?.let { sv ->
-                    val statusTxt = if (lastMsg.scope == "agent") "Agente trabajando…" else "Escribiendo…"
+                    val statusTxt = when (lastMsg.scope) {
+                        "long_agent" -> "Ejecutando tarea larga…"
+                        "agent" -> "Agente trabajando…"
+                        else -> "Escribiendo…"
+                    }
                     sv.text = "${(lastMsg.model ?: "Nexo").substringAfterLast('/')} · $statusTxt"
                     sv.visibility = View.VISIBLE
                 }
@@ -970,8 +1025,18 @@ object NexoAiSheet {
                 activeStreamingStatusView = null
                 messagesBox.removeAllViews()
                 if (conv != null) {
+                    val activeTask = snap.activeTaskForCurrentConversation
                     msgs.forEachIndexed { i, m ->
-                        messagesBox.addView(buildMessageBubble(m, conv.id, first = i == 0))
+                        val latestAssistant = i == msgs.lastIndex && m.role == NexoAiModels.Role.ASSISTANT
+                        messagesBox.addView(
+                            buildMessageBubble(
+                                msg = m,
+                                convId = conv.id,
+                                first = i == 0,
+                                activeTaskForConv = activeTask,
+                                isLatestAssistant = latestAssistant
+                            )
+                        )
                     }
                 }
             }
@@ -1055,6 +1120,13 @@ object NexoAiSheet {
                 renderScopeAndReasoning()
                 renderTabs()
                 Toastish.show(activity, "Modo Agente en vivo activado.")
+            },
+            onSelectLongTaskMode = {
+                scope = "long_agent"
+                activeTab = Tab.CHAT
+                renderScopeAndReasoning()
+                renderTabs()
+                Toastish.show(activity, "Modo Tarea larga activado (hasta 20 pasos con hitos).")
             },
             onSelectQuickChat = {
                 scope = "page"
