@@ -1,6 +1,7 @@
 package com.nexo.browser
 
 import android.app.Activity
+import android.content.Context
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
@@ -47,21 +48,29 @@ data class ListRow(
  * (botones planos con ripple, campos tipo píldora, tarjetas redondeadas).
  */
 object ThemeManager {
-    private fun resolvedTheme(activity: Activity): String {
-        val selected = BrowserPrefs.theme(activity)
-        if (selected != BrowserPrefs.THEME_SYSTEM) return selected
-        val night = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-        return if (night == Configuration.UI_MODE_NIGHT_YES) {
-            BrowserPrefs.THEME_MIDNIGHT
-        } else BrowserPrefs.THEME_LIGHT
+    /** Indica si el sistema Android está actualmente en modo oscuro. */
+    fun isSystemDark(context: Context, config: Configuration? = null): Boolean {
+        val cfg = config ?: context.resources.configuration
+        return (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     }
 
-    fun isDark(activity: Activity): Boolean =
-        resolvedTheme(activity) != BrowserPrefs.THEME_LIGHT
+    /** Resuelve el tema efectivo (en «Seguir sistema» usa Obsidian de noche y Paper de día). */
+    fun resolvedTheme(activity: Activity, config: Configuration? = null): String {
+        val selected = BrowserPrefs.theme(activity)
+        if (selected != BrowserPrefs.THEME_SYSTEM) return selected
+        return if (isSystemDark(activity, config)) {
+            BrowserPrefs.THEME_MIDNIGHT
+        } else {
+            BrowserPrefs.THEME_LIGHT
+        }
+    }
 
-    /** Identifica tema + acento: si cambia, hay que recrear la Activity. */
-    fun themeKey(activity: Activity): String =
-        resolvedTheme(activity) + "|" + accentColor(activity)
+    fun isDark(activity: Activity, config: Configuration? = null): Boolean =
+        resolvedTheme(activity, config) != BrowserPrefs.THEME_LIGHT
+
+    /** Identifica tema + acento: si cambia, hay que actualizar o recrear la Activity. */
+    fun themeKey(activity: Activity, config: Configuration? = null): String =
+        resolvedTheme(activity, config) + "|" + accentColor(activity)
 
     private fun accentColor(activity: Activity): Int = accentSeed(BrowserPrefs.accent(activity))
 
@@ -89,8 +98,8 @@ object ThemeManager {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaletteKey, BrowserPalette>?): Boolean = size > 16
     }
 
-    fun palette(activity: Activity): BrowserPalette {
-        val key = PaletteKey(resolvedTheme(activity), accentColor(activity))
+    fun palette(activity: Activity, config: Configuration? = null): BrowserPalette {
+        val key = PaletteKey(resolvedTheme(activity, config), accentColor(activity))
         return synchronized(palettes) {
             palettes.getOrPut(key) {
                 BrowserColors.create(key.seed, key.mode != BrowserPrefs.THEME_LIGHT, key.mode == BrowserPrefs.THEME_OLED)
@@ -98,8 +107,8 @@ object ThemeManager {
         }
     }
 
-    fun themeRes(activity: Activity): Int {
-        val dark = isDark(activity)
+    fun themeRes(activity: Activity, config: Configuration? = null): Int {
+        val dark = isDark(activity, config)
         return when (BrowserPrefs.accent(activity)) {
             BrowserPrefs.ACCENT_SIGNAL -> if (dark) R.style.Theme_Nexo_Dark_Signal else R.style.Theme_Nexo_Light_Signal
             BrowserPrefs.ACCENT_COBALT -> if (dark) R.style.Theme_Nexo_Dark_Cobalt else R.style.Theme_Nexo_Light_Cobalt
@@ -110,13 +119,13 @@ object ThemeManager {
     }
 
     /**
-     * Llamar ANTES de super.onCreate(): fija el tema de Android (claro/oscuro
-     * + acento) y los colores de las barras del sistema.
+     * Llamar ANTES de super.onCreate() (o al recibir onConfigurationChanged): fija el tema de Android
+     * (claro/oscuro + acento) y los colores de las barras del sistema.
      */
-    fun applyWindow(activity: Activity) {
-        activity.setTheme(themeRes(activity))
+    fun applyWindow(activity: Activity, config: Configuration? = null) {
+        activity.setTheme(themeRes(activity, config))
 
-        val p = palette(activity)
+        val p = palette(activity, config)
         val window = activity.window
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT

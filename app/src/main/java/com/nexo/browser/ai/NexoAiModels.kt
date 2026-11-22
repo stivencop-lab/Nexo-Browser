@@ -137,6 +137,18 @@ object NexoAiModels {
         ERROR
     }
 
+    /** Estado persistente de una tarea larga multi-paso del Agente (reanudable tras pausa o checkpoint). */
+    data class AgentTask(
+        val conversationId: String,
+        val goal: String,
+        val progressPercent: Int,
+        val lastCheckpoint: String,
+        val nextStep: String,
+        val stepsExecuted: Int,
+        val completed: Boolean,
+        val updatedAtMs: Long
+    )
+
     /** Información de una petición activa independiente (incluye estado en vivo del Agente). */
     data class ActiveRequestInfo(
         val requestId: String,
@@ -146,9 +158,11 @@ object NexoAiModels {
         val provider: String,
         val startedAtMs: Long,
         val isAgent: Boolean = false,
+        val longTask: Boolean = false,
         val currentStepIndex: Int = 0,
         val maxSteps: Int = NexoAiAgent.MAX_AGENT_STEPS,
-        val currentStepLabel: String = ""
+        val currentStepLabel: String = "",
+        val progressPercent: Int? = null
     )
 
     /** Instantánea inmutable observada por la UI (panel, emblema Aperture y píldora minimizada). */
@@ -160,7 +174,8 @@ object NexoAiModels {
         val panelState: PanelState,
         val minimizedPillVisible: Boolean,
         val unreadReadyConversationId: String?,
-        val lastErrorSummary: String?
+        val lastErrorSummary: String?,
+        val activeTasks: List<AgentTask> = emptyList()
     ) {
         val activeConversation: AiConversation?
             get() = conversations.firstOrNull { it.id == activeConversationId } ?: conversations.firstOrNull()
@@ -171,6 +186,10 @@ object NexoAiModels {
         /** Petición del agente autónomo en ejecución sobre el navegador (si existe). */
         val activeAgentRequest: ActiveRequestInfo?
             get() = activeRequests.values.firstOrNull { it.isAgent }
+
+        /** Tarea larga asociada a la conversación activa (si existe). */
+        val activeTaskForCurrentConversation: AgentTask?
+            get() = activeTasks.firstOrNull { it.conversationId == activeConversationId }
 
         val anyGenerating: Boolean
             get() = activeRequests.isNotEmpty()

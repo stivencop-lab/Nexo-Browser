@@ -90,6 +90,7 @@ object NexoAiController {
     private var conversations: MutableList<NexoAiModels.AiConversation> = mutableListOf()
     private var activeConversationId: String = ""
     private val activeRequests = LinkedHashMap<String, NexoAiModels.ActiveRequestInfo>()
+    private val activeTasks = LinkedHashMap<String, NexoAiModels.AgentTask>()
     private var panelState: NexoAiModels.PanelState = NexoAiModels.PanelState.MINIMIZED
     private var minimizedPillVisible: Boolean = false
     private var unreadReadyConversationId: String? = null
@@ -129,6 +130,7 @@ object NexoAiController {
             activeHandles.values.forEach { it.cancel() }
             activeHandles.clear()
             activeRequests.clear()
+            activeTasks.clear()
             listeners.clear()
             appContext = null
             transport = testTransport
@@ -200,7 +202,8 @@ object NexoAiController {
             panelState = panelState,
             minimizedPillVisible = minimizedPillVisible,
             unreadReadyConversationId = unreadReadyConversationId,
-            lastErrorSummary = lastErrorSummary
+            lastErrorSummary = lastErrorSummary,
+            activeTasks = activeTasks.values.sortedByDescending { it.updatedAtMs }
         )
     }
 
@@ -296,6 +299,7 @@ object NexoAiController {
                 activeRequests.remove(reqId)
             }
             conversations.removeAt(idx)
+            activeTasks.remove(conversationId)
             if (conversations.isEmpty()) {
                 val fresh = createEmptyConversationLocked("")
                 conversations.add(fresh)
@@ -316,6 +320,7 @@ object NexoAiController {
             activeHandles.values.forEach { it.cancel() }
             activeHandles.clear()
             activeRequests.clear()
+            activeTasks.clear()
             conversations.clear()
             val fresh = createEmptyConversationLocked("")
             conversations.add(fresh)
@@ -491,8 +496,8 @@ object NexoAiController {
 
     /**
      * Ejecuta el **Modo Agente de Navegador** en bucle multi-paso acotado (`Observar → Herramienta → Actuar → Observar`,
-     * hasta [NexoAiAgent.MAX_AGENT_STEPS] pasos), publicando en tiempo real cada paso ejecutado y haciendo
-     * streaming de la respuesta final.
+     * hasta [maxSteps] pasos; 8 en modo estándar o 20 en tareas a largo plazo con hitos reanudables),
+     * publicando en tiempo real cada paso ejecutado, protegiendo contra bucles y haciendo streaming de la respuesta final.
      */
     fun sendAgentPrompt(
         settings: NexoAiConfig.Settings,
@@ -504,8 +509,11 @@ object NexoAiController {
         reasoningEffort: String? = null,
         preferStreaming: Boolean = true,
         conversationId: String? = null,
-        logLabel: String = "agente"
+        logLabel: String = "agente",
+        maxSteps: Int = NexoAiAgent.MAX_AGENT_STEPS,
+        longTask: Boolean = false
     ): String {
+        val effectiveMaxSteps = maxSteps.coerceIn(1, NexoAiAgent.MAX_LONG_TASK_STEPS)
         val now = System.currentTimeMillis()
         val requestId = "req_${UUID.randomUUID().toString().take(12)}"
         val userMsgId = "msg_u_${UUID.randomUUID().toString().take(10)}"
@@ -519,12 +527,37 @@ object NexoAiController {
             now = now,
             settings = settings,
             userTask = userTask,
-            scope = "agent",
+            scope = if (longTask) "long_agent" else "agent",
             pageBinding = pageBinding,
             reasoningEffort = reasoningEffort,
             conversationId = conversationId,
             cancelHandle = cancelHandle
         )
+
+        if (longTask) {
+            val taskSnap = synchronized(lock) {
+                activeTasks[targetConvId] = NexoAiModels.AgentTask(
+                    conversationId = targetConvId,
+                    goal = userTask.trim().take(160),
+                    progressPercent = 5,
+                    lastCheckpoint = "Iniciando tarea de largo plazo…",
+                    nextStep = "Planificar y recopilar información inicial",
+                    stepsExecuted = 0,
+                    completed = false,
+                    updatedAtMs = now
+                )
+                activeRequests[requestId]?.let { req ->
+                    activeRequests[requestId] = req.copy(
+                        isAgent = true,
+                        longTask = true,
+                        maxSteps = effectiveMaxSteps,
+                        progressPercent = 5
+                    )
+                }
+                buildSnapshotLocked()
+            }
+            notifyListeners(taskSnap)
+        }
 
         val logHost = pageBinding?.host.orEmpty()
         val ctxForLog = appContext
@@ -533,12 +566,20 @@ object NexoAiController {
             val steps = mutableListOf<NexoAiModels.AgentStep>()
             val pendingActions = mutableListOf<NexoAiClient.ProposedAction>()
             val loopHistory = baseHistory.toMutableList()
-            var currentTask = userTask
+            var currentTask = if (longTask) {
+                "TAREA A LARGO PLAZO (hasta $effectiveMaxSteps pasos; usa `task_checkpoint` cada pocos pasos para guardar hitos y progreso):\n$userTask"
+            } else userTask
             var currentContext = initialContext
             var finalResult: Result<NexoAiClient.AiResponse>? = null
             var lastStream = ""
+            var lastToolSignature = ""
+            var repeatedToolCount = 0
+            var reachedStepCap = false
+            var lastCheckpointText = ""
+            var lastNextStep = ""
+            var currentProgress: Int? = if (longTask) 5 else null
 
-            for (stepIdx in 1..NexoAiAgent.MAX_AGENT_STEPS) {
+            for (stepIdx in 1..effectiveMaxSteps) {
                 if (cancelHandle.isCancelled) break
                 val stepStream = StringBuilder()
                 var lastEmit = 0L
@@ -548,9 +589,11 @@ object NexoAiController {
                     activeRequests[requestId]?.let { req ->
                         activeRequests[requestId] = req.copy(
                             isAgent = true,
+                            longTask = longTask,
                             currentStepIndex = stepIdx,
-                            maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
-                            currentStepLabel = if (stepIdx == 1) "Planificando acciones…" else "Analizando paso $stepIdx…"
+                            maxSteps = effectiveMaxSteps,
+                            currentStepLabel = if (stepIdx == 1) "Planificando acciones…" else "Analizando paso $stepIdx…",
+                            progressPercent = currentProgress
                         )
                     }
                     buildSnapshotLocked()
@@ -594,12 +637,56 @@ object NexoAiController {
                 }
 
                 val aiResp = turnResult.getOrThrow()
-                val toolCall = NexoAiAgent.parseToolCall(aiResp.text)
-                if (toolCall == null || stepIdx == NexoAiAgent.MAX_AGENT_STEPS) {
+                val toolCall = NexoAiAgent.parseToolCall(aiResp.text, logHost)
+                if (toolCall == null) {
                     val cleanedFinal = NexoAiRichContent.stripInternalBlocks(aiResp.text)
                         .ifBlank { aiResp.text }
                     finalResult = Result.success(aiResp.copy(text = cleanedFinal))
                     break
+                }
+                if (stepIdx == effectiveMaxSteps) {
+                    reachedStepCap = true
+                    val cleanedPartial = NexoAiRichContent.stripInternalBlocks(aiResp.text).trim()
+                    val checkpointNote = buildString {
+                        if (cleanedPartial.isNotBlank()) {
+                            appendLine(cleanedPartial)
+                            appendLine()
+                        }
+                        append("### Hito de tarea alcanzado ($effectiveMaxSteps pasos)\n")
+                        if (lastCheckpointText.isNotBlank()) appendLine("- **Último avance:** $lastCheckpointText")
+                        if (lastNextStep.isNotBlank()) appendLine("- **Siguiente paso sugerido:** $lastNextStep")
+                        append("Pulsa **Continuar tarea** cuando quieras que siga desde este punto.")
+                    }
+                    finalResult = Result.success(aiResp.copy(text = checkpointNote))
+                    break
+                }
+
+                // Protección anti-bucle: impide que una página maliciosa repita la misma herramienta sin fin.
+                val signature = "${toolCall.tool}|${toolCall.args.entries.sortedBy { it.key }.joinToString("&") { "${it.key}=${it.value}" }}"
+                if (signature == lastToolSignature) {
+                    repeatedToolCount++
+                } else {
+                    lastToolSignature = signature
+                    repeatedToolCount = 1
+                }
+                if (repeatedToolCount > 2) {
+                    val loopOutcome = NexoAiAgent.ToolOutcome(
+                        false,
+                        "Bucle repetido detenido (${toolCall.tool})",
+                        "Esta misma llamada se repitió sin cambios. Cambia de estrategia o entrega ya tu respuesta final al usuario."
+                    )
+                    steps += NexoAiModels.AgentStep(toolCall.tool, loopOutcome.summary, ok = false)
+                    if (repeatedToolCount >= 4) {
+                        finalResult = Result.success(
+                            aiResp.copy(
+                                text = "El agente detuvo una repetición automática de `${toolCall.tool}` por seguridad. Puedes indicar el siguiente paso si deseas continuar."
+                            )
+                        )
+                        break
+                    }
+                    currentTask = NexoAiAgent.wrapToolObservation(toolCall, loopOutcome, stepIdx, effectiveMaxSteps)
+                    currentContext = ""
+                    continue
                 }
 
                 // Mostrar paso en curso en la UI (sheet + HUD flotante en vivo) antes de ejecutarlo
@@ -609,9 +696,11 @@ object NexoAiController {
                     activeRequests[requestId]?.let { req ->
                         activeRequests[requestId] = req.copy(
                             isAgent = true,
+                            longTask = longTask,
                             currentStepIndex = stepIdx,
-                            maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
-                            currentStepLabel = "${toolCall.reason}…"
+                            maxSteps = effectiveMaxSteps,
+                            currentStepLabel = "${toolCall.reason}…",
+                            progressPercent = currentProgress
                         )
                     }
                     if (panelState == NexoAiModels.PanelState.MINIMIZED) {
@@ -634,14 +723,39 @@ object NexoAiController {
                 steps += NexoAiModels.AgentStep(toolCall.tool, outcome.summary, outcome.ok)
                 outcome.pendingAction?.let { pendingActions += it }
 
+                if (toolCall.tool == "task_checkpoint") {
+                    currentProgress = toolCall.args["progress"]?.toIntOrNull()?.coerceIn(0, 100) ?: currentProgress
+                    lastCheckpointText = toolCall.args["completed"].orEmpty().ifBlank { outcome.summary }
+                    lastNextStep = toolCall.args["next_step"].orEmpty()
+                } else if (longTask) {
+                    val est = ((stepIdx.toFloat() / effectiveMaxSteps.toFloat()) * 90f).toInt().coerceIn(5, 92)
+                    currentProgress = maxOf(currentProgress ?: 5, est)
+                    lastCheckpointText = outcome.summary
+                }
+
                 val stepDoneSnap = synchronized(lock) {
                     if (controllerGeneration != launchGen) return@synchronized null
                     activeRequests[requestId]?.let { req ->
                         activeRequests[requestId] = req.copy(
                             isAgent = true,
+                            longTask = longTask,
                             currentStepIndex = stepIdx,
-                            maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
-                            currentStepLabel = outcome.summary
+                            maxSteps = effectiveMaxSteps,
+                            currentStepLabel = outcome.summary,
+                            progressPercent = currentProgress
+                        )
+                    }
+                    if (longTask || toolCall.tool == "task_checkpoint") {
+                        val existing = activeTasks[targetConvId]
+                        activeTasks[targetConvId] = NexoAiModels.AgentTask(
+                            conversationId = targetConvId,
+                            goal = toolCall.args["goal"]?.takeIf { it.isNotBlank() } ?: existing?.goal ?: userTask.trim().take(160),
+                            progressPercent = currentProgress ?: 50,
+                            lastCheckpoint = lastCheckpointText.ifBlank { outcome.summary },
+                            nextStep = lastNextStep,
+                            stepsExecuted = steps.size,
+                            completed = false,
+                            updatedAtMs = System.currentTimeMillis()
                         )
                     }
                     updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
@@ -661,8 +775,27 @@ object NexoAiController {
                     loopHistory += "user" to currentTask
                 }
                 loopHistory += "assistant" to "Ejecuté la herramienta ${toolCall.tool} (${toolCall.reason})."
-                currentTask = NexoAiAgent.wrapToolObservation(toolCall, outcome, stepIdx)
+                currentTask = NexoAiAgent.wrapToolObservation(toolCall, outcome, stepIdx, effectiveMaxSteps)
                 currentContext = ""
+            }
+
+            if (longTask || activeTasks.containsKey(targetConvId)) {
+                synchronized(lock) {
+                    if (controllerGeneration == launchGen) {
+                        val existing = activeTasks[targetConvId]
+                        if (existing != null) {
+                            val finishedCleanly = !cancelHandle.isCancelled && !reachedStepCap && finalResult?.isSuccess == true
+                            activeTasks[targetConvId] = existing.copy(
+                                progressPercent = if (finishedCleanly) 100 else (currentProgress ?: existing.progressPercent),
+                                lastCheckpoint = if (finishedCleanly) "Tarea completada" else lastCheckpointText.ifBlank { existing.lastCheckpoint },
+                                nextStep = if (finishedCleanly) "" else lastNextStep,
+                                stepsExecuted = steps.size,
+                                completed = finishedCleanly,
+                                updatedAtMs = System.currentTimeMillis()
+                            )
+                        }
+                    }
+                }
             }
 
             completeTurn(
@@ -758,6 +891,8 @@ object NexoAiController {
             }
 
             activeHandles[requestId] = cancelHandle
+            val isAgentScope = scope == "agent" || scope == "long_agent"
+            val isLongScope = scope == "long_agent"
             activeRequests[requestId] = NexoAiModels.ActiveRequestInfo(
                 requestId = requestId,
                 conversationId = targetConvId,
@@ -765,10 +900,11 @@ object NexoAiController {
                 model = effectiveModel,
                 provider = settings.provider,
                 startedAtMs = now,
-                isAgent = scope == "agent",
-                currentStepIndex = if (scope == "agent") 1 else 0,
-                maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
-                currentStepLabel = if (scope == "agent") "Iniciando agente…" else ""
+                isAgent = isAgentScope,
+                longTask = isLongScope,
+                currentStepIndex = if (isAgentScope) 1 else 0,
+                maxSteps = if (isLongScope) NexoAiAgent.MAX_LONG_TASK_STEPS else NexoAiAgent.MAX_AGENT_STEPS,
+                currentStepLabel = if (isLongScope) "Iniciando tarea larga…" else if (isAgentScope) "Iniciando agente…" else ""
             )
             lastErrorSummary = null
             persistLocked()

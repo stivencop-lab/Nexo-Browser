@@ -34,6 +34,7 @@ internal class NexoAiSidebarDrawer(
     private val onNewChat: () -> Unit,
     private val onSelectConversation: (String) -> Unit,
     private val onSelectAgentMode: () -> Unit,
+    private val onSelectLongTaskMode: () -> Unit,
     private val onSelectQuickChat: () -> Unit,
     private val onSelectTab: (NexoAiSheet.Tab) -> Unit,
     private val onClose: () -> Unit
@@ -192,16 +193,39 @@ internal class NexoAiSidebarDrawer(
         // 1. Modos y herramientas del panel izquierdo
         modesBox.removeAllViews()
         val agentRunning = snap.activeAgentRequest != null
-        val agentActive = (tab == NexoAiSheet.Tab.CHAT && scope == "agent") || agentRunning
+        val longRunning = snap.activeAgentRequest?.longTask == true
+        val agentActive = (tab == NexoAiSheet.Tab.CHAT && scope == "agent") || (agentRunning && !longRunning)
+        val longActive = (tab == NexoAiSheet.Tab.CHAT && scope == "long_agent") || longRunning
         modesBox.addView(navRow(
             icon = R.drawable.ic_nexo_aperture,
             title = "Agente en vivo",
-            subtitle = if (agentRunning) snap.activeAgentRequest?.currentStepLabel?.ifBlank { "Controlando navegador…" } else "Controla pestañas y páginas",
-            badge = if (agentRunning) "En vivo" else if (agentActive) "Activo" else null,
-            badgeTone = if (agentRunning) NexoUi.Tone.SUCCESS else NexoUi.Tone.ACCENT,
+            subtitle = if (agentRunning && !longRunning) snap.activeAgentRequest?.currentStepLabel?.ifBlank { "Controlando navegador…" } else "Navega, volumen, medios y pestañas",
+            badge = if (agentRunning && !longRunning) "En vivo" else if (agentActive) "Activo" else null,
+            badgeTone = if (agentRunning && !longRunning) NexoUi.Tone.SUCCESS else NexoUi.Tone.ACCENT,
             selected = agentActive
         ) {
             onSelectAgentMode()
+            onClose()
+        })
+        val openTasksCount = snap.activeTasks.count { !it.completed }
+        modesBox.addView(navRow(
+            icon = R.drawable.ic_menu_workspace,
+            title = "Tareas largas (20 pasos)",
+            subtitle = when {
+                longRunning -> snap.activeAgentRequest?.let { "${it.progressPercent ?: 0}% · ${it.currentStepLabel}" }
+                openTasksCount > 0 -> "$openTasksCount tarea(s) con progreso guardado"
+                else -> "Investigación multi-paso con hitos"
+            },
+            badge = when {
+                longRunning -> "En curso"
+                openTasksCount > 0 -> "$openTasksCount"
+                longActive -> "Activo"
+                else -> null
+            },
+            badgeTone = if (longRunning) NexoUi.Tone.SUCCESS else NexoUi.Tone.INFO,
+            selected = longActive
+        ) {
+            onSelectLongTaskMode()
             onClose()
         })
         modesBox.addView(navRow(
@@ -210,7 +234,7 @@ internal class NexoAiSidebarDrawer(
             subtitle = null,
             badge = null,
             badgeTone = NexoUi.Tone.NEUTRAL,
-            selected = tab == NexoAiSheet.Tab.CHAT && scope != "agent"
+            selected = tab == NexoAiSheet.Tab.CHAT && scope != "agent" && scope != "long_agent"
         ) {
             onSelectQuickChat()
             onClose()
@@ -237,6 +261,31 @@ internal class NexoAiSidebarDrawer(
             onSelectTab(NexoAiSheet.Tab.SETTINGS)
             onClose()
         })
+
+        // 2. Tareas largas activas/reanudables (si existen)
+        val pendingTasks = snap.activeTasks.filter { !it.completed }.take(3)
+        if (pendingTasks.isNotEmpty()) {
+            modesBox.addView(TextView(activity).apply {
+                text = "Tareas en progreso"
+                textSize = 11.5f
+                typeface = NexoUi.semiBold(activity)
+                setTextColor(p.muted)
+                setPadding(dp(6f), dp(8f), dp(6f), dp(2f))
+            })
+            for (task in pendingTasks) {
+                modesBox.addView(navRow(
+                    icon = R.drawable.ic_menu_play,
+                    title = task.goal,
+                    subtitle = "${task.progressPercent}% · ${task.lastCheckpoint}",
+                    badge = "${task.progressPercent}%",
+                    badgeTone = NexoUi.Tone.ACCENT,
+                    selected = task.conversationId == snap.activeConversationId
+                ) {
+                    onSelectConversation(task.conversationId)
+                    onClose()
+                })
+            }
+        }
 
         // 2. Historial de conversaciones
         val saved = snap.conversations.count { it.messages.isNotEmpty() }
