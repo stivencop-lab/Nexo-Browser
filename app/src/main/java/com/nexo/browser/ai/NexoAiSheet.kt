@@ -138,9 +138,11 @@ object NexoAiSheet {
         var activeStreamingRichBox: LinearLayout? = null
         var activeStreamingStepsBox: LinearLayout? = null
         var activeStreamingStatusView: TextView? = null
+        var autoMinimizedRequestId: String? = null
 
         lateinit var sheetHandle: NexoSheets.AdaptiveSheetHandle
         lateinit var bodyScroll: ScrollView
+        lateinit var sidebarDrawer: NexoAiSidebarDrawer
 
         val pageHost = runCatching { android.net.Uri.parse(TabManager.activeTab()?.url.orEmpty()).host }
             .getOrNull()?.trim()?.lowercase(Locale.ROOT).orEmpty()
@@ -149,7 +151,7 @@ object NexoAiSheet {
             bodyScroll.post { bodyScroll.fullScroll(View.FOCUS_DOWN) }
         }
 
-        // ==================== CABECERA COMPACTA + HISTORIAL + NUEVO CHAT ====================
+        // ==================== CABECERA COMPACTA + PANEL LATERAL + NUEVO CHAT ====================
         val header = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -158,11 +160,11 @@ object NexoAiSheet {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12f), dp(2f), dp(8f), dp(6f))
         }
-        val historyBtn = ImageButton(activity).apply {
-            setImageResource(R.drawable.ic_menu_history)
-            contentDescription = "Historial de chats de Nexo AI"
+        val sidebarBtn = ImageButton(activity).apply {
+            setImageResource(R.drawable.ic_ai_sidebar)
+            contentDescription = "Abrir panel lateral con historial y modos de Nexo AI"
             ThemeManager.styleIconButton(activity, this)
-            setOnClickListener { NexoAiHistorySheet.show(activity, pageHost) }
+            setOnClickListener { sheetHandle.toggleDrawer() }
         }
         // Emblema Aperture desnudo (sin caja ni borde de color); respira durante el streaming.
         val headerAperture = com.nexo.browser.NexoApertureDrawable(activity, 20f).apply { setColor(p.text) }
@@ -216,7 +218,7 @@ object NexoAiSheet {
             setOnClickListener { sheetHandle.dismissAnimated() }
         }
 
-        headerRow.addView(historyBtn, LinearLayout.LayoutParams(dp(44f), dp(48f)))
+        headerRow.addView(sidebarBtn, LinearLayout.LayoutParams(dp(44f), dp(48f)))
         headerRow.addView(brandBadge, LinearLayout.LayoutParams(dp(24f), dp(24f)))
         headerRow.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         headerRow.addView(newChatBtn, LinearLayout.LayoutParams(dp(42f), dp(48f)))
@@ -407,6 +409,7 @@ object NexoAiSheet {
                     if (item.itemId < 10) scope = scopes[item.itemId].first
                     else reasoningEffort = listOf(null, "low", "medium", "high")[item.itemId - 10]
                     renderScopeAndReasoning()
+                    sidebarDrawer.render(NexoAiController.snapshot(), activeTab, scope)
                     true
                 }
                 menu.show()
@@ -431,6 +434,7 @@ object NexoAiSheet {
                     benchmarkView.visibility = View.GONE
                     settingsContainer.visibility = View.GONE
                     footer.visibility = View.VISIBLE
+                    sidebarDrawer.render(NexoAiController.snapshot(), activeTab, scope)
                 }
             )
         }
@@ -450,6 +454,7 @@ object NexoAiSheet {
             benchmarkView.visibility = if (activeTab == Tab.BENCHMARK) View.VISIBLE else View.GONE
             settingsContainer.visibility = if (activeTab == Tab.SETTINGS) View.VISIBLE else View.GONE
             footer.visibility = if (activeTab == Tab.CHAT) View.VISIBLE else View.GONE
+            sidebarDrawer.render(NexoAiController.snapshot(), activeTab, scope)
         }
 
         // Ejecutar consulta contextual, agente multi-paso o libre delegando al controlador persistente
@@ -645,6 +650,10 @@ object NexoAiSheet {
                 visibility = if (expanded) View.VISIBLE else View.GONE
                 setPadding(0, dp(6f), 0, 0)
             }
+            val titleRow = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
             val titleView = TextView(activity).apply {
                 val countLbl = if (steps.size == 1) "1 paso del agente" else "${steps.size} pasos del agente"
                 text = (if (inFlight) "● $countLbl…" else "$countLbl") + if (expanded) " ▴" else " ▾"
@@ -656,6 +665,25 @@ object NexoAiSheet {
                     listWrap.visibility = if (expanded) View.VISIBLE else View.GONE
                     text = (if (inFlight) "● $countLbl…" else "$countLbl") + if (expanded) " ▴" else " ▾"
                 }
+            }
+            titleRow.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (inFlight) {
+                titleRow.addView(TextView(activity).apply {
+                    text = "Ver en vivo"
+                    textSize = 11.5f
+                    typeface = NexoUi.medium(activity)
+                    setTextColor(p.onAccent)
+                    setPadding(dp(10f), dp(4f), dp(10f), dp(4f))
+                    background = ThemeManager.ripple(
+                        activity,
+                        ThemeManager.rounded(activity, p.accent, NexoUi.Tokens.RADIUS_PILL),
+                        NexoUi.Tokens.RADIUS_PILL
+                    )
+                    contentDescription = "Minimizar panel y ver al agente controlar el navegador en vivo"
+                    setOnClickListener { sheetHandle.dismissAnimated() }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginStart = dp(8f)
+                })
             }
             steps.forEach { st ->
                 val row = LinearLayout(activity).apply {
@@ -678,7 +706,7 @@ object NexoAiSheet {
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 listWrap.addView(row)
             }
-            card.addView(titleView)
+            card.addView(titleRow)
             card.addView(listWrap)
             box.addView(card)
         }
@@ -868,8 +896,9 @@ object NexoAiSheet {
 
             val conv = snap.activeConversation
             headerTitle.text = if (conv != null && conv.messages.isNotEmpty()) conv.title else "Nexo AI"
+            sidebarDrawer.render(snap, activeTab, scope)
 
-            // Carril de conversaciones persistentes (acceso rápido a recientes + todos los chats)
+            // Carril de conversaciones persistentes (acceso rápido + botón para abrir panel lateral izquierdo)
             threadRail.removeAllViews()
             threadRail.addView(NexoUi.chip(activity, "+ Nuevo", false) {
                 NexoAiController.newConversation(pageHost)
@@ -877,9 +906,9 @@ object NexoAiSheet {
                 marginEnd = dp(6f)
             })
             val savedCount = snap.conversations.count { it.messages.isNotEmpty() }
-            threadRail.addView(NexoUi.chip(activity, if (savedCount > 0) "Chats ($savedCount)" else "Historial", false) {
-                NexoAiHistorySheet.show(activity, pageHost)
-            }.apply { contentDescription = "Ver, buscar y gestionar conversaciones" }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            threadRail.addView(NexoUi.chip(activity, if (savedCount > 0) "Panel ($savedCount)" else "Panel", false) {
+                sheetHandle.openDrawer()
+            }.apply { contentDescription = "Abrir panel lateral de historial y modos" }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6f)
             })
             val orderedChats = snap.conversations
@@ -947,6 +976,20 @@ object NexoAiSheet {
                 }
             }
 
+            // Cuando el agente inicia una acción visual sobre el navegador, minimizar una sola vez al HUD flotante en vivo.
+            val runningAgent = snap.activeAgentRequest
+            val latestStep = lastMsg?.agentSteps?.lastOrNull()
+            if (runningAgent != null &&
+                latestStep != null &&
+                NexoAiAgent.isVisualBrowserTool(latestStep.tool) &&
+                autoMinimizedRequestId != runningAgent.requestId &&
+                sheetHandle.dialog.isShowing &&
+                !sheetHandle.isDrawerOpen
+            ) {
+                autoMinimizedRequestId = runningAgent.requestId
+                sheetHandle.dismissAnimated()
+            }
+
             if (renderKey != lastRenderedKey && msgs.isNotEmpty()) {
                 lastRenderedKey = renderKey
                 if (activeTab == Tab.CHAT) scrollToBottom()
@@ -994,6 +1037,43 @@ object NexoAiSheet {
 
         expandBtn.setOnClickListener { applyExpandedState(!isExpanded, animated = true) }
 
+        sidebarDrawer = NexoAiSidebarDrawer(
+            activity = activity,
+            onNewChat = {
+                NexoAiController.newConversation(pageHost)
+                activeTab = Tab.CHAT
+                renderTabs()
+            },
+            onSelectConversation = { convId ->
+                NexoAiController.selectConversation(convId)
+                activeTab = Tab.CHAT
+                renderTabs()
+            },
+            onSelectAgentMode = {
+                scope = "agent"
+                activeTab = Tab.CHAT
+                renderScopeAndReasoning()
+                renderTabs()
+                Toastish.show(activity, "Modo Agente en vivo activado.")
+            },
+            onSelectQuickChat = {
+                scope = "page"
+                activeTab = Tab.CHAT
+                renderScopeAndReasoning()
+                renderTabs()
+            },
+            onSelectTab = { tab ->
+                activeTab = tab
+                if (tab == Tab.SETTINGS) refreshSettingsForm()
+                if (tab == Tab.BENCHMARK) benchmarkView.refreshConfig()
+                renderTabs()
+            },
+            onClose = { sheetHandle.closeDrawer() }
+        )
+
+        // Si el usuario reabre el panel manualmente mientras un agente ya corre, no volver a minimizarlo automáticamente.
+        autoMinimizedRequestId = NexoAiController.snapshot().activeAgentRequest?.requestId
+
         refreshHeader()
         renderScopeAndReasoning()
         renderSetupBanner()
@@ -1009,7 +1089,8 @@ object NexoAiSheet {
             initialExpanded = isExpanded,
             onExpandGesture = {
                 if (!isExpanded) applyExpandedState(true, animated = true)
-            }
+            },
+            leftDrawerView = sidebarDrawer.view
         )
         bodyScroll = sheetHandle.scrollView
         // La web queda detrás desenfocada (blur-behind de la ventana) y escalada al 96 %.

@@ -396,6 +396,40 @@
     return { ok: false, error: 'Selector u opción no encontrada.' };
   }
 
+  /** Resalta brevemente el elemento sobre el que actúa el agente en vivo. */
+  function flashAgentTarget(doc, win, el) {
+    try {
+      if (!doc || !doc.createElement || !doc.body || typeof el.getBoundingClientRect !== 'function') return;
+      const rect = el.getBoundingClientRect();
+      if (!rect || (rect.width <= 0 && rect.height <= 0)) return;
+      const ring = doc.createElement('div');
+      ring.setAttribute('data-nexo-agent-pulse', '1');
+      ring.style.cssText = [
+        'position:fixed',
+        'left:' + Math.max(0, rect.left - 4) + 'px',
+        'top:' + Math.max(0, rect.top - 4) + 'px',
+        'width:' + Math.max(16, rect.width + 8) + 'px',
+        'height:' + Math.max(16, rect.height + 8) + 'px',
+        'border:2px solid #2563EB',
+        'background:rgba(37,99,235,0.14)',
+        'border-radius:10px',
+        'box-sizing:border-box',
+        'pointer-events:none',
+        'z-index:2147483647',
+        'transition:opacity 0.35s ease'
+      ].join(';');
+      doc.body.appendChild(ring);
+      if (win && typeof win.setTimeout === 'function') {
+        win.setTimeout(function () {
+          try { ring.style.opacity = '0'; } catch (_) {}
+          win.setTimeout(function () {
+            try { if (ring.parentNode) ring.parentNode.removeChild(ring); } catch (_) {}
+          }, 360);
+        }, 480);
+      }
+    } catch (_) {}
+  }
+
   /** Pulsa de forma segura un enlace o botón visible (rechaza formularios sensibles y controles ocultos). */
   function clickElement(doc, win, target) {
     const raw = String(target || '').trim();
@@ -424,6 +458,7 @@
     }
     try {
       if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      flashAgentTarget(doc, win, el);
       if (typeof el.click === 'function') el.click();
       return { ok: true, clicked: (visibleSubtreeText(el, win, 60) || raw).slice(0, 60) };
     } catch (_) {

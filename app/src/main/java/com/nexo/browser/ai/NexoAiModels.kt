@@ -137,14 +137,18 @@ object NexoAiModels {
         ERROR
     }
 
-    /** Información de una petición activa independiente. */
+    /** Información de una petición activa independiente (incluye estado en vivo del Agente). */
     data class ActiveRequestInfo(
         val requestId: String,
         val conversationId: String,
         val assistantMessageId: String,
         val model: String,
         val provider: String,
-        val startedAtMs: Long
+        val startedAtMs: Long,
+        val isAgent: Boolean = false,
+        val currentStepIndex: Int = 0,
+        val maxSteps: Int = NexoAiAgent.MAX_AGENT_STEPS,
+        val currentStepLabel: String = ""
     )
 
     /** Instantánea inmutable observada por la UI (panel, emblema Aperture y píldora minimizada). */
@@ -163,6 +167,10 @@ object NexoAiModels {
 
         val activeRequestForCurrentConversation: ActiveRequestInfo?
             get() = activeRequests.values.firstOrNull { it.conversationId == activeConversationId }
+
+        /** Petición del agente autónomo en ejecución sobre el navegador (si existe). */
+        val activeAgentRequest: ActiveRequestInfo?
+            get() = activeRequests.values.firstOrNull { it.isAgent }
 
         val anyGenerating: Boolean
             get() = activeRequests.isNotEmpty()

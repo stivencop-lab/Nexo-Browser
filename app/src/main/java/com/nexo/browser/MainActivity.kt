@@ -305,11 +305,13 @@ class MainActivity :
         topOverlay.setPadding(0, top, 0, 0)
         bottomChrome.setPadding(0, 0, 0, if (hideBars) 0 else bottomInset + NexoUi.dp(this, 2f))
         val startVisible = startPage.visibility == View.VISIBLE
-        // Página: bajo la barra de estado; por detrás del cromo Liquid; sobre el teclado.
+        // Página: bajo la barra de estado; por detrás del cromo Liquid; sobre el teclado (solo para campos web, no al escribir en omnibox/buscar).
+        val nativeEditing = (::omnibox.isInitialized && omnibox.hasFocus()) ||
+            (::findInput.isInitialized && findInput.hasFocus())
         val pageTop = if (hideBars || startVisible || liquidChrome) 0 else top
         val pageBottom = when {
             hideBars -> 0
-            imeBottom > 0 -> imeBottom
+            imeBottom > 0 && !nativeEditing -> imeBottom
             !liquidChrome && bottomChrome.visibility == View.VISIBLE -> bottomChrome.height
             else -> 0
         }
@@ -338,7 +340,9 @@ class MainActivity :
      * al hacer scroll, y compacta la píldora AI para evitar solapamientos en pantallas estrechas.
      */
     private fun syncFloatingControls(animated: Boolean) {
-        if (!::bottomChrome.isInitialized || !::nexoAiPill.isInitialized) return
+        if (!::bottomChrome.isInitialized || !::nexoAiPill.isInitialized ||
+            !::miniPlayerButton.isInitialized || !::captionsButton.isInitialized
+        ) return
         val videoChips = findViewById<View>(R.id.videoChips) ?: return
         val hideBars = fullScreenActive || isInPictureInPictureMode
         val collapsed = !hideBars && (chromeCompact || dockScrollHidden)
@@ -355,7 +359,8 @@ class MainActivity :
         }
         val chipsVisible = miniPlayerButton.visibility == View.VISIBLE || captionsButton.visibility == View.VISIBLE
         val narrowScreen = resources.displayMetrics.widthPixels < NexoUi.dp(this, 440f)
-        nexoAiPill.setCompact(collapsed || (chipsVisible && narrowScreen))
+        val agentLive = com.nexo.browser.ai.NexoAiController.snapshot().activeAgentRequest != null
+        nexoAiPill.setCompact(!agentLive && (collapsed || (chipsVisible && narrowScreen)))
         nexoAiPill.setChromeOffsetY(dropPx, animated = animated)
 
         val targetScale = if (collapsed) 0.92f else 1f
@@ -448,10 +453,16 @@ class MainActivity :
         nexoAiPill.onDismissPill = {
             com.nexo.browser.ai.NexoAiController.dismissMinimizedPill()
         }
+        nexoAiPill.onStopAgent = {
+            if (com.nexo.browser.ai.NexoAiController.cancelActiveAgentRequest()) {
+                Toast.makeText(this, "Agente de Nexo detenido.", Toast.LENGTH_SHORT).show()
+            }
+        }
         aiControllerObserver = { snap ->
             if (!isFinishing && !isDestroyed) {
                 ThemeManager.styleAiSparkButton(this, aiButton, snap.indicatorState)
                 nexoAiPill.render(this, snap)
+                syncFloatingControls(animated = false)
             }
         }
         aiControllerObserver?.let { com.nexo.browser.ai.NexoAiController.observe(it) }
@@ -503,6 +514,7 @@ class MainActivity :
         glassControls.forEach { NexoGlass.follow(it, startPage) }
         val cefPage = engineView as? com.nexo.browser.engine.cefrium.CefriumPageView
         if (cefPage != null) {
+            cefPage.isNativeInputFocused = { omnibox.hasFocus() || findInput.hasFocus() }
             webBackdrop = NexoGlassBackdrop(pageView, {
                 cefPage.renderingSurface?.takeIf { liquidChrome && !immersive && startPage.visibility != View.VISIBLE }
             }) { allGlassViews.forEach { if (it.visibility == View.VISIBLE) it.invalidate() } }
@@ -660,6 +672,7 @@ class MainActivity :
             omnibox.typeface = if (focused) ThemeManager.fontRegular(this) else ThemeManager.fontMono(this)
             styleChromeGlass()
             if (focused) {
+                TabManager.activeSession()?.setFocused(false)
                 setDockScrollHidden(false)
                 setChromeCompact(false)
                 // Al editar se muestra la URL completa, seleccionada.
@@ -673,6 +686,7 @@ class MainActivity :
                 suggestions.hide()
                 tab?.let { renderOmnibox(it) }
             }
+            layoutEdgeToEdge()
             syncPredictiveBack()
         }
 
@@ -681,6 +695,10 @@ class MainActivity :
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) = findInPage(restart = true)
         })
+        findInput.setOnFocusChangeListener { _, focused ->
+            if (focused) TabManager.activeSession()?.setFocused(false)
+            layoutEdgeToEdge()
+        }
         findInput.setOnEditorActionListener { _, _, _ ->
             findInPage()
             true
@@ -699,10 +717,13 @@ class MainActivity :
             Toast.makeText(this, "Abre una página para buscar en ella", Toast.LENGTH_SHORT).show()
             return
         }
+        TabManager.activeSession()?.setFocused(false)
         setDockScrollHidden(false)
+        setChromeCompact(false)
         findBar.visibility = View.VISIBLE
         findCount.text = ""
         findInput.requestFocus()
+        layoutEdgeToEdge()
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .showSoftInput(findInput, 0)
         if (!findInput.text.isNullOrEmpty()) findInPage(restart = true)
@@ -2127,7 +2148,7 @@ class MainActivity :
         val tab = TabManager.activeTab()
         if (tab != null && tab.session == null) TabManager.switchTo(tab.id)
         else {
-            TabManager.resumeActive()
+            TabManager.resumeActive(focusBrowser = !omnibox.hasFocus() && !findInput.hasFocus())
             // La superficie de video se recrea al volver: el puente repara el reproductor si quedó congelado.
             val session = tab?.session
             if (session != null && wasBackgrounded) pageView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 250L)
