@@ -133,11 +133,23 @@ object CefriumEngine : BrowserEngine {
 
     override fun applySettings(context: Context) {
         if (!started) return
-        PhantomShield.cookieMode = BrowserPrefs.cookieMode(context)
+        PhantomShield.syncBrowserPrefs(context)
+        applyWebRtcPolicy(context)
         // Depuración remota solo si el usuario la activó en Ajustes.
         runCatching { Cefrium.setRemoteDebuggingEnabled(BrowserPrefs.remoteDebugging(context)) }
         applySecureDns(context)
         TabManager.liveSessions().forEach { (it as? CefriumEngineSession)?.applySettings() }
+    }
+
+    /** Limita fugas de IP local por WebRTC cuando la protección estricta o anti-huellas está activa. */
+    private fun applyWebRtcPolicy(context: Context) {
+        val policy = when {
+            BrowserPrefs.strictTracking(context) -> com.cefrium.CefriumWebRtcIpPolicy.DISABLE_NON_PROXIED_UDP
+            BrowserPrefs.fingerprinting(context) -> com.cefrium.CefriumWebRtcIpPolicy.PUBLIC_INTERFACE_ONLY
+            else -> com.cefrium.CefriumWebRtcIpPolicy.DEFAULT
+        }
+        runCatching { CefriumProfile.getDefault().setWebRtcIpHandlingPolicy(policy) }
+        runCatching { CefriumProfile.incognito().setWebRtcIpHandlingPolicy(policy) }
     }
 
     /** DNS sobre HTTPS de Chromium: proveedor y modo estricto. */

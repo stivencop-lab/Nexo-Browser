@@ -32,14 +32,14 @@ class NexoApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Permitir AudioPlaybackCapture también desde procesos hijos de audio de Chromium (Android 10+).
+        if (!isMainProcess()) return
+        // Permitir AudioPlaybackCapture solo desde el proceso principal de la app (Android 10+).
         if (Build.VERSION.SDK_INT >= 29) {
             runCatching {
                 getSystemService(AudioManager::class.java)
                     ?.setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_ALL)
             }
         }
-        if (!isMainProcess()) return
         AppContext.initialize(this)
         GlassPreferences.initialize(this)
         CrashLog.install(this)

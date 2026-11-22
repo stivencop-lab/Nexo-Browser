@@ -259,6 +259,7 @@ object NxrRuntime {
         }
         if (cleanHost == null && !onlyPrivate) {
             actionNonces.keys.removeIf { it.second == extId }
+            panelTokens.entries.removeIf { it.value == extId }
         }
     }
 
@@ -287,11 +288,11 @@ object NxrRuntime {
     }
 
     internal fun onNewDocument(session: CefriumEngineSession) {
-        clearSessionGrants(System.identityHashCode(session))
+        clearSessionGrants(session.sessionUid.toInt())
     }
 
     internal fun forgetSession(session: CefriumEngineSession) {
-        clearSessionGrants(System.identityHashCode(session))
+        clearSessionGrants(session.sessionUid.toInt())
     }
 
     internal fun clearSessionGrants(sessionKey: Int) {
@@ -400,7 +401,7 @@ object NxrRuntime {
         if (!NxrPermissions.isWebHttpUrl(url)) return
         val installed = NxrPackageInstaller.listInstalled(dir)
         if (installed.isEmpty()) return
-        val sessionKey = System.identityHashCode(session)
+        val sessionKey = session.sessionUid.toInt()
         val docGen = session.documentGeneration()
 
         for (ext in installed) {
@@ -705,17 +706,44 @@ object NxrRuntime {
         originHost: String? = null
     ): MessageReply {
         if (payload == null) return MessageReply(error = "Carga útil vacía.")
+        if (payload.toString().toByteArray(Charsets.UTF_8).size > MAX_PAYLOAD_BYTES) {
+            return MessageReply(error = "Carga útil NXR demasiado grande.")
+        }
         val token = payload.optString("token")
         if (token != panelToken || panelTokens[token] != extId) {
             return MessageReply(error = "Token de panel NXR no válido.")
         }
+        val dir = rootDir ?: return MessageReply(error = "NXR no inicializado.")
+        val extDir = NxrPackageInstaller.extensionDir(dir, extId)
+        if (!extDir.isDirectory) {
+            panelTokens.remove(token)
+            return MessageReply(error = "Extensión no instalada.")
+        }
+        val policy = NxrPermissions.readPolicy(extDir)
+        if (!policy.enabled) {
+            panelTokens.remove(token)
+            return MessageReply(error = "Extensión desactivada.")
+        }
+        if (!checkRateLimit(-1, extId)) {
+            recordError(extId, "rate_limit", "Demasiadas llamadas NXR desde el panel.")
+            return MessageReply(error = "Límite de frecuencia NXR excedido.")
+        }
         val activeHost = originHost ?: runCatching {
-            TabManager.activeTab()?.url
-                ?.takeIf { NxrPermissions.isWebHttpUrl(it) }
-                ?.let { NxrPermissions.extractHost(it) }
+            val tab = TabManager.activeTab() ?: return@runCatching null
+            if (!NxrPermissions.isAuthorizedForUrl(policy, tab.url, tab.isPrivate)) return@runCatching null
+            NxrPermissions.extractHost(tab.url).takeIf { it.isNotEmpty() }
         }.getOrNull()
         return when (kind) {
-            "nxr_storage" -> handleStorage(extId, activeHost, payload)
+            "nxr_storage" -> {
+                val manifest = NxrPackageInstaller.readManifest(dir, extId)
+                val hasStoragePerm = manifest != null &&
+                    ("storage" in manifest.permissions || "unlimitedStorage" in manifest.permissions)
+                if (!hasStoragePerm) {
+                    recordError(extId, "storage.local", "Permiso 'storage' no declarado en manifest.json.")
+                    return MessageReply(error = "La extensión no declara el permiso 'storage'.")
+                }
+                handleStorage(extId, activeHost, payload)
+            }
             "nxr_error" -> {
                 recordError(extId, payload.optString("source", "panel"), payload.optString("message", "Error"))
                 MessageReply(result = true)
@@ -762,7 +790,7 @@ object NxrRuntime {
         val session = tab.session as? CefriumEngineSession ?: return false
         val policy = policyFor(extId)
         if (!NxrPermissions.isAuthorizedForUrl(policy, tab.url, tab.isPrivate)) return false
-        val sessionKey = System.identityHashCode(session)
+        val sessionKey = session.sessionUid.toInt()
         val docGen = session.documentGeneration()
         val slot = actionNonces[sessionKey to extId] ?: return false
         if (slot.first != docGen) return false

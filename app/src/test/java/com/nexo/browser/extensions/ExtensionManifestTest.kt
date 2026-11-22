@@ -52,8 +52,9 @@ class ExtensionManifestTest {
         assertEquals(3, m.manifestVersion)
         assertEquals("es", m.defaultLocale)
         assertEquals("sw.js", m.background?.serviceWorker)
-        assertTrue(m.background!!.isModule)
-        assertFalse(m.background!!.persistent)
+        val bg = m.background!!
+        assertTrue(bg.isModule)
+        assertFalse(bg.persistent)
         assertEquals(setOf("storage", "declarativeNetRequest", "debugger"), m.permissions)
         assertEquals(listOf("*://*.example.com/*"), m.hostPermissions)
         assertEquals(listOf("<all_urls>"), m.optionalHostPermissions)

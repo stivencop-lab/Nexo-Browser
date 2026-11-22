@@ -5,14 +5,19 @@ import android.os.Handler
 import android.os.Looper
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
+import okhttp3.Authenticator
 import okhttp3.Call
+import okhttp3.CookieJar
+import okhttp3.Dns
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.ResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
@@ -35,14 +40,48 @@ object TranslatorManager {
     private const val MAX_BATCH_CHARS = 4000
     private const val MAX_SEGMENTS = 400
     private const val EXTRACT_TIMEOUT_MS = 2500L
+    private const val MAX_RESPONSE_BYTES = 512 * 1024
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private val io by lazy { Executors.newSingleThreadExecutor() }
+    private val translatorDns = object : Dns {
+        override fun lookup(hostname: String): List<java.net.InetAddress> {
+            val clean = hostname.lowercase().trim('[', ']')
+            return if (clean == "localhost" || clean == "127.0.0.1" || clean == "::1") {
+                Dns.SYSTEM.lookup(hostname)
+            } else {
+                NativeImagePolicy.publicDns(Dns.SYSTEM).lookup(hostname)
+            }
+        }
+    }
     private val http by lazy {
         OkHttpClient.Builder()
+            .dns(translatorDns)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .cookieJar(CookieJar.NO_COOKIES)
+            .authenticator(Authenticator.NONE)
+            .proxyAuthenticator(Authenticator.NONE)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(25, TimeUnit.SECONDS)
             .build()
+    }
+
+    private fun readBounded(body: ResponseBody?): String {
+        val stream = body?.byteStream() ?: return ""
+        return stream.use { input ->
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > MAX_RESPONSE_BYTES) return ""
+                out.write(buf, 0, n)
+            }
+            out.toString(Charsets.UTF_8.name())
+        }
     }
 
     @Volatile private var scriptSource: String? = null
@@ -172,6 +211,14 @@ object TranslatorManager {
         }
         if (isTranslated(session)) {
             restoreActive(context, callback)
+            return
+        }
+        if (tab.networkProfile?.let { it.type != "direct" } == true) {
+            callback(false, "La traducción en la nube está desactivada en pestañas con proxy o Tor para proteger tu ruta.")
+            return
+        }
+        if (tab.isPrivate) {
+            callback(false, "La traducción en la nube está desactivada en pestañas privadas para no enviar contenido externo.")
             return
         }
         initialize(context)
@@ -345,7 +392,7 @@ object TranslatorManager {
         job.attach(call)
         call.execute().use { resp ->
             if (!resp.isSuccessful) return null
-            CaptionProtocol.parseGoogleLines(resp.body?.string().orEmpty(), lines.size)
+            CaptionProtocol.parseGoogleLines(readBounded(resp.body), lines.size)
         }
     }.getOrNull()
 
@@ -361,7 +408,7 @@ object TranslatorManager {
         job.attach(call)
         call.execute().use { resp ->
             if (!resp.isSuccessful) return null
-            CaptionProtocol.parseDeeplLines(resp.body?.string().orEmpty(), lines.size)
+            CaptionProtocol.parseDeeplLines(readBounded(resp.body), lines.size)
         }
     }.getOrNull()
 
@@ -392,7 +439,7 @@ object TranslatorManager {
         job.attach(call)
         call.execute().use { resp ->
             if (!resp.isSuccessful) return null
-            CaptionProtocol.parseAiLines(resp.body?.string().orEmpty(), lines.size)
+            CaptionProtocol.parseAiLines(readBounded(resp.body), lines.size)
         }
     }.getOrNull()
 }

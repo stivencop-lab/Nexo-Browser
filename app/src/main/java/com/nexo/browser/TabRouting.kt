@@ -46,7 +46,7 @@ object TabRouting {
         if (profile == null && tab.burnerId == null) { ready(); return }
         val burner = tab.burnerId
         val proxied = profile != null && profile.type != "direct"
-        if (proxied && (burner == null || !applyBurnerRoute(burner, profile!!))) {
+        if (proxied && (burner == null || !applyBurnerRoute(burner, profile))) {
             pending.remove(session)
             failed[session] = true
             tab.networkState = "Ruta bloqueada"
@@ -64,7 +64,7 @@ object TabRouting {
         pending.remove(session)
         awaiting.remove(session)
         tab.networkState = when {
-            proxied -> "Burner por ${if (profile!!.type == "socks") "SOCKS" else "HTTP"} ${profile.host}:${profile.port}"
+            proxied -> "Burner por ${if (profile.type == "socks") "SOCKS" else "HTTP"} ${profile.host}:${profile.port}"
             tab.burnerId != null -> "Burner aislado"
             else -> "Conexión directa"
         }

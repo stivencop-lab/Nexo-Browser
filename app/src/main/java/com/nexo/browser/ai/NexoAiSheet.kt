@@ -66,6 +66,21 @@ object NexoAiSheet {
 
     private val QUICK_ACTIONS = listOf(
         QuickAction(
+            icon = R.drawable.ic_nexo_aperture,
+            title = "Agente autónomo",
+            subtitle = "Navega, busca e inspecciona por ti",
+            prompt = "Inspecciona esta página, identifica lo más relevante y dime qué acciones útiles puedes hacer aquí.",
+            logLabel = "agente_inicio",
+            forceScope = "agent"
+        ),
+        QuickAction(
+            icon = R.drawable.ic_ai_benchmark,
+            title = "Gráfico y métricas",
+            subtitle = "Visualiza datos clave en gráficos",
+            prompt = "Extrae las cifras, comparativas o datos cuantitativos más relevantes de esta página y muéstralos en un gráfico visual (nexo-chart) y una tarjeta resumen (nexo-card).",
+            logLabel = "grafico_ai"
+        ),
+        QuickAction(
             icon = R.drawable.ic_menu_reader,
             title = "Resumir página",
             subtitle = "Ideas clave en viñetas",
@@ -91,15 +106,8 @@ object NexoAiSheet {
             icon = R.drawable.ic_menu_file,
             title = "Extraer datos",
             subtitle = "Tablas, precios y fechas",
-            prompt = "Extrae los datos estructurados, precios, fechas o tablas clave en formato ordenado.",
+            prompt = "Extrae los datos estructurados, precios, fechas o tablas clave en formato de tabla Markdown ordenada.",
             logLabel = "extraer_datos"
-        ),
-        QuickAction(
-            icon = R.drawable.ic_menu_link,
-            title = "Enlaces clave",
-            subtitle = "Destinos principales",
-            prompt = "Identifica los enlaces más importantes de esta página y explica para qué sirve cada uno.",
-            logLabel = "enlaces_clave"
         ),
         QuickAction(
             icon = R.drawable.ic_menu_workspace,
@@ -121,10 +129,15 @@ object NexoAiSheet {
         val dp = { v: Float -> NexoUi.dp(activity, v) }
 
         var activeTab = initialTab
-        var scope = "page" // "page" | "selection" | "tabs" | "free"
+        var scope = "page" // "page" | "agent" | "selection" | "tabs" | "free"
         var reasoningEffort: String? = null
         var isExpanded = initialExpanded
         var lastRenderedKey = ""
+        var lastStructureKey = ""
+        var activeStreamingMsgId: String? = null
+        var activeStreamingRichBox: LinearLayout? = null
+        var activeStreamingStepsBox: LinearLayout? = null
+        var activeStreamingStatusView: TextView? = null
 
         lateinit var sheetHandle: NexoSheets.AdaptiveSheetHandle
         lateinit var bodyScroll: ScrollView
@@ -136,17 +149,23 @@ object NexoAiSheet {
             bodyScroll.post { bodyScroll.fullScroll(View.FOCUS_DOWN) }
         }
 
-        // ==================== CABECERA COMPACTA + PESTAÑAS ====================
+        // ==================== CABECERA COMPACTA + HISTORIAL + NUEVO CHAT ====================
         val header = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
         }
         val headerRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20f), dp(2f), dp(10f), dp(6f))
+            setPadding(dp(12f), dp(2f), dp(8f), dp(6f))
+        }
+        val historyBtn = ImageButton(activity).apply {
+            setImageResource(R.drawable.ic_menu_history)
+            contentDescription = "Historial de chats de Nexo AI"
+            ThemeManager.styleIconButton(activity, this)
+            setOnClickListener { NexoAiHistorySheet.show(activity, pageHost) }
         }
         // Emblema Aperture desnudo (sin caja ni borde de color); respira durante el streaming.
-        val headerAperture = com.nexo.browser.NexoApertureDrawable(activity, 22f).apply { setColor(p.text) }
+        val headerAperture = com.nexo.browser.NexoApertureDrawable(activity, 20f).apply { setColor(p.text) }
         val brandBadge = ImageView(activity).apply {
             setImageDrawable(headerAperture)
             scaleType = ImageView.ScaleType.CENTER
@@ -155,11 +174,11 @@ object NexoAiSheet {
 
         val titleCol = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10f), 0, dp(6f), 0)
+            setPadding(dp(8f), 0, dp(4f), 0)
         }
         val headerTitle = TextView(activity).apply {
-            text = "Nexo"
-            textSize = 17f
+            text = "Nexo AI"
+            textSize = 16.5f
             letterSpacing = -0.025f
             typeface = NexoUi.semiBold(activity)
             setTextColor(p.text)
@@ -167,15 +186,24 @@ object NexoAiSheet {
             ellipsize = TextUtils.TruncateAt.END
         }
         val modelPill = TextView(activity).apply {
-            textSize = 13f
+            textSize = 12.5f
             typeface = NexoUi.regular(activity)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, dp(2f), 0, 0)
+            setPadding(0, dp(1f), 0, 0)
         }
         titleCol.addView(headerTitle)
         titleCol.addView(modelPill)
 
+        val newChatBtn = ImageButton(activity).apply {
+            setImageResource(R.drawable.ic_nav_add)
+            contentDescription = "Nuevo chat de Nexo AI"
+            ThemeManager.styleIconButton(activity, this)
+            setOnClickListener {
+                NexoAiController.newConversation(pageHost)
+                Toastish.show(activity, "Nuevo chat listo.")
+            }
+        }
         val expandBtn = ImageButton(activity).apply {
             setImageResource(if (isExpanded) R.drawable.ic_ai_collapse else R.drawable.ic_ai_expand)
             contentDescription = if (isExpanded) "Reducir panel de Nexo AI" else "Expandir Nexo AI a pantalla completa"
@@ -188,10 +216,12 @@ object NexoAiSheet {
             setOnClickListener { sheetHandle.dismissAnimated() }
         }
 
-        headerRow.addView(brandBadge, LinearLayout.LayoutParams(dp(28f), dp(28f)))
+        headerRow.addView(historyBtn, LinearLayout.LayoutParams(dp(44f), dp(48f)))
+        headerRow.addView(brandBadge, LinearLayout.LayoutParams(dp(24f), dp(24f)))
         headerRow.addView(titleCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        headerRow.addView(expandBtn, LinearLayout.LayoutParams(dp(44f), dp(48f)))
-        headerRow.addView(minimizeBtn, LinearLayout.LayoutParams(dp(44f), dp(48f)))
+        headerRow.addView(newChatBtn, LinearLayout.LayoutParams(dp(42f), dp(48f)))
+        headerRow.addView(expandBtn, LinearLayout.LayoutParams(dp(42f), dp(48f)))
+        headerRow.addView(minimizeBtn, LinearLayout.LayoutParams(dp(42f), dp(48f)))
         header.addView(headerRow)
 
         // Pestañas con línea inferior deslizante: Chat | Comparar | Ajustes (sin cajas grises).
@@ -332,13 +362,34 @@ object NexoAiSheet {
             modelPill.setTextColor(if (s.enabled && keyOk) p.muted else p.warning.color)
         }
 
-        // Selector de contexto inline «Página ▾» (y razonamiento si el modelo lo admite).
+        // Selector de contexto inline «Página ▾» / «Agente ▾» (y razonamiento si el modelo lo admite).
         fun renderScopeAndReasoning() {
-            val scopes = listOf("page" to "Página", "selection" to "Selección", "tabs" to "Pestañas", "free" to "Sin contexto")
+            val scopes = listOf(
+                "page" to "Página",
+                "agent" to "Agente",
+                "selection" to "Selección",
+                "tabs" to "Pestañas",
+                "free" to "Sin contexto"
+            )
+            val isAgent = scope == "agent"
             scopeButton.text = scopes.firstOrNull { it.first == scope }?.second ?: "Página"
+            scopeButton.setTextColor(if (isAgent) p.onAccent else p.text)
+            scopeButton.background = ThemeManager.ripple(
+                activity,
+                android.graphics.drawable.InsetDrawable(
+                    ThemeManager.rounded(
+                        activity,
+                        if (isAgent) p.accent else if (p.isDark) p.surfaceContainerHighest else p.surfaceContainer,
+                        NexoUi.Tokens.RADIUS_PILL
+                    ),
+                    0, dp(6f), 0, dp(6f)
+                ),
+                NexoUi.Tokens.RADIUS_PILL
+            )
+            promptField.hint = if (isAgent) "Pide al agente navegar, buscar o actuar…" else "Preguntar o pedir un gráfico…"
             scopeButton.setCompoundDrawablesRelativeWithIntrinsicBounds(null, null,
                 activity.getDrawable(R.drawable.ic_chevron_down)?.mutate()?.apply {
-                    setTint(p.muted); setBounds(0, 0, dp(14f), dp(14f))
+                    setTint(if (isAgent) p.onAccent else p.muted); setBounds(0, 0, dp(14f), dp(14f))
                 }, null)
             scopeButton.contentDescription = "Contexto: ${scopeButton.text}. Cambiar"
             scopeButton.setOnClickListener { anchor ->
@@ -401,7 +452,7 @@ object NexoAiSheet {
             footer.visibility = if (activeTab == Tab.CHAT) View.VISIBLE else View.GONE
         }
 
-        // Ejecutar consulta contextual o libre delegando al controlador persistente
+        // Ejecutar consulta contextual, agente multi-paso o libre delegando al controlador persistente
         fun dispatchPrompt(userTask: String, logLabel: String, forceScope: String? = null) {
             val s = NexoAiConfig.read(activity)
             val apiKey = NexoAiConfig.apiKey(activity)
@@ -433,6 +484,25 @@ object NexoAiSheet {
             val currentBinding = NexoAiPageAgent.currentActiveBinding()
 
             when (chosenScope) {
+                "agent" -> {
+                    val executor = NexoAiPageAgent.createBrowserToolExecutor(activity, s.allowPrivateTabs, s.maxContextChars)
+                    NexoAiPageAgent.captureActiveSnapshot(activity, s.maxContextChars, s.allowPrivateTabs) { snap, _ ->
+                        val initialCtx = snap?.toContextText("agent")
+                            ?: "Pestaña actual en Inicio de Nexo. Puedes usar web_search, navigate, list_tabs, search_bookmarks o search_history."
+                        NexoAiController.sendAgentPrompt(
+                            settings = s,
+                            apiKey = apiKey,
+                            userTask = userTask,
+                            initialContext = initialCtx,
+                            toolExecutor = executor,
+                            pageBinding = snap?.binding ?: currentBinding,
+                            reasoningEffort = reasoningEffort,
+                            preferStreaming = true,
+                            logLabel = logLabel
+                        )
+                        scrollToBottom()
+                    }
+                }
                 "free" -> {
                     NexoAiController.sendPrompt(
                         settings = s,
@@ -557,7 +627,63 @@ object NexoAiSheet {
             }, NexoUi.buttonParams(activity, 12f))
         }
 
-        // Chat editorial: sin burbujas ni tarjetas contenedoras.
+        fun renderAgentStepsInto(box: LinearLayout, steps: List<NexoAiModels.AgentStep>, inFlight: Boolean) {
+            box.removeAllViews()
+            if (steps.isEmpty()) {
+                box.visibility = View.GONE
+                return
+            }
+            box.visibility = View.VISIBLE
+            var expanded = inFlight
+            val card = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
+                background = ThemeManager.rounded(activity, NexoSheets.groupFill(p), 14f)
+            }
+            val listWrap = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = if (expanded) View.VISIBLE else View.GONE
+                setPadding(0, dp(6f), 0, 0)
+            }
+            val titleView = TextView(activity).apply {
+                val countLbl = if (steps.size == 1) "1 paso del agente" else "${steps.size} pasos del agente"
+                text = (if (inFlight) "● $countLbl…" else "$countLbl") + if (expanded) " ▴" else " ▾"
+                textSize = 12.5f
+                typeface = NexoUi.medium(activity)
+                setTextColor(if (inFlight) (if (p.isMonochrome) p.text else p.accent) else p.muted)
+                setOnClickListener {
+                    expanded = !expanded
+                    listWrap.visibility = if (expanded) View.VISIBLE else View.GONE
+                    text = (if (inFlight) "● $countLbl…" else "$countLbl") + if (expanded) " ▴" else " ▾"
+                }
+            }
+            steps.forEach { st ->
+                val row = LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, dp(3f), 0, dp(3f))
+                }
+                row.addView(TextView(activity).apply {
+                    text = if (st.ok) "✓" else "!"
+                    textSize = 11.5f
+                    typeface = NexoUi.mono(activity)
+                    setTextColor(if (st.ok) p.success.color else p.warning.color)
+                    setPadding(0, 0, dp(8f), 0)
+                })
+                row.addView(TextView(activity).apply {
+                    text = st.summary
+                    textSize = 12.5f
+                    typeface = NexoUi.regular(activity)
+                    setTextColor(p.text)
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                listWrap.addView(row)
+            }
+            card.addView(titleView)
+            card.addView(listWrap)
+            box.addView(card)
+        }
+
+        // Chat editorial: sin burbujas ni tarjetas contenedoras, con Markdown y gráficos nativos.
         fun buildMessageBubble(msg: NexoAiModels.AiMessage, convId: String, first: Boolean): View {
             if (msg.role == NexoAiModels.Role.USER) {
                 val wrap = LinearLayout(activity).apply {
@@ -567,6 +693,7 @@ object NexoAiSheet {
                 if (!first) wrap.addView(NexoUi.divider(activity, 0f), LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(0.6f).coerceAtLeast(1)).apply { bottomMargin = dp(18f) })
                 val scopeLabel = when (msg.scope) {
+                    "agent" -> "Agente"
                     "selection" -> "Selección"
                     "tabs" -> "Pestañas"
                     "free" -> "Sin contexto"
@@ -605,48 +732,62 @@ object NexoAiSheet {
                 return wrap
             }
 
-            // Respuesta directa sobre el fondo limpio.
+            // Respuesta directa con formato Markdown nativo, gráficos Canvas, tarjetas KPI y traza de Agente.
             val card = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, 0, 0, dp(4f))
             }
 
             val statusLabel = when (msg.status) {
-                NexoAiModels.MessageStatus.SENDING -> "Consultando…" to p.muted
-                NexoAiModels.MessageStatus.STREAMING -> "Escribiendo…" to p.muted
+                NexoAiModels.MessageStatus.SENDING -> (if (msg.scope == "agent") "Planificando pasos…" else "Consultando…") to p.muted
+                NexoAiModels.MessageStatus.STREAMING -> (if (msg.scope == "agent") "Agente trabajando…" else "Escribiendo…") to p.muted
                 NexoAiModels.MessageStatus.CANCELLED -> "Detenida" to p.warning.color
                 NexoAiModels.MessageStatus.INTERRUPTED -> "Interrumpida" to p.warning.color
                 NexoAiModels.MessageStatus.ERROR -> "Error" to p.danger
                 NexoAiModels.MessageStatus.COMPLETED -> null
             }
-            statusLabel?.let { (lbl, color) ->
-                card.addView(TextView(activity).apply {
-                    text = "${(msg.model ?: "Nexo").substringAfterLast('/')} · $lbl"
-                    textSize = 12f
-                    typeface = NexoUi.regular(activity)
-                    setTextColor(color)
-                    setPadding(0, 0, 0, dp(4f))
-                })
+            val statusView = TextView(activity).apply {
+                textSize = 12f
+                typeface = NexoUi.regular(activity)
+                setPadding(0, 0, 0, dp(4f))
+                if (statusLabel != null) {
+                    text = "${(msg.model ?: "Nexo").substringAfterLast('/')} · ${statusLabel.first}"
+                    setTextColor(statusLabel.second)
+                    visibility = View.VISIBLE
+                } else {
+                    visibility = View.GONE
+                }
             }
+            card.addView(statusView)
 
+            val stepsBox = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 0, 0, dp(8f))
+            }
+            renderAgentStepsInto(stepsBox, msg.agentSteps, msg.isInFlight)
+            card.addView(stepsBox)
+
+            val richBox = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(2f), 0, dp(4f))
+            }
             if (msg.text.isNotBlank()) {
-                card.addView(TextView(activity).apply {
-                    text = msg.text
-                    textSize = 15.5f
-                    typeface = NexoUi.regular(activity)
-                    setTextColor(p.text)
-                    setTextIsSelectable(true)
-                    setLineSpacing(0f, 1.45f)
-                    setPadding(0, dp(2f), 0, dp(4f))
-                })
+                NexoAiRichRenderer.renderInto(activity, richBox, msg.text, isStreaming = msg.isInFlight)
             } else if (msg.status == NexoAiModels.MessageStatus.SENDING) {
-                card.addView(TextView(activity).apply {
-                    text = "Analizando…"
+                richBox.addView(TextView(activity).apply {
+                    text = if (msg.scope == "agent") "Observando el navegador…" else "Analizando…"
                     textSize = 15f
                     typeface = NexoUi.regular(activity)
                     setTextColor(p.muted)
-                    setPadding(0, dp(2f), 0, dp(4f))
                 })
+            }
+            card.addView(richBox)
+
+            if (msg.isInFlight) {
+                activeStreamingMsgId = msg.id
+                activeStreamingRichBox = richBox
+                activeStreamingStepsBox = stepsBox
+                activeStreamingStatusView = statusView
             }
 
             if (!msg.errorMessage.isNullOrBlank()) {
@@ -679,7 +820,7 @@ object NexoAiSheet {
                 if (actionsWrap.childCount > 0) card.addView(actionsWrap)
             }
 
-            // Acciones fantasma: propuestas de página (Resaltar, Abrir…), Copiar, Reintentar / Detener.
+            // Acciones fantasma: propuestas de página (Resaltar, Abrir, Confirmar…), Copiar, Reintentar / Detener.
             val ghost = ArrayList<View>()
             if (msg.isInFlight && msg.requestId != null) {
                 ghost += ghostAction(activity, "Detener") { NexoAiController.cancelRequest(msg.requestId) }
@@ -690,7 +831,7 @@ object NexoAiSheet {
                 if (msg.text.isNotBlank()) {
                     ghost += ghostAction(activity, "Copiar") {
                         val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        cm?.setPrimaryClip(ClipData.newPlainText("Nexo AI", msg.text))
+                        cm?.setPrimaryClip(ClipData.newPlainText("Nexo AI", NexoAiRichContent.stripInternalBlocks(msg.text)))
                         Toastish.show(activity, "Respuesta copiada.")
                     }
                 }
@@ -725,28 +866,38 @@ object NexoAiSheet {
         fun renderFromSnapshot(snap: NexoAiModels.ControllerSnapshot) {
             if (activity.isFinishing || activity.isDestroyed) return
 
-            // Carril de conversaciones persistentes
+            val conv = snap.activeConversation
+            headerTitle.text = if (conv != null && conv.messages.isNotEmpty()) conv.title else "Nexo AI"
+
+            // Carril de conversaciones persistentes (acceso rápido a recientes + todos los chats)
             threadRail.removeAllViews()
-            threadRail.addView(NexoUi.chip(activity, "Nueva", false) {
+            threadRail.addView(NexoUi.chip(activity, "+ Nuevo", false) {
                 NexoAiController.newConversation(pageHost)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6f)
             })
-            threadRail.addView(NexoUi.chip(activity, "Historial", false) {
-                NexoAiHistorySheet.show(activity)
-            }.apply { contentDescription = "Ver, buscar y borrar conversaciones" }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            val savedCount = snap.conversations.count { it.messages.isNotEmpty() }
+            threadRail.addView(NexoUi.chip(activity, if (savedCount > 0) "Chats ($savedCount)" else "Historial", false) {
+                NexoAiHistorySheet.show(activity, pageHost)
+            }.apply { contentDescription = "Ver, buscar y gestionar conversaciones" }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6f)
             })
-            for (conv in snap.conversations.take(8)) {
-                val selected = conv.id == snap.activeConversationId
-                val prefix = if (conv.hasInFlight) "● " else ""
-                val title = (prefix + conv.title).take(22)
-                val chip = NexoUi.chip(activity, title, selected) {
-                    NexoAiController.selectConversation(conv.id)
+            val orderedChats = snap.conversations
+                .filter { it.messages.isNotEmpty() || it.id == snap.activeConversationId }
+                .sortedWith(compareByDescending<NexoAiModels.AiConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
+                .take(10)
+            for (c in orderedChats) {
+                val selected = c.id == snap.activeConversationId
+                val prefix = buildString {
+                    if (c.pinned) append("★ ")
+                    if (c.hasInFlight) append("● ")
                 }
-                // Pulsación larga: renombrar o eliminar (con confirmación; antes borraba al instante).
+                val title = (prefix + c.title).take(22)
+                val chip = NexoUi.chip(activity, title, selected) {
+                    NexoAiController.selectConversation(c.id)
+                }
                 chip.setOnLongClickListener {
-                    if (conv.messages.isNotEmpty()) NexoAiHistorySheet.options(activity, conv)
+                    if (c.messages.isNotEmpty()) NexoAiHistorySheet.options(activity, c)
                     true
                 }
                 threadRail.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -754,22 +905,48 @@ object NexoAiSheet {
                 })
             }
 
-            val conv = snap.activeConversation
             val generating = snap.activeRequestForCurrentConversation != null
             updateSendButton(generating)
 
             val msgs = conv?.messages.orEmpty()
-            threadRailWrap.visibility = if (snap.conversations.any { it.messages.isNotEmpty() }) View.VISIBLE else View.GONE
+            threadRailWrap.visibility = if (savedCount > 0) View.VISIBLE else View.GONE
             emptyStateBox.visibility = if (msgs.isEmpty()) View.VISIBLE else View.GONE
             if (msgs.isEmpty() && emptyStateBox.childCount == 0) renderEmptyState()
 
-            val renderKey = "${conv?.id}|${msgs.size}|${msgs.lastOrNull()?.status}|${msgs.lastOrNull()?.text?.length}"
-            messagesBox.removeAllViews()
-            if (conv != null) {
-                msgs.forEachIndexed { i, m ->
-                    messagesBox.addView(buildMessageBubble(m, conv.id, first = i == 0))
+            // Actualización incremental durante streaming SSE (evita removeAllViews cada 60 ms: PERF-3).
+            val lastMsg = msgs.lastOrNull()
+            val structureKey = "${conv?.id}|${msgs.size}|${msgs.joinToString(",") { "${it.id}:${it.status}:${it.actions.size}" }}"
+            val renderKey = "$structureKey|${lastMsg?.text?.length}|${lastMsg?.agentSteps?.size}"
+
+            if (structureKey == lastStructureKey &&
+                lastMsg != null &&
+                lastMsg.isInFlight &&
+                lastMsg.id == activeStreamingMsgId &&
+                activeStreamingRichBox != null
+            ) {
+                activeStreamingStepsBox?.let { renderAgentStepsInto(it, lastMsg.agentSteps, inFlight = true) }
+                activeStreamingStatusView?.let { sv ->
+                    val statusTxt = if (lastMsg.scope == "agent") "Agente trabajando…" else "Escribiendo…"
+                    sv.text = "${(lastMsg.model ?: "Nexo").substringAfterLast('/')} · $statusTxt"
+                    sv.visibility = View.VISIBLE
+                }
+                if (lastMsg.text.isNotBlank()) {
+                    NexoAiRichRenderer.renderInto(activity, activeStreamingRichBox!!, lastMsg.text, isStreaming = true)
+                }
+            } else {
+                lastStructureKey = structureKey
+                activeStreamingMsgId = null
+                activeStreamingRichBox = null
+                activeStreamingStepsBox = null
+                activeStreamingStatusView = null
+                messagesBox.removeAllViews()
+                if (conv != null) {
+                    msgs.forEachIndexed { i, m ->
+                        messagesBox.addView(buildMessageBubble(m, conv.id, first = i == 0))
+                    }
                 }
             }
+
             if (renderKey != lastRenderedKey && msgs.isNotEmpty()) {
                 lastRenderedKey = renderKey
                 if (activeTab == Tab.CHAT) scrollToBottom()

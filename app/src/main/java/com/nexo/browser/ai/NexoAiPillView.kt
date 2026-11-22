@@ -6,6 +6,7 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.graphics.drawable.InsetDrawable
 import android.os.SystemClock
 import android.text.TextUtils
 import android.util.AttributeSet
@@ -19,8 +20,10 @@ import android.widget.TextView
 import androidx.dynamicanimation.animation.DynamicAnimation
 import com.nexo.browser.NexoApertureDrawable
 import com.nexo.browser.NexoGlass
+import com.nexo.browser.NexoGlassBackdrop
 import com.nexo.browser.NexoGlassDrawable
 import com.nexo.browser.NexoMotion
+import com.nexo.browser.NexoTokens
 import com.nexo.browser.NexoUi
 import com.nexo.browser.R
 import com.nexo.browser.ThemeManager
@@ -28,11 +31,11 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * «Dynamic Live Pill» de Nexo AI: cristal ahumado flotante dentro de Nexo (sin overlay del sistema).
+ * «Dynamic Live Pill» de Nexo AI: cristal líquido compacto (34 dp visuales en área táctil de 48 dp),
+ * coordinado con el plegado de la barra inferior y oculto automáticamente en pantalla completa / PiP.
  *
- * - Punto que respira + barras fluidas mientras la respuesta llega por SSE.
- * - Estados reales: Escribiendo / Listo / Error / Retomar. Sin bordes de color.
- * - Un toque restaura la conversación tal cual; `×` oculta la píldora sin borrar ni cancelar nada.
+ * - En modo compacto (al desplazarse hacia abajo o compartir espacio con Mini video / CC) se pliega
+ *   en una cápsula discreta sin etiqueta larga para no estorbar la lectura ni solaparse.
  */
 class NexoAiPillView @JvmOverloads constructor(
     context: Context,
@@ -44,11 +47,17 @@ class NexoAiPillView @JvmOverloads constructor(
 
     private val dotView: BreathingDot
     private val apertureView: ImageView
-    private val aperture = NexoApertureDrawable(context, 18f)
+    private val aperture = NexoApertureDrawable(context, 16f)
     private val bars: FluidBars
     private val labelView: TextView
     private val dismissBtn: ImageButton
     private var currentlyVisible = false
+    private var suppressed = false
+    private var compactMode = false
+    private var restingOffsetY = 0f
+    private var lastSnapshot: NexoAiModels.ControllerSnapshot? = null
+    private var webBackdrop: NexoGlassBackdrop? = null
+    private var backdropSource: View? = null
 
     init {
         orientation = HORIZONTAL
@@ -59,7 +68,7 @@ class NexoAiPillView @JvmOverloads constructor(
         val dp = { v: Float -> (v * d).toInt() }
 
         minimumHeight = dp(48f)
-        setPadding(dp(14f), 0, dp(2f), 0)
+        setPadding(dp(12f), 0, dp(2f), 0)
 
         dotView = BreathingDot(context)
         apertureView = ImageView(context).apply {
@@ -68,33 +77,88 @@ class NexoAiPillView @JvmOverloads constructor(
         }
         bars = FluidBars(context)
         labelView = TextView(context).apply {
-            textSize = 13f
+            textSize = 12.5f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(dp(8f), 0, dp(4f), 0)
+            setPadding(dp(6f), 0, dp(2f), 0)
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         dismissBtn = ImageButton(context).apply {
             setImageResource(R.drawable.ic_menu_close)
             contentDescription = "Ocultar indicador de Nexo AI sin borrar historial"
             scaleType = ImageView.ScaleType.CENTER
-            scaleX = 0.8f
-            scaleY = 0.8f
+            scaleX = 0.76f
+            scaleY = 0.76f
             setOnClickListener { onDismissPill() }
         }
 
-        addView(dotView, LayoutParams(dp(8f), dp(8f)).apply { marginEnd = dp(10f) })
-        addView(apertureView, LayoutParams(dp(18f), dp(18f)))
+        addView(dotView, LayoutParams(dp(7f), dp(7f)).apply { marginEnd = dp(8f) })
+        addView(apertureView, LayoutParams(dp(16f), dp(16f)))
         addView(labelView, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        addView(bars, LayoutParams(dp(18f), dp(14f)).apply { marginEnd = dp(4f) })
-        addView(dismissBtn, LayoutParams(dp(44f), dp(44f)))
+        addView(bars, LayoutParams(dp(16f), dp(12f)).apply { marginStart = dp(4f); marginEnd = dp(2f) })
+        addView(dismissBtn, LayoutParams(dp(40f), dp(44f)))
 
         setOnClickListener { NexoMotion.pulse(this, 0.96f); onRestore() }
         visibility = GONE
     }
 
+    /** Conecta el desenfoque en vivo de la página web (Liquid Glass). */
+    internal fun bindWebBackdrop(backdrop: NexoGlassBackdrop?, source: View?) {
+        webBackdrop = backdrop
+        backdropSource = source
+    }
+
+    /** Oculta la píldora en modos inmersivos (pantalla completa de video o PiP). */
+    fun setSuppressed(hide: Boolean) {
+        if (suppressed == hide) return
+        suppressed = hide
+        if (hide) {
+            hideAnimated()
+        } else {
+            val snap = lastSnapshot ?: return
+            if (snap.minimizedPillVisible && snap.panelState == NexoAiModels.PanelState.MINIMIZED) {
+                showAnimated()
+            }
+        }
+    }
+
+    /** Modo compacto al recoger la barra inferior o al convivir con Mini video / CC. */
+    fun setCompact(compact: Boolean) {
+        if (compactMode == compact) return
+        compactMode = compact
+        applyCompactLayout()
+    }
+
+    /** Desplazamiento vertical coordinado con el plegado de la barra inferior. */
+    fun setChromeOffsetY(offsetY: Float, animated: Boolean = true) {
+        restingOffsetY = offsetY
+        if (!currentlyVisible || visibility != VISIBLE) return
+        if (animated) {
+            NexoMotion.spring(this, DynamicAnimation.TRANSLATION_Y, restingOffsetY)
+        } else {
+            translationY = restingOffsetY
+        }
+    }
+
+    private fun applyCompactLayout() {
+        val d = resources.displayMetrics.density
+        val dp = { v: Float -> (v * d).toInt() }
+        labelView.visibility = if (compactMode) GONE else VISIBLE
+        dismissBtn.visibility = if (compactMode) GONE else VISIBLE
+        if (compactMode) {
+            setPadding(dp(11f), 0, dp(11f), 0)
+        } else {
+            setPadding(dp(12f), 0, dp(2f), 0)
+        }
+        val targetAlpha = if (compactMode) 0.90f else 1f
+        if (currentlyVisible && visibility == VISIBLE) {
+            NexoMotion.spring(this, DynamicAnimation.ALPHA, targetAlpha)
+        }
+    }
+
     fun render(activity: Activity, snapshot: NexoAiModels.ControllerSnapshot) {
-        val show = snapshot.minimizedPillVisible && snapshot.panelState == NexoAiModels.PanelState.MINIMIZED
+        lastSnapshot = snapshot
+        val show = !suppressed && snapshot.minimizedPillVisible && snapshot.panelState == NexoAiModels.PanelState.MINIMIZED
         if (!show) {
             hideAnimated()
             return
@@ -103,16 +167,21 @@ class NexoAiPillView @JvmOverloads constructor(
         val live = if (p.isMonochrome) p.success.color else p.accent
         val (dot, title) = when (snapshot.indicatorState) {
             NexoAiModels.IndicatorState.GENERATING -> live to "Escribiendo…"
-            NexoAiModels.IndicatorState.READY -> p.success.color to "Listo · Ver respuesta"
-            NexoAiModels.IndicatorState.ERROR -> p.danger to "No se pudo responder"
-            NexoAiModels.IndicatorState.IDLE -> p.muted to "Retomar chat"
+            NexoAiModels.IndicatorState.READY -> p.success.color to "Listo · Ver"
+            NexoAiModels.IndicatorState.ERROR -> p.danger to "Error"
+            NexoAiModels.IndicatorState.IDLE -> p.muted to "Nexo AI"
         }
         val streaming = snapshot.indicatorState == NexoAiModels.IndicatorState.GENERATING && !NexoUi.reducedMotion(activity)
 
-        background = NexoGlassDrawable(activity, p, NexoUi.Tokens.RADIUS_PILL, smoked = true)
-        NexoGlass.float(this, p, if (p.isDark) 6f else 10f)
+        val glass = NexoGlassDrawable(activity, p, NexoTokens.PILL_RADIUS, smoked = true).also {
+            val wb = webBackdrop
+            val src = backdropSource
+            if (wb != null && src != null) it.setWebBackdrop(wb, src, this)
+        }
+        val insetY = (7f * resources.displayMetrics.density).toInt()
+        background = InsetDrawable(glass, 0, insetY, 0, insetY)
+        NexoGlass.float(this, p, if (p.isDark) 4f else 7f)
         dotView.color = dot
-        // Solo respira mientras llegan tokens: en reposo no se redibuja (batería).
         dotView.breathing = streaming
         aperture.setColor(p.text)
         aperture.setBreathing(streaming)
@@ -125,7 +194,7 @@ class NexoAiPillView @JvmOverloads constructor(
         dismissBtn.background = ThemeManager.ripple(activity, null, NexoUi.Tokens.RADIUS_PILL)
         dismissBtn.imageTintList = ColorStateList.valueOf(p.muted)
         contentDescription = "Nexo AI: $title. Toca para restaurar la conversación."
-
+        applyCompactLayout()
         showAnimated()
     }
 
@@ -134,11 +203,11 @@ class NexoAiPillView @JvmOverloads constructor(
         currentlyVisible = true
         visibility = VISIBLE
         alpha = 0f
-        translationY = 18f * resources.displayMetrics.density
+        translationY = restingOffsetY + 14f * resources.displayMetrics.density
         scaleX = 0.92f
         scaleY = 0.92f
-        NexoMotion.spring(this, DynamicAnimation.ALPHA, 1f)
-        NexoMotion.spring(this, DynamicAnimation.TRANSLATION_Y, 0f)
+        NexoMotion.spring(this, DynamicAnimation.ALPHA, if (compactMode) 0.90f else 1f)
+        NexoMotion.spring(this, DynamicAnimation.TRANSLATION_Y, restingOffsetY)
         NexoMotion.spring(this, DynamicAnimation.SCALE_X, 1f)
         NexoMotion.spring(this, DynamicAnimation.SCALE_Y, 1f)
     }
@@ -148,7 +217,7 @@ class NexoAiPillView @JvmOverloads constructor(
         currentlyVisible = false
         bars.running = false
         aperture.setBreathing(false)
-        NexoMotion.spring(this, DynamicAnimation.TRANSLATION_Y, 12f * resources.displayMetrics.density)
+        NexoMotion.spring(this, DynamicAnimation.TRANSLATION_Y, restingOffsetY + 12f * resources.displayMetrics.density)
         NexoMotion.spring(this, DynamicAnimation.ALPHA, 0f) {
             if (!currentlyVisible) visibility = GONE
         }

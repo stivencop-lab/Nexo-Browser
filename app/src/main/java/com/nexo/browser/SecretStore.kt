@@ -24,6 +24,7 @@ object SecretStore {
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    @Synchronized
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(ALIAS, null) as? SecretKey)?.let { return it }
@@ -56,19 +57,21 @@ object SecretStore {
         return Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
     }
 
-    fun put(context: Context, name: String, value: String) {
+    fun put(context: Context, name: String, value: String): Boolean {
         val clean = value.trim()
         cache.remove(name)
         if (clean.isEmpty()) {
             prefs(context).edit().remove(name).apply()
-            return
+            return true
         }
-        runCatching {
+        return runCatching {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key())
             val encrypted = cipher.iv + cipher.doFinal(clean.toByteArray(Charsets.UTF_8))
             prefs(context).edit().putString(name, Base64.encodeToString(encrypted, Base64.NO_WRAP)).apply()
-        }
+            cache[name] = clean
+            true
+        }.getOrDefault(false)
     }
 
     fun has(context: Context, name: String): Boolean = prefs(context).contains(name)

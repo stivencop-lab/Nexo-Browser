@@ -59,13 +59,27 @@ object PhantomShield {
     private const val HIDE_BASE_SELECTOR = "[data-phantomshield-hidden=\"true\"]"
     private const val AI_SCAN_TIMEOUT_MS = 160_000L
 
-    private val SETTING_KEYS = listOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled")
-    private val PAGE_READABLE = setOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled")
-    private val PANEL_WRITABLE = setOf("adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled",
-        "disabled_domains", "aiConfig")
+    private val SETTING_KEYS = listOf(
+        "adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled",
+        "annoyancesEnabled", "cryptominerEnabled", "gpcEnabled", "queryStrippingEnabled"
+    )
+    private val PAGE_READABLE = setOf(
+        "adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled", "gpcEnabled", "annoyancesEnabled"
+    )
+    private val PANEL_WRITABLE = setOf(
+        "adblockEnabled", "privacyEnabled", "popupBlockEnabled", "antiBlockEnabled",
+        "protectionLevel", "annoyancesEnabled", "cryptominerEnabled", "gpcEnabled", "queryStrippingEnabled",
+        "disabled_domains", "allowed_domains", "user_cosmetic_rules", "aiConfig"
+    )
+    private const val MAX_TAB_LOG = 40
+    private const val MAX_USER_ZAPS_PER_SITE = 30
+    private const val MAX_USER_ZAP_SITES = 100
+    private const val AI_PAGE_MAX_CALLS = 3
+    private const val AI_PAGE_COOLDOWN_MS = 4_000L
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private val io by lazy { Executors.newSingleThreadScheduledExecutor() }
+    private val secureRandom by lazy { java.security.SecureRandom() }
     private lateinit var appContext: Context
     private lateinit var store: ShieldStore
     @Volatile private var started = false
@@ -73,24 +87,45 @@ object PhantomShield {
     @Volatile private var settings = ShieldSettings()
     @Volatile private var rules: FilterLists.Result = FilterLists.build(FilterLists.Bundled(emptyList(), emptyList(), emptyList(), emptyList()), emptyMap())
     @Volatile private var popupDomains: List<String> = emptyList()
+    @Volatile private var trackerDomains: Set<String> = emptySet()
     private var bundled: FilterLists.Bundled? = null
     private val blockedTotal = AtomicLong(0)
     private var persistScheduled = false
     private var updating: Thread? = null
     private val tabs = CopyOnWriteArrayList<WeakReference<ShieldTab>>()
     private val http by lazy {
-        OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).followRedirects(true).build()
+        OkHttpClient.Builder()
+            .dns(com.nexo.browser.NativeImagePolicy.publicDns(okhttp3.Dns.SYSTEM))
+            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+            .authenticator(okhttp3.Authenticator.NONE)
+            .proxyAuthenticator(okhttp3.Authenticator.NONE)
+            .callTimeout(20, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .followSslRedirects(false)
+            .build()
     }
     private val scripts by lazy { Scripts(appContext) }
+
+    /** Cierra el host auxiliar de IA si la actividad principal se destruye para no retenerla en memoria. */
+    fun onActivityDestroyed() {
+        ShieldAiHost.close("actividad cerrada")
+    }
 
     /** `aiConfig` y `aiAdDomains` ya interpretados; se renuevan al cambiar el almacén. */
     @Volatile private var aiConfig: ShieldAi.Config = ShieldAi.Config.OFF
     @Volatile private var learned: ShieldAi.Learned = ShieldAi.Learned.EMPTY
 
-    /** Política de cookies de Ajustes; la lee el hilo de red. */
+    /** Política de cookies y preferencias de privacidad de Ajustes; las lee el hilo de red. */
     @Volatile var cookieMode: String = BrowserPrefs.COOKIES_BALANCED
+    @Volatile private var prefQueryStripping: Boolean = true
+    @Volatile private var prefFingerprinting: Boolean = true
+    @Volatile private var prefGpc: Boolean = true
+    @Volatile private var prefStrictTracking: Boolean = false
+    @Volatile private var prefTrackingProtection: Boolean = true
 
-    /** Estado por pestaña: página principal, bloqueos y marcos que escuchan cambios de ajustes. */
+    internal data class BlockedEvent(val host: String, val category: BlockCategory, val type: String, val at: Long)
+
+    /** Estado por pestaña: página principal, bloqueos, registro en vivo y marcos que escuchan cambios de ajustes. */
     class ShieldTab internal constructor(val isPrivate: Boolean) {
         val id: Int = nextId.incrementAndGet()
         internal var session: WeakReference<CefriumEngineSession>? = null
@@ -99,9 +134,19 @@ object PhantomShield {
         @Volatile var topHost: String? = null
             private set
         internal val blocked = AtomicInteger(0)
+        internal val blockedAds = AtomicInteger(0)
+        internal val blockedTrackers = AtomicInteger(0)
+        internal val blockedPopups = AtomicInteger(0)
+        internal val blockedMiners = AtomicInteger(0)
+        internal val blockedThreats = AtomicInteger(0)
+        private val logLock = Any()
+        private val logRing = ArrayDeque<BlockedEvent>(MAX_TAB_LOG)
         /** Marcos de la pestaña: consultas, ajustes y órdenes de Nexo. */
         val channel = PageChannel()
         internal var lastPopupReport = 0L
+        /** Presupuesto de llamadas IA por carga de página (evita abuso por scripts de la web). */
+        internal val aiPageCalls = AtomicInteger(0)
+        @Volatile internal var lastAiCallAt = 0L
         /** Carga actual (cambia con cada página principal): las respuestas de IA de otra carga se descartan. */
         @Volatile internal var page = 0
         internal var ai = ShieldAi.TabState()
@@ -112,10 +157,59 @@ object PhantomShield {
         /** Respuestas propias pendientes: el hilo de red decide, otro hilo responde. */
         internal val answers = ConcurrentHashMap<String, ShieldDecision>()
 
+        internal fun recordCategory(category: BlockCategory, host: String?, type: String) {
+            when (category) {
+                BlockCategory.AD, BlockCategory.DNR -> blockedAds.incrementAndGet()
+                BlockCategory.TRACKER -> blockedTrackers.incrementAndGet()
+                BlockCategory.POPUP -> blockedPopups.incrementAndGet()
+                BlockCategory.MINER -> blockedMiners.incrementAndGet()
+                BlockCategory.THREAT -> blockedThreats.incrementAndGet()
+            }
+            val cleanHost = host?.lowercase()?.removeSuffix(".").orEmpty()
+            if (cleanHost.isEmpty()) return
+            synchronized(logLock) {
+                // Evita duplicar la misma entrada consecutiva para mantener el registro legible.
+                val last = logRing.lastOrNull()
+                if (last != null && last.host == cleanHost && last.category == category && last.type == type) return
+                if (logRing.size >= MAX_TAB_LOG) logRing.removeFirst()
+                logRing.addLast(BlockedEvent(cleanHost, category, type, System.currentTimeMillis()))
+            }
+        }
+
+        internal fun resetCounters() {
+            blocked.set(0)
+            blockedAds.set(0)
+            blockedTrackers.set(0)
+            blockedPopups.set(0)
+            blockedMiners.set(0)
+            blockedThreats.set(0)
+            synchronized(logLock) { logRing.clear() }
+        }
+
+        internal fun snapshotLog(): JSONArray {
+            val out = JSONArray()
+            val copy = synchronized(logLock) { logRing.toList().asReversed() }
+            for (item in copy) {
+                out.put(JSONObject()
+                    .put("host", item.host)
+                    .put("category", item.category.id)
+                    .put("type", item.type)
+                    .put("at", item.at))
+            }
+            return out
+        }
+
+        internal fun categoriesJson(): JSONObject = JSONObject()
+            .put("ads", blockedAds.get())
+            .put("trackers", blockedTrackers.get())
+            .put("popups", blockedPopups.get())
+            .put("miners", blockedMiners.get())
+            .put("threats", blockedThreats.get())
+
         internal fun onMainFrame(url: String) {
             topUrl = url
             topHost = UrlParts.host(url)
-            blocked.set(0)
+            resetCounters()
             answers.clear()
             newPage()
             channel.reset()
@@ -123,6 +217,8 @@ object PhantomShield {
 
         private fun newPage() {
             page++
+            aiPageCalls.set(0)
+            lastAiCallAt = 0L
             main.post {
                 ai = ShieldAi.TabState()
                 replyTimeouts.values.forEach { main.removeCallbacks(it) }
@@ -137,6 +233,7 @@ object PhantomShield {
         internal fun dispose() {
             answers.clear()
             session = null
+            synchronized(logLock) { logRing.clear() }
             tabs.removeAll { it.get() == null || it.get() === this }
             main.post {
                 replyTimeouts.values.forEach { main.removeCallbacks(it) }
@@ -151,7 +248,7 @@ object PhantomShield {
         fun onLocation(url: String) {
             if (url.startsWith("http://") || url.startsWith("https://")) {
                 val host = UrlParts.host(url)
-                if (host != topHost) { blocked.set(0); newPage() }
+                if (host != topHost) { resetCounters(); newPage() }
                 topUrl = url
                 topHost = host
             }
@@ -168,7 +265,13 @@ object PhantomShield {
         appContext = context.applicationContext
         store = ShieldStore(File(appContext.filesDir, "phantomshield"))
         enabled = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, true)
+        syncBrowserPrefs(appContext)
         readSettings()
+        // Mantener unificados `enabled` y `store["adblockEnabled"]` tras iniciar.
+        if (settings.adblockEnabled != enabled) {
+            enabled = settings.adblockEnabled
+            appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, enabled).apply()
+        }
         readAi(aiConfig = true, domains = true)
         blockedTotal.set(store.long("blockedCount"))
         // Reglas incluidas ya mismo (protegen desde la primera página); las listas, en segundo plano.
@@ -176,12 +279,48 @@ object PhantomShield {
             val data = BundledData.parse { readAsset(it) }
             bundled = data
             popupDomains = data.popupDomains
+            trackerDomains = data.trackerDomains.map { it.lowercase() }.toSet()
             rules = FilterLists.build(data, emptyMap())
         }
         store.addListener { changes -> onStorageChanged(changes) }
         io.execute { reloadLists() }
         io.scheduleWithFixedDelay({ updateIfDue() }, 5, 3600, TimeUnit.SECONDS)
     }
+
+    /** Sincroniza las preferencias de privacidad de Ajustes de Nexo con PhantomShield. */
+    fun syncBrowserPrefs(context: Context) {
+        val prevPrivacy = effectivePrivacyEnabled()
+        val prevGpc = effectiveGpcEnabled()
+        val prevLevel = effectiveProtectionLevel()
+        cookieMode = BrowserPrefs.cookieMode(context)
+        prefQueryStripping = BrowserPrefs.queryStripping(context)
+        prefFingerprinting = BrowserPrefs.fingerprinting(context)
+        prefGpc = BrowserPrefs.globalPrivacyControl(context)
+        prefStrictTracking = BrowserPrefs.strictTracking(context)
+        prefTrackingProtection = BrowserPrefs.trackingProtection(context)
+        if (!started) return
+        if (prevLevel != effectiveProtectionLevel()) clearDecisionCache()
+        val changes = JSONObject()
+        if (prevPrivacy != effectivePrivacyEnabled()) {
+            changes.put("privacyEnabled", JSONObject().put("newValue", effectivePrivacyEnabled()))
+        }
+        if (prevGpc != effectiveGpcEnabled()) {
+            changes.put("gpcEnabled", JSONObject().put("newValue", effectiveGpcEnabled()))
+        }
+        if (changes.length() > 0) broadcast(changes)
+    }
+
+    /** Consulta rápida para MalwareScan: ¿el host figura en la lista de badware/phishing descargada? */
+    fun isKnownThreatHost(host: String?): Boolean {
+        if (!started || host.isNullOrBlank()) return false
+        return ShieldPolicy.isThreatHost(host, rules.threatDomains)
+    }
+
+    private fun effectivePrivacyEnabled(): Boolean = settings.privacyEnabled || prefFingerprinting
+    private fun effectiveGpcEnabled(): Boolean = settings.gpcEnabled && prefGpc
+    private fun effectiveProtectionLevel(): String =
+        if (prefStrictTracking && settings.protectionLevel == ShieldSettings.LEVEL_BALANCED) ShieldSettings.LEVEL_STRICT
+        else settings.protectionLevel
 
     /** Peticiones de los service workers de un perfil (no pertenecen a ninguna pestaña); una vez por perfil. */
     fun attachProfile(profile: CefriumProfile) {
@@ -195,18 +334,50 @@ object PhantomShield {
     private fun readAsset(path: String): String =
         appContext.assets.open(ASSET_ROOT + path).use { it.readBytes().toString(Charsets.UTF_8) }
 
+    private fun readUserCosmeticRules(): Map<String, List<String>> {
+        val raw = store.get("user_cosmetic_rules").optJSONObject("user_cosmetic_rules") ?: return emptyMap()
+        val out = LinkedHashMap<String, List<String>>()
+        raw.keys().forEach { host ->
+            val cleanHost = host.trim().lowercase().removePrefix("www.").trimEnd('.')
+            if (cleanHost.isEmpty() || out.size >= MAX_USER_ZAP_SITES) return@forEach
+            val arr = raw.optJSONArray(host) ?: return@forEach
+            val list = ArrayList<String>()
+            for (i in 0 until minOf(arr.length(), MAX_USER_ZAPS_PER_SITE)) {
+                val sel = arr.optString(i).trim()
+                if (isSafeUserSelector(sel)) list.add(sel)
+            }
+            if (list.isNotEmpty()) out[cleanHost] = list
+        }
+        return out
+    }
+
+    private fun isSafeUserSelector(selector: String): Boolean =
+        selector.isNotEmpty() && selector.length <= 250 &&
+            '{' !in selector && '}' !in selector && ';' !in selector &&
+            '@' !in selector && "</" !in selector && '\n' !in selector && '\r' !in selector
+
     private fun readSettings() {
+        val storedLevel = store.get("protectionLevel").optString("protectionLevel", ShieldSettings.LEVEL_BALANCED)
         settings = ShieldSettings(
             adblockEnabled = store.boolean("adblockEnabled", true),
             privacyEnabled = store.boolean("privacyEnabled", false),
             popupBlockEnabled = store.boolean("popupBlockEnabled", true),
             antiBlockEnabled = store.boolean("antiBlockEnabled", false),
-            disabledDomains = ShieldSettings.normalizeDomains(store.stringList("disabled_domains"))
+            disabledDomains = ShieldSettings.normalizeDomains(store.stringList("disabled_domains")),
+            protectionLevel = ShieldSettings.normalizeLevel(storedLevel),
+            annoyancesEnabled = store.boolean("annoyancesEnabled", true),
+            cryptominerEnabled = store.boolean("cryptominerEnabled", true),
+            gpcEnabled = store.boolean("gpcEnabled", true),
+            queryStrippingEnabled = store.boolean("queryStrippingEnabled", true),
+            allowedDomains = ShieldSettings.normalizeDomains(store.stringList("allowed_domains")),
+            userCosmeticRules = readUserCosmeticRules()
         )
     }
 
     private fun readAi(aiConfig: Boolean, domains: Boolean) {
-        val stored = store.get(JSONArray().put("aiConfig").put("aiAdDomains"))
+        val stored = com.nexo.browser.ai.AiHub.overlayShieldRead(
+            appContext, store.get(JSONArray().put("aiConfig").put("aiAdDomains"))
+        )
         if (aiConfig) this.aiConfig = runCatching { ShieldAi.Config.from(stored.opt("aiConfig")) }.getOrDefault(ShieldAi.Config.OFF)
         if (domains) {
             learned = runCatching { ShieldAi.Learned.from(stored.opt("aiAdDomains"), System.currentTimeMillis()) }
@@ -260,9 +431,11 @@ object PhantomShield {
     }
 
     private fun download(url: String): String {
+        if (!url.startsWith("https://", ignoreCase = true)) error("Solo HTTPS permitido para listas")
         val request = Request.Builder().url(url).header("Cache-Control", "no-store").build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("HTTP error ${response.code}")
+            if (!response.request.url.isHttps) error("Redirección insegura rechazada")
             val body = response.body ?: error("Lista vacía")
             if (body.contentLength() > MAX_LIST_BYTES) error("Lista excede el límite de tamaño")
             val source = body.source()
@@ -297,8 +470,8 @@ object PhantomShield {
         enabled = value
         clearDecisionCache()
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, value).apply()
-        // Las páginas abiertas vuelven a pedir su estado, como con un cambio de ajustes.
-        broadcast(JSONObject().put("adblockEnabled", JSONObject().put("newValue", settings.adblockEnabled && value)))
+        // Mantiene sincronizados el interruptor rápido de Nexo y el almacén del panel.
+        store.set(JSONObject().put("adblockEnabled", value))
     }
 
     private fun activeTab(): ShieldTab? = (TabManager.activeSession() as? CefriumEngineSession)?.shield
@@ -330,8 +503,14 @@ object PhantomShield {
 
     private fun count(value: Long): String = if (value > 999) "999+" else value.toString()
 
-    private fun recordBlocked(tab: ShieldTab?) {
+    private fun recordBlocked(
+        tab: ShieldTab?,
+        category: BlockCategory = BlockCategory.AD,
+        host: String? = null,
+        type: String = "other"
+    ) {
         tab?.blocked?.incrementAndGet()
+        tab?.recordCategory(category, host, type)
         if (tab?.isPrivate == true) return
         blockedTotal.incrementAndGet()
         synchronized(this) {
@@ -351,12 +530,24 @@ object PhantomShield {
         tabs.add(WeakReference(tab))
     }
 
-    /** URL sin parámetros de rastreo para una navegación principal (o la misma). */
+    /** URL limpia (desenvuelve redirecciones de rastreo y quita parámetros UTM/clic) para una navegación principal. */
     fun cleanNavigation(url: String): String {
-        if (!started || !enabled) return url
+        if (!started || !enabled || !prefQueryStripping || !settings.queryStrippingEnabled) return url
         val host = UrlParts.host(url) ?: return url
         if (!settings.isEnabledForHost(host)) return url
-        return ShieldPolicy.stripTrackingParams(url) ?: url
+        val unwrapped = ShieldPolicy.unwrapBounceRedirect(url) ?: url
+        return ShieldPolicy.stripTrackingParams(unwrapped) ?: unwrapped
+    }
+
+    private fun effectiveSettings(): ShieldSettings {
+        val level = effectiveProtectionLevel()
+        val privacy = effectivePrivacyEnabled()
+        val gpc = effectiveGpcEnabled()
+        return if (level == settings.protectionLevel && privacy == settings.privacyEnabled && gpc == settings.gpcEnabled) {
+            settings
+        } else {
+            settings.copy(protectionLevel = level, privacyEnabled = privacy, gpcEnabled = gpc)
+        }
     }
 
     /**
@@ -381,31 +572,51 @@ object PhantomShield {
             val type = ShieldPolicy.typeFromEngine(request.type?.name.orEmpty(), url)
             val top = request.topLevelUrl?.takeIf { it.isNotEmpty() } ?: tab?.topUrl ?: url
             val document = request.documentUrl?.takeIf { it.isNotEmpty() } ?: top
+            val reqHost = UrlParts.host(url)
             if (tab != null && !request.isMainFrame &&
                 com.nexo.browser.extensions.nxr.DnrBridge.blocks(url, document, top, type, request.method.orEmpty(), tab.isPrivate)) {
                 forget(url)
-                recordBlocked(tab)
+                recordBlocked(tab, BlockCategory.DNR, reqHost, type)
                 return true
             }
             if (!started || !enabled) return forget(url)
             val topHost = UrlParts.host(top)
-            val cacheKey = if (!request.isMainFrame && url.length <= 320) "$type|${topHost.orEmpty()}|$url" else null
+            val docHost = UrlParts.host(document).orEmpty()
+            val cacheKey = if (!request.isMainFrame && url.length <= 320) "$type|${topHost.orEmpty()}|$docHost|$url" else null
             val cached = cacheKey?.let { decisionCache.get(it) }
+            val currentRules = rules
+            val eff = effectiveSettings()
             val decision = if (cached != null) {
                 decisionCacheHits.incrementAndGet()
                 cached
             } else {
                 if (cacheKey != null) decisionCacheMisses.incrementAndGet()
                 val computed = runCatching {
-                    ShieldPolicy.decide(rules.network, settings, popupDomains, url, type, topHost, document)
-                        .let { if (it == ShieldDecision.Allow && !request.isMainFrame && blocksLearned(url, type, top)) ShieldDecision.Block else it }
+                    ShieldPolicy.decide(currentRules.network, eff, popupDomains, url, type, topHost, document)
+                        .let { d ->
+                            when {
+                                d != ShieldDecision.Allow -> d
+                                !request.isMainFrame && eff.cryptominerEnabled &&
+                                    !eff.isRequestHostAllowed(reqHost) &&
+                                    ShieldPolicy.isCryptominerHost(reqHost, currentRules.minerDomains) -> ShieldDecision.Block
+                                !request.isMainFrame && blocksLearned(url, type, top) -> ShieldDecision.Block
+                                else -> d
+                            }
+                        }
                 }.getOrDefault(ShieldDecision.Allow)
                 if (cacheKey != null) decisionCache.put(cacheKey, computed)
                 computed
             }
             return when (decision) {
                 ShieldDecision.Allow -> forget(url)
-                ShieldDecision.Block -> { forget(url); recordBlocked(tab); true }
+                ShieldDecision.Block -> {
+                    forget(url)
+                    val category = ShieldPolicy.classifyBlocked(
+                        reqHost, url, type, popupDomains, trackerDomains, currentRules.minerDomains, currentRules.threatDomains
+                    )
+                    recordBlocked(tab, category, reqHost, type)
+                    true
+                }
                 else -> {
                     // Script de sustitución o página de aviso: la responde shouldInterceptRequest.
                     // La respuesta no se consume: dos peticiones a la vez reciben la misma.
@@ -425,8 +636,10 @@ object PhantomShield {
         /** Hilo de fondo: solo responde lo que [shouldBlockRequest] marcó; el resto pasa enseguida. */
         override fun shouldInterceptRequest(request: CefriumContentRequest): CefriumContentResponse? {
             if (answers.isEmpty()) return null
-            val decision = answers[request.url ?: return null] ?: return null
-            recordBlocked(tab)
+            val url = request.url ?: return null
+            val decision = answers[url] ?: return null
+            val category = if (decision === ShieldDecision.BlockPage) BlockCategory.POPUP else BlockCategory.TRACKER
+            recordBlocked(tab, category, UrlParts.host(url), if (decision === ShieldDecision.BlockPage) "popup" else "script")
             return respond(decision)
         }
     }
@@ -472,7 +685,7 @@ object PhantomShield {
         else -> true
     }
 
-    /** Scripts de sustitución ya leídos (son cuatro archivos pequeños). */
+    /** Scripts de sustitución ya leídos (son archivos pequeños). */
     private val surrogates = ConcurrentHashMap<String, ByteArray>()
 
     private fun respond(decision: ShieldDecision): CefriumContentResponse? = when (decision) {
@@ -492,14 +705,16 @@ object PhantomShield {
 
     /**
      * Dominio publicitario aprendido con la IA: se cortan sus peticiones de
-     * terceros (no los medios ni la página que abre el usuario).
+     * terceros (nunca medios, OAuth, CAPTCHA, pagos ni la página principal).
      */
     private fun blocksLearned(url: String, type: String, topUrl: String): Boolean {
         val current = learned
         if (current.blocked.isEmpty() || type == "media") return false
         val host = UrlParts.host(url) ?: return false
+        if (settings.isRequestHostAllowed(host)) return false
         val topHost = UrlParts.host(topUrl)
         if (!settings.isEnabledForHost(topHost) || ShieldPolicy.siteOfHost(host) == ShieldPolicy.siteOfHost(topHost)) return false
+        if (ShieldPolicy.isProtectedSafetyUrl(url)) return false
         return current.blocks(host)
     }
 
@@ -510,7 +725,7 @@ object PhantomShield {
             ShieldPolicy.blocksPopup(rules.network, settings, popupDomains, url, opener.topUrl) ||
                 (settings.popupBlockEnabled && blocksLearned(url, "popup", opener.topUrl ?: url))
         }.getOrDefault(false)
-        if (blocked) recordBlocked(opener)
+        if (blocked) recordBlocked(opener, BlockCategory.POPUP, UrlParts.host(url), "popup")
         return blocked
     }
 
@@ -633,7 +848,7 @@ object PhantomShield {
         if (call.kind == "nxr_storage" || call.kind == "nxr_message" || call.kind == "nxr_error") {
             if (session == null) return answer(call.id, null, "Sesión no disponible.")
             val reply = com.nexo.browser.extensions.nxr.NxrRuntime.onPageMessage(
-                sessionKey = System.identityHashCode(session),
+                sessionKey = session.sessionUid.toInt(),
                 docGen = session.documentGeneration(),
                 isPrivate = session.isPrivate,
                 origin = origin,
@@ -646,6 +861,9 @@ object PhantomShield {
         return when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })
+                // Reflejar también las preferencias globales de privacidad/GPC de Ajustes de Nexo.
+                all.put("privacyEnabled", effectivePrivacyEnabled())
+                all.put("gpcEnabled", effectiveGpcEnabled())
                 val requested = requestedKeys(call.payload)
                 val result = JSONObject()
                 all.keys().forEach { key -> if (requested == null || key in requested) result.put(key, all.get(key)) }
@@ -686,7 +904,7 @@ object PhantomShield {
     private fun aiAllowed(tab: ShieldTab, host: String?): Boolean =
         !tab.isPrivate && effectiveEnabled(host) && aiConfig.allows(host)
 
-    /** `AI_CLASSIFY` del detector: solo la página principal de un sitio autorizado. */
+    /** `AI_CLASSIFY` del detector: solo la página principal de un sitio autorizado, con presupuesto y cooldown. */
     private fun classify(tab: ShieldTab, message: JSONObject, origin: String, isMainFrame: Boolean, done: (Any?) -> Unit) {
         val host = tab.topHost
         if (!isMainFrame || host == null || UrlParts.host(origin) != host || !effectiveEnabled(host)) {
@@ -697,12 +915,23 @@ object PhantomShield {
             done(JSONObject().put("ok", false).put("code", "off").put("error", "IA desactivada o sitio sin autorización."))
             return
         }
+        val now = SystemClock.elapsedRealtime()
+        if (tab.lastAiCallAt > 0L && now - tab.lastAiCallAt < AI_PAGE_COOLDOWN_MS) {
+            done(JSONObject().put("ok", false).put("code", "cooldown").put("error", "En espera por el límite de solicitudes."))
+            return
+        }
+        if (tab.aiPageCalls.get() >= AI_PAGE_MAX_CALLS) {
+            done(JSONObject().put("ok", false).put("code", "budget").put("error", "Límite de análisis alcanzado en esta página."))
+            return
+        }
         val page = tab.page
         val flightKey = "${tab.id}:$page"
         if (inFlightAiPages.putIfAbsent(flightKey, true) != null) {
             done(JSONObject().put("ok", false).put("code", "busy").put("error", "Análisis de IA ya en curso para esta página."))
             return
         }
+        tab.lastAiCallAt = now
+        tab.aiPageCalls.incrementAndGet()
         val candidates = enrichCandidates(message.optJSONArray("candidates"), tab.topUrl ?: origin)
         val sender = JSONObject().put("tabId", tab.id).put("page", page).put("host", host).put("incognito", tab.isPrivate)
             .put("known", JSONArray(knownAdHosts(candidates)))
@@ -792,6 +1021,35 @@ object PhantomShield {
 
     private fun effectiveEnabled(host: String?): Boolean = enabled && settings.isEnabledForHost(host)
 
+    private fun userZapsFor(host: String): List<String> {
+        val clean = host.trim().lowercase().removePrefix("www.").trimEnd('.')
+        if (clean.isEmpty()) return emptyList()
+        return settings.userCosmeticRules[clean].orEmpty()
+    }
+
+    private fun saveUserZap(host: String, selector: String): Boolean {
+        val clean = host.trim().lowercase().removePrefix("www.").trimEnd('.')
+        val sel = selector.trim()
+        if (clean.isEmpty() || !isSafeUserSelector(sel)) return false
+        val raw = store.get("user_cosmetic_rules").optJSONObject("user_cosmetic_rules")?.let { JSONObject(it.toString()) } ?: JSONObject()
+        val arr = raw.optJSONArray(clean) ?: JSONArray()
+        for (i in 0 until arr.length()) if (arr.optString(i) == sel) return true
+        if (arr.length() >= MAX_USER_ZAPS_PER_SITE) return false
+        arr.put(sel)
+        raw.put(clean, arr)
+        store.set(JSONObject().put("user_cosmetic_rules", raw))
+        return true
+    }
+
+    private fun clearUserZaps(host: String) {
+        val clean = host.trim().lowercase().removePrefix("www.").trimEnd('.')
+        if (clean.isEmpty()) return
+        val raw = store.get("user_cosmetic_rules").optJSONObject("user_cosmetic_rules")?.let { JSONObject(it.toString()) } ?: return
+        if (!raw.has(clean)) return
+        raw.remove(clean)
+        store.set(JSONObject().put("user_cosmetic_rules", raw))
+    }
+
     private fun pageMessage(tab: ShieldTab, message: JSONObject, origin: String, isMainFrame: Boolean): Any? {
         val topHost = tab.topHost.orEmpty()
         val frameHost = UrlParts.host(origin)?.takeIf { it.isNotEmpty() } ?: topHost
@@ -799,14 +1057,27 @@ object PhantomShield {
             "GET_SITE_STATE" -> {
                 val config = aiConfig
                 JSONObject().put("ok", true).put("enabled", effectiveEnabled(topHost))
+                    .put("privacyEnabled", effectivePrivacyEnabled())
+                    .put("gpcEnabled", effectiveGpcEnabled())
+                    .put("antiBlockEnabled", settings.antiBlockEnabled)
+                    .put("annoyancesEnabled", settings.annoyancesEnabled)
                     .put("aiEnabled", aiAllowed(tab, topHost.takeIf { it.isNotEmpty() }))
                     .put("aiDetail", config.detail).put("aiSensitivity", config.sensitivity).put("host", topHost)
             }
             "GET_COSMETIC" -> {
                 if (!effectiveEnabled(topHost)) return disabledCosmetic()
                 val result = rules.cosmetic.forHost(frameHost)
+                val combined = ArrayList<String>(result.selectors.size + 32)
+                combined.add(HIDE_BASE_SELECTOR)
+                combined.addAll(result.selectors)
+                if (settings.annoyancesEnabled && result.generic) {
+                    combined.addAll(ShieldPolicy.ANNOYANCE_COSMETIC_SELECTORS)
+                }
+                if (isMainFrame) {
+                    combined.addAll(userZapsFor(topHost))
+                }
                 JSONObject().put("ok", true).put("enabled", true).put("generic", result.generic).put("injected", false)
-                    .put("selectors", JSONArray(listOf(HIDE_BASE_SELECTOR) + result.selectors))
+                    .put("selectors", JSONArray(combined))
             }
             "COSMETIC_LOOKUP" -> {
                 if (!effectiveEnabled(topHost)) return disabledCosmetic()
@@ -819,9 +1090,18 @@ object PhantomShield {
                 val now = SystemClock.elapsedRealtime()
                 if (isMainFrame && now - tab.lastPopupReport > 1000) {
                     tab.lastPopupReport = now
-                    recordBlocked(tab)
+                    recordBlocked(tab, BlockCategory.POPUP, topHost, "popup")
                 }
                 JSONObject().put("ok", true)
+            }
+            "ZAP_ELEMENT" -> {
+                if (!isMainFrame || topHost.isEmpty() || UrlParts.host(origin) != tab.topHost) {
+                    return JSONObject().put("ok", false)
+                }
+                val selector = message.optString("selector").trim()
+                val saved = saveUserZap(topHost, selector)
+                if (saved) recordBlocked(tab, BlockCategory.AD, topHost, "cosmetic")
+                JSONObject().put("ok", saved)
             }
             "AI_PAGE" -> {
                 // El detector informa de lo que realmente ocultó (o de pasadas sin candidatos).
@@ -853,6 +1133,9 @@ object PhantomShield {
                         result.put(key, defaultSetting(key))
                     }
                 }
+                if (!result.has("protectionLevel") && (keys == null || keys == JSONObject.NULL || requestedKeys(keys)?.contains("protectionLevel") == true)) {
+                    result.put("protectionLevel", effectiveProtectionLevel())
+                }
                 answer(call.id, com.nexo.browser.ai.AiHub.overlayShieldRead(com.nexo.browser.AppContext.getOrNull(), result))
             }
             "set" -> {
@@ -880,11 +1163,16 @@ object PhantomShield {
             }
             "tabs.sendMessage" -> {
                 val request = call.payload as? JSONObject ?: return answer(call.id, null, "Petición no válida")
-                val message = request.optJSONObject("message")
+                val msg = request.optJSONObject("message")
                 val tab = tabs.mapNotNull { it.get() }.firstOrNull { it.id == request.optInt("tabId", -1) }
-                // Solo «Analizar con IA» de la página principal; la pestaña responde por su canal.
-                if (tab == null || message?.optString("type") != "AI_SCAN") return answer(call.id, null, "No disponible")
-                askTab(tab, message) { result -> channel.push(answer(call.id, result)) }
+                val type = msg?.optString("type")
+                if (tab == null || (type != "AI_SCAN" && type != "START_ZAPPER")) return answer(call.id, null, "No disponible")
+                if (type == "START_ZAPPER") {
+                    tab.channel.push(JSONObject().put("event", "message").put("message", JSONObject().put("type", "START_ZAPPER")).toString())
+                    main.post(onClose)
+                    return answer(call.id, JSONObject().put("ok", true))
+                }
+                askTab(tab, msg) { result -> channel.push(answer(call.id, result)) }
                 null
             }
             "openOptions" -> if (com.nexo.browser.PhantomShieldPanel.openOptions()) answer(call.id, null)
@@ -893,7 +1181,7 @@ object PhantomShield {
                 val payload = call.payload as? JSONObject ?: return answer(call.id, null)
                 var immediate: String? = null
                 var sync = true
-                panelMessage(payload) { result ->
+                panelMessage(payload, onClose) { result ->
                     val text = answer(call.id, result)
                     if (sync) immediate = text else channel.push(text)
                 }
@@ -905,26 +1193,93 @@ object PhantomShield {
         }
     }
 
-    private fun panelMessage(message: JSONObject, done: (Any?) -> Unit) {
+    private fun panelMessage(message: JSONObject, onClose: () -> Unit, done: (Any?) -> Unit) {
         when (message.optString("type")) {
             "GET_STATS" -> {
                 val tabId = message.optInt("tabId", -1)
                 val tab = tabs.mapNotNull { it.get() }.firstOrNull { it.id == tabId }
                 val host = message.optString("host").lowercase()
+                val eff = effectiveSettings()
                 done(JSONObject().put("ok", true)
                     .put("blockedCount", blockedTotal.get())
                     .put("tabBlocked", tab?.blocked?.get() ?: 0)
+                    .put("categories", tab?.categoriesJson() ?: JSONObject())
+                    .put("tabLog", tab?.snapshotLog() ?: JSONArray())
+                    .put("userZaps", userZapsFor(host).size)
+                    .put("allowedDomains", JSONArray(settings.allowedDomains))
                     .put("tabAi", tab?.ai?.takeIf { it.active }?.toJson() ?: JSONObject.NULL)
                     .put("siteDisabled", settings.isHostDisabled(host))
-                    .put("rules", JSONObject().put("network", rules.networkCount).put("cosmetic", rules.cosmeticCount))
+                    .put("rules", JSONObject().put("network", rules.networkCount).put("cosmetic", rules.cosmeticCount)
+                        .put("threats", rules.threatDomains.size).put("miners", ShieldPolicy.CRYPTOMINER_HOSTS.size + rules.minerDomains.size))
                     .put("learnedDomains", JSONObject().put("blocked", learned.blocked.size).put("watching", learned.watching))
-                    .put("settings", JSONObject().put("adblockEnabled", settings.adblockEnabled && enabled)
-                        .put("privacyEnabled", settings.privacyEnabled).put("popupBlockEnabled", settings.popupBlockEnabled)
-                        .put("antiBlockEnabled", settings.antiBlockEnabled)))
+                    .put("settings", JSONObject()
+                        .put("adblockEnabled", settings.adblockEnabled && enabled)
+                        .put("privacyEnabled", eff.privacyEnabled)
+                        .put("popupBlockEnabled", settings.popupBlockEnabled)
+                        .put("antiBlockEnabled", settings.antiBlockEnabled)
+                        .put("protectionLevel", eff.protectionLevel)
+                        .put("annoyancesEnabled", settings.annoyancesEnabled)
+                        .put("cryptominerEnabled", settings.cryptominerEnabled)
+                        .put("gpcEnabled", eff.gpcEnabled)
+                        .put("queryStrippingEnabled", settings.queryStrippingEnabled && prefQueryStripping)))
+            }
+            "SET_LEVEL" -> {
+                val level = ShieldSettings.normalizeLevel(message.optString("level"))
+                val patch = JSONObject()
+                    .put("protectionLevel", level)
+                    .put("adblockEnabled", true)
+                    .put("popupBlockEnabled", true)
+                    .put("cryptominerEnabled", true)
+                    .put("annoyancesEnabled", true)
+                    .put("gpcEnabled", true)
+                when (level) {
+                    ShieldSettings.LEVEL_BALANCED -> {
+                        patch.put("privacyEnabled", false).put("antiBlockEnabled", false)
+                    }
+                    ShieldSettings.LEVEL_STRICT, ShieldSettings.LEVEL_AGGRESSIVE -> {
+                        patch.put("privacyEnabled", true).put("antiBlockEnabled", true)
+                    }
+                }
+                store.set(patch)
+                done(JSONObject().put("ok", true).put("level", level))
+            }
+            "START_ZAPPER" -> {
+                val tabId = message.optInt("tabId", -1)
+                val tab = tabs.mapNotNull { it.get() }.firstOrNull { it.id == tabId } ?: activeTab()
+                if (tab == null) {
+                    done(JSONObject().put("ok", false).put("error", "No hay una página web activa."))
+                    return
+                }
+                tab.channel.push(JSONObject().put("event", "message").put("message", JSONObject().put("type", "START_ZAPPER")).toString())
+                main.post(onClose)
+                done(JSONObject().put("ok", true))
+            }
+            "CLEAR_SITE_ZAPS" -> {
+                val host = message.optString("host")
+                clearUserZaps(host)
+                done(JSONObject().put("ok", true))
+            }
+            "ALLOW_DOMAIN" -> {
+                val domain = message.optString("domain").trim().lowercase().removePrefix("www.").trimEnd('.')
+                if (domain.isNotEmpty() && NetworkEngine.isValidHostname(domain)) {
+                    val next = ShieldSettings.normalizeDomains(store.stringList("allowed_domains")).toMutableSet()
+                    next.add(domain)
+                    store.set(JSONObject().put("allowed_domains", JSONArray(next.sorted())))
+                    done(JSONObject().put("ok", true))
+                } else {
+                    done(JSONObject().put("ok", false).put("error", "Dominio no válido."))
+                }
+            }
+            "UNALLOW_DOMAIN" -> {
+                val domain = message.optString("domain").trim().lowercase().removePrefix("www.").trimEnd('.')
+                val next = ShieldSettings.normalizeDomains(store.stringList("allowed_domains")).toMutableSet()
+                next.remove(domain)
+                store.set(JSONObject().put("allowed_domains", JSONArray(next.sorted())))
+                done(JSONObject().put("ok", true))
             }
             "RESET_STATS" -> {
                 blockedTotal.set(0)
-                tabs.mapNotNull { it.get() }.forEach { it.blocked.set(0); it.ai = ShieldAi.TabState() }
+                tabs.mapNotNull { it.get() }.forEach { it.resetCounters(); it.ai = ShieldAi.TabState() }
                 store.set(JSONObject().put("blockedCount", 0))
                 done(JSONObject().put("ok", true).put("blockedCount", 0))
             }
@@ -944,8 +1299,14 @@ object PhantomShield {
 
     private fun onStorageChanged(changes: JSONObject) {
         if (changes.has("adblockEnabled") || changes.has("privacyEnabled") || changes.has("popupBlockEnabled") ||
-            changes.has("antiBlockEnabled") || changes.has("disabled_domains")) {
+            changes.has("antiBlockEnabled") || changes.has("disabled_domains") || changes.has("protectionLevel") ||
+            changes.has("annoyancesEnabled") || changes.has("cryptominerEnabled") || changes.has("gpcEnabled") ||
+            changes.has("queryStrippingEnabled") || changes.has("allowed_domains") || changes.has("user_cosmetic_rules")) {
             readSettings()
+            if (changes.has("adblockEnabled") && enabled != settings.adblockEnabled) {
+                enabled = settings.adblockEnabled
+                appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, enabled).apply()
+            }
             clearDecisionCache()
         }
         if (changes.has("aiConfig") || changes.has("aiAdDomains")) readAi(changes.has("aiConfig"), changes.has("aiAdDomains"))
@@ -962,7 +1323,7 @@ object PhantomShield {
             when (key) {
                 in PAGE_READABLE -> pageChanges.put(key, changes.get(key))
                 // Sin valores: la clave de la API y los dominios nunca llegan a las páginas.
-                "disabled_domains", "aiConfig" -> pageChanges.put(key, JSONObject())
+                "disabled_domains", "aiConfig", "user_cosmetic_rules" -> pageChanges.put(key, JSONObject())
             }
         }
         val pageText = JSONObject().put("event", "storage").put("changes", pageChanges).toString()
@@ -981,7 +1342,8 @@ object PhantomShield {
 
     /** Pregunta a la página principal de [tab] (p. ej. «Analizar con IA») y espera su respuesta. */
     private fun askTab(tab: ShieldTab, message: JSONObject, done: (Any?) -> Unit) {
-        val rid = nextReply.incrementAndGet()
+        var rid = secureRandom.nextInt(0x7fffffff)
+        if (rid <= 0 || tab.replies.containsKey(rid)) rid = (nextReply.incrementAndGet() and 0x7fffffff).coerceAtLeast(1)
         tab.replies[rid] = done
         tab.channel.push(JSONObject().put("event", "message").put("rid", rid).put("message", message).toString())
         val timeout = Runnable {
@@ -1047,7 +1409,7 @@ object PhantomShield {
             append(port).append('\n')
             append("nexoCefriumPort(true);\n")
             append(shim).append('\n')
-            append("globalThis.browser = nexoPhantomShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n")
+            append("globalThis.browser = nexoPhantomShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(", true);\n")
         }
 
         /** Anfitrión de IA: su `browser.*` propio y `fetch` por Nexo (solo en `host/ai-host.html`). */

@@ -572,6 +572,17 @@
     return Number.isFinite(value) ? value : 0;
   }
 
+  function decodedFrames(video) {
+    try {
+      if (typeof video.getVideoPlaybackQuality === "function") {
+        const q = video.getVideoPlaybackQuality();
+        if (q && Number.isFinite(q.totalVideoFrames)) return q.totalVideoFrames;
+      }
+      if (Number.isFinite(video.webkitDecodedFrameCount)) return video.webkitDecodedFrameCount;
+    } catch (_) {}
+    return -1;
+  }
+
   function nudge(video, forward) {
     try {
       const time = mediaTime(video) + (forward ? 0.05 : 0);
@@ -587,15 +598,22 @@
     }
   }
 
-  function watchProgress(video, attempt) {
+  function watchProgress(video, attempt, checkDelayMs) {
     const start = mediaTime(video);
+    const startFrames = decodedFrames(video);
+    const delay = typeof checkDelayMs === "number" ? checkDelayMs : RECOVERY_CHECK_MS;
     setTimeout(() => {
       if (!video.isConnected || video.paused || video.ended || video.seeking) return;
-      if (mediaTime(video) - start > 0.05) return;
-      // Sigue congelado: otro salto y, la segunda vez, reinicio de la reproducción.
+      const timeMoved = mediaTime(video) - start > 0.05;
+      const curFrames = decodedFrames(video);
+      const framesFrozen = startFrames >= 0 && curFrames >= 0 && curFrames <= startFrames &&
+        Number(video.videoWidth || 0) > 0 && Number(video.readyState || 0) >= 2;
+      if (timeMoved && !framesFrozen) return;
+      // Sigue congelado (o audio avanzó pero los cuadros de video no se decodifican):
+      // un pequeño salto reconstruye el decodificador hardware sobre la nueva superficie.
       if (attempt === 0) {
-        nudge(video, true);
-        watchProgress(video, 1);
+        nudge(video, !framesFrozen);
+        watchProgress(video, 1, RECOVERY_CHECK_MS);
       } else if (attempt === 1) {
         try {
           video.pause();
@@ -603,7 +621,7 @@
           if (playing && typeof playing.catch === "function") playing.catch(() => {});
         } catch (_) {}
       }
-    }, RECOVERY_CHECK_MS);
+    }, delay);
   }
 
   function recoverVideo(entry) {
@@ -617,11 +635,12 @@
           const playing = video.play();
           if (playing && typeof playing.catch === "function") playing.catch(() => {});
         } catch (_) {}
-        watchProgress(video, 0);
+        watchProgress(video, 0, RECOVERY_CHECK_MS);
       }
       return;
     }
-    watchProgress(video, 0);
+    // El audio pudo seguir avanzando en segundo plano sin superficie de video: comprobar rápido los cuadros.
+    watchProgress(video, 0, entry.playing ? 450 : RECOVERY_CHECK_MS);
   }
 
   function onBackground() {
@@ -1504,6 +1523,9 @@
     refreshPipIsolation();
 
     if (!port) return;
+    // PageBridge descarta video_state fuera del marco principal; evitar escaneos DOM y IPC en iframes.
+    const isSubframe = (function() { try { return Boolean(window.top) && window !== window.top; } catch (_) { return true; } })();
+    if (isSubframe) return;
 
     // Una pestaña oculta (en segundo plano) no necesita escanear el DOM.
     if (document.visibilityState === "hidden" && !pipActive) return;
@@ -1547,7 +1569,7 @@
       `${state.rx}|${state.ry}|${state.rw}|${state.rh}|${state.rate}|${state.drm}|${state.tracks}|${state.loop}`;
     const now = Date.now();
 
-    if (key === lastStateKey && now - lastReportAt < HEARTBEAT_MS) return;
+    if (key === lastStateKey && (!state.present || now - lastReportAt < HEARTBEAT_MS)) return;
 
     lastStateKey = key;
     lastReportAt = now;

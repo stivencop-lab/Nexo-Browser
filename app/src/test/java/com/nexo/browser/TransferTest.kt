@@ -15,7 +15,7 @@ class TransferTest {
         try {
             val source=File(root,"source").apply { mkdirs() }
             File(source,"native.json").writeText("native secret")
-            File(source,"gecko/default/origin/idb/db.sqlite").apply { parentFile.mkdirs(); writeBytes(ByteArray(10000) { (it%251).toByte() }) }
+            File(source,"gecko/default/origin/idb/db.sqlite").apply { parentFile?.mkdirs(); writeBytes(ByteArray(10000) { (it%251).toByte() }) }
             val bytes=ByteArrayOutputStream().also { MigrationArchive.write(source,it,password) }.toByteArray()
             assertFalse(String(bytes).contains("native secret"))
             val target=File(root,"valid");MigrationArchive.read(ByteArrayInputStream(bytes),target,password)
@@ -102,7 +102,7 @@ class TransferTest {
         val root=temp()
         try {
             val base=File(root,"data").apply { mkdirs() };File(base,"old").writeText("original")
-            val journal=File(root,"journal").apply { mkdirs() };File(journal,"backup/old").apply { parentFile.mkdirs();writeText("incomplete") }
+            val journal=File(root,"journal").apply { mkdirs() };File(journal,"backup/old").apply { parentFile?.mkdirs();writeText("incomplete") }
             val staged=File(root,"new").apply { writeText("imported") }
             val tx=TransferCommit(base,journal);tx.apply(linkedMapOf("old" to staged,"new" to staged))
             assertThrows(IllegalStateException::class.java) { tx.restore { if(it==0) error("death during restore") } }

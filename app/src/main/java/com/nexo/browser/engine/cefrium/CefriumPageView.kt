@@ -3,15 +3,21 @@ package com.nexo.browser.engine.cefrium
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import com.cefrium.CefriumBrowser
+import com.nexo.browser.BrowserMediaController
 import com.nexo.browser.PullToRefreshTarget
+import com.nexo.browser.TabManager
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.EngineView
+import kotlin.math.roundToInt
 
 /**
  * Vista de páginas: muestra la superficie del navegador de la pestaña activa.
@@ -20,6 +26,7 @@ import com.nexo.browser.engine.EngineView
  * Chromium en la misma superficie: Nexo solo oculta su interfaz.
  */
 class CefriumPageView(context: Context) : FrameLayout(context), EngineView, PullToRefreshTarget {
+    private val main = Handler(Looper.getMainLooper())
     private var current: CefriumEngineSession? = null
     internal var renderingSurface: SurfaceView? = null
         private set
@@ -29,11 +36,19 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
         scaleType = ImageView.ScaleType.FIT_XY
     }
     internal var onBackdropInvalidated: (() -> Unit)? = null
-    private val resumeBridge = CefResumeBridge(snapshotOverlay, ::postInvalidateOnAnimation, {
-        onBackdropInvalidated?.invoke()
-    }) { browser ->
-        current?.recreateSurface(browser) == true
-    }
+    internal var onRecoveryStateChanged: ((Boolean) -> Unit)? = null
+    private val resumeBridge = CefResumeBridge(
+        overlay = snapshotOverlay,
+        invalidateContainer = ::postInvalidateOnAnimation,
+        frameAvailable = { onBackdropInvalidated?.invoke() },
+        resolveSurface = ::resolveSurface,
+        isMediaActive = {
+            val activeTab = TabManager.activeTab()
+            activeTab != null && BrowserMediaController.shouldKeepAlive(activeTab.id, 10_000L)
+        },
+        onRecoveryChanged = { recovering -> onRecoveryStateChanged?.invoke(recovering) },
+        recreateBrowser = { browser -> current?.recreateSurface(browser) == true }
+    )
 
     init {
         addView(snapshotOverlay, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -79,6 +94,14 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
         }
         renderingSurface = findSurface(container)
         resumeBridge.bind(browser, renderingSurface)
+        // Garantiza que una pestaña recién activada o tomada del SpareRendererPool sea visible inmediatamente.
+        if (session.isActiveSession() && !browser.isClosed) {
+            runCatching {
+                browser.onResume()
+                browser.setPageVisible(true)
+                browser.invalidate()
+            }
+        }
     }
 
     /** El navegador de [session] se cierra o se recrea. */
@@ -104,15 +127,65 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
         if (current === session) current = null
     }
 
-    /** Copia de lo que se ve (incluidos los videos), con PixelCopy dentro de Cefrium. */
+    /**
+     * Copia rápida y fiable de lo que se ve (incluidos videos hardware).
+     * Usa PixelCopy escalado directamente sobre el SurfaceView (rápido y bajo consumo de RAM)
+     * con respaldo a `browser.captureBitmap` si la superficie aún no está lista.
+     */
     override fun capture(onResult: (Bitmap?) -> Unit) {
         val browser = current?.browser
-        if (browser == null || width <= 0 || height <= 0) { onResult(null); return }
-        runCatching { browser.captureBitmap { bitmap -> onResult(bitmap) } }.onFailure { onResult(null) }
+        if (browser == null || width <= 0 || height <= 0) {
+            onResult(null)
+            return
+        }
+        val surface = resolveSurface()
+        if (surface != null && surface.holder.surface.isValid && surface.width > 0 && surface.height > 0) {
+            val targetW = minOf(CAPTURE_MAX_WIDTH, surface.width).coerceAtLeast(1)
+            val scale = targetW.toFloat() / surface.width.toFloat()
+            val targetH = (surface.height * scale).roundToInt().coerceAtLeast(1)
+            val bitmap = runCatching { Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888) }.getOrNull()
+            if (bitmap != null) {
+                try {
+                    PixelCopy.request(surface, bitmap, { status ->
+                        if (status == PixelCopy.SUCCESS) {
+                            main.post { onResult(bitmap) }
+                        } else {
+                            bitmap.recycle()
+                            main.post { captureViaBrowser(browser, onResult) }
+                        }
+                    }, CefResumeBridge.pixelCopyHandler)
+                    return
+                } catch (_: IllegalArgumentException) {
+                    bitmap.recycle()
+                }
+            }
+        }
+        captureViaBrowser(browser, onResult)
+    }
+
+    private fun captureViaBrowser(browser: CefriumBrowser, onResult: (Bitmap?) -> Unit) {
+        if (browser.isClosed) {
+            onResult(null)
+            return
+        }
+        runCatching {
+            browser.captureBitmap { bitmap -> main.post { onResult(bitmap) } }
+        }.onFailure { onResult(null) }
     }
 
     override fun onPictureInPictureModeChanged(inPictureInPicture: Boolean) =
         resumeBridge.onPictureInPictureChanged(inPictureInPicture)
+
+    private fun resolveSurface(): SurfaceView? {
+        val existing = renderingSurface
+        if (existing != null && existing.holder.surface.isValid && existing.width > 0 && existing.height > 0) {
+            return existing
+        }
+        val container = runCatching { current?.browser?.surfaceContainer }.getOrNull() ?: return existing
+        val found = findSurface(container)
+        if (found != null) renderingSurface = found
+        return found ?: existing
+    }
 
     private fun findSurface(view: View): SurfaceView? {
         if (view is SurfaceView) return view
@@ -120,5 +193,9 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
             findSurface(view.getChildAt(i))?.let { return it }
         }
         return null
+    }
+
+    private companion object {
+        const val CAPTURE_MAX_WIDTH = 480
     }
 }

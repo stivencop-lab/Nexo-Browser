@@ -24,6 +24,7 @@
   let enabled = false;
   let generic = false;
   let styleElement = null;
+  let adoptedSheet = null;
   let observer = null;
   let flushTimer = null;
   let epoch = 0;
@@ -75,7 +76,7 @@
   }
 
   // ---------------------------------------------------------------
-  // Respaldo: <style> en la página (si el fondo no pudo insertar el CSS)
+  // Hoja cosmética: preferir CSSStyleSheet (inmune a CSP), con respaldo <style>
   // ---------------------------------------------------------------
 
   function renderFallbackStyle() {
@@ -84,6 +85,18 @@
     for (let i = 0; i < fallbackSelectors.length; i += 40) {
       css += fallbackSelectors.slice(i, i + 40).join(',\n') +
         ' {\n  display: none !important;\n  visibility: hidden !important;\n  pointer-events: none !important;\n}\n';
+    }
+    try {
+      if (typeof CSSStyleSheet === 'function' && 'adoptedStyleSheets' in document) {
+        if (!adoptedSheet) {
+          adoptedSheet = new CSSStyleSheet();
+          document.adoptedStyleSheets = document.adoptedStyleSheets.concat([adoptedSheet]);
+        }
+        adoptedSheet.replaceSync(css);
+        return;
+      }
+    } catch (_) {
+      adoptedSheet = null;
     }
     if (!styleElement) {
       styleElement = document.createElement('style');
@@ -104,6 +117,15 @@
   }
 
   function removeStyle() {
+    if (adoptedSheet) {
+      try {
+        adoptedSheet.replaceSync('');
+        if ('adoptedStyleSheets' in document) {
+          document.adoptedStyleSheets = document.adoptedStyleSheets.filter(function(s) { return s !== adoptedSheet; });
+        }
+      } catch (_) {}
+      adoptedSheet = null;
+    }
     if (styleElement) styleElement.remove();
     styleElement = null;
     fallbackSelectors.length = 0;
@@ -288,8 +310,142 @@
   refreshState();
 
   browser.storage.onChanged.addListener(function(changes, areaName) {
-    if (areaName === 'local' && (changes.adblockEnabled || changes.disabled_domains)) {
+    if (areaName === 'local' && (changes.adblockEnabled || changes.disabled_domains || changes.annoyancesEnabled || changes.user_cosmetic_rules)) {
+      removeStyle();
       refreshState();
     }
   });
+
+  // ---------------------------------------------------------------
+  // Selector visual (Element Zapper): oculta cualquier elemento al tocarlo
+  // ---------------------------------------------------------------
+
+  let zapperActive = false;
+  function buildSafeSelector(el) {
+    if (!el || !(el instanceof Element) || el === document.body || el === document.documentElement) return null;
+    const esc = function(v) {
+      if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(v);
+      return String(v).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+    };
+    if (el.id && el.id.length <= 64 && !/^\d/.test(el.id)) {
+      const idSel = '#' + esc(el.id);
+      if (isValidSelector(idSel)) return idSel;
+    }
+    const parts = [];
+    let cur = el;
+    for (let depth = 0; cur && cur instanceof Element && cur !== document.body && cur !== document.documentElement && depth < 4; depth++) {
+      let part = cur.tagName.toLowerCase();
+      if (cur.id && cur.id.length <= 48 && !/^\d/.test(cur.id)) {
+        parts.unshift('#' + esc(cur.id));
+        break;
+      }
+      const cls = Array.from(cur.classList || [])
+        .filter(function(c) { return c && c.length <= 40 && !/^phantomshield/i.test(c) && !/^(active|hover|focus|open|show|visible|hidden)$/i.test(c); })
+        .slice(0, 2);
+      if (cls.length) {
+        part += '.' + cls.map(esc).join('.');
+      } else if (cur.parentElement) {
+        const siblings = Array.from(cur.parentElement.children).filter(function(s) { return s.tagName === cur.tagName; });
+        if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(cur) + 1) + ')';
+      }
+      parts.unshift(part);
+      const candidate = parts.join(' > ');
+      try {
+        if (cls.length && document.querySelectorAll(candidate).length <= 3 && isValidSelector(candidate)) return candidate;
+      } catch (_) {}
+      cur = cur.parentElement;
+    }
+    const finalSel = parts.join(' > ');
+    return finalSel && finalSel.length <= 240 && isValidSelector(finalSel) ? finalSel : null;
+  }
+
+  function startElementZapper() {
+    if (zapperActive || window !== window.top || !document.documentElement) return;
+    zapperActive = true;
+    let zappedCount = 0;
+    let highlighted = null;
+
+    const host = document.createElement('div');
+    host.id = 'phantomshield-zapper-host';
+    host.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;display:none;pointer-events:none;border:2px solid #57d98b;background:rgba(87,217,139,0.18);border-radius:6px;transition:all 80ms ease;';
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);pointer-events:auto;display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:999px;background:rgba(19,19,22,0.92);color:#f4f4f5;border:1px solid rgba(87,217,139,0.45);box-shadow:0 8px 28px rgba(0,0,0,0.45);font:600 13px/1.3 system-ui,-apple-system,sans-serif;max-width:92vw;';
+    const label = document.createElement('span');
+    label.textContent = 'Toca un elemento para ocultarlo';
+    const doneBtn = document.createElement('button');
+    doneBtn.type = 'button';
+    doneBtn.textContent = 'Listo';
+    doneBtn.style.cssText = 'border:0;border-radius:999px;padding:6px 14px;background:#57d98b;color:#09090b;font:700 12px/1 system-ui,sans-serif;cursor:pointer;';
+    bar.appendChild(label);
+    bar.appendChild(doneBtn);
+    host.appendChild(box);
+    host.appendChild(bar);
+    document.documentElement.appendChild(host);
+
+    function highlight(el) {
+      if (!el || host.contains(el) || el === document.body || el === document.documentElement) {
+        box.style.display = 'none';
+        highlighted = null;
+        return;
+      }
+      highlighted = el;
+      const r = el.getBoundingClientRect();
+      box.style.display = 'block';
+      box.style.left = Math.max(0, r.left) + 'px';
+      box.style.top = Math.max(0, r.top) + 'px';
+      box.style.width = Math.max(4, r.width) + 'px';
+      box.style.height = Math.max(4, r.height) + 'px';
+    }
+
+    function stop() {
+      if (!zapperActive) return;
+      zapperActive = false;
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('click', onClick, true);
+      window.removeEventListener('keydown', onKey, true);
+      host.remove();
+    }
+
+    function onMove(ev) {
+      if (host.contains(ev.target)) return;
+      highlight(ev.target);
+    }
+
+    function onClick(ev) {
+      if (host.contains(ev.target)) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      const target = ev.target instanceof Element ? ev.target : highlighted;
+      if (!target || target === document.body || target === document.documentElement) return;
+      const selector = buildSafeSelector(target);
+      hideElement(target);
+      box.style.display = 'none';
+      zappedCount++;
+      label.textContent = zappedCount === 1 ? '1 elemento ocultado · toca otro o Listo' : zappedCount + ' elementos ocultados · toca otro o Listo';
+      if (selector) {
+        addFallback([selector]);
+        browser.runtime.sendMessage({ type: 'ZAP_ELEMENT', selector: selector }).catch(function() {});
+      }
+    }
+
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); stop(); }
+    }
+
+    doneBtn.addEventListener('click', function(ev) { ev.stopPropagation(); stop(); });
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('click', onClick, true);
+    window.addEventListener('keydown', onKey, true);
+  }
+
+  if (browser.runtime && browser.runtime.onMessage) {
+    browser.runtime.onMessage.addListener(function(message) {
+      if (message && message.type === 'START_ZAPPER') {
+        startElementZapper();
+        return { ok: true };
+      }
+    });
+  }
 })();

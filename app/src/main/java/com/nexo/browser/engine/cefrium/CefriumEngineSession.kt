@@ -79,10 +79,14 @@ class CefriumEngineSession internal constructor(
     internal val shield: PhantomShield.ShieldTab = PhantomShield.newTab(params.isPrivate)
     internal val isPrivate: Boolean = params.isPrivate
 
+    /** Identificador monotónico único por sesión (evita colisiones de identityHashCode). */
+    internal val sessionUid: Long = nextSessionUid.incrementAndGet()
+
     /** Generación monotónica del documento activo; se incrementa en cada `onLoadStart`, `releaseBrowser` y `close`. */
     private val docGen = java.util.concurrent.atomic.AtomicLong(0L)
     internal fun documentGeneration(): Long = docGen.get()
     internal fun currentLocationUrl(): String? = currentUrl
+    internal fun isActiveSession(): Boolean = active && !closed
     private var loadStartedAtMs = 0L
     @Volatile internal var lastLoadDurationMs: Long? = null
         private set
@@ -103,6 +107,7 @@ class CefriumEngineSession internal constructor(
     private var desktopMode = params.desktopMode
     private var storeDesktopOptOut = false
     private var appliedDesktop: Boolean? = null
+    private var lastUpgradedHttpUrl: String? = null
     private var mainFrameError = false
     private var sslNoticeFor: String? = null
     internal var fullScreen = false
@@ -248,7 +253,12 @@ class CefriumEngineSession internal constructor(
         PhantomShield.attach(target, shield)
         ExtensionManager.bindSession(this)
         applySettings()
-        if (active) target.onResume() else target.setPageVisible(false)
+        if (active) {
+            target.onResume()
+            target.setPageVisible(true)
+        } else {
+            target.setPageVisible(false)
+        }
     }
 
     private fun applyCanvasBackground(target: CefriumBrowser) = applyDarkFor(target, currentUrl)
@@ -284,6 +294,10 @@ class CefriumEngineSession internal constructor(
     /** Restores the current entry and Chromium PageState, including the scroll position. */
     internal fun recreateSurface(expected: CefriumBrowser): Boolean {
         if (liveBrowser() !== expected || host == null) return false
+        if (fullScreen) {
+            fullScreen = false
+            observer?.onFullScreen(this, false)
+        }
         val navigation = runCatching { expected.serializeNavigationState() }.getOrNull()
         pendingState = CefriumState.of(currentUrl, navigation)
         pendingUrl = null
@@ -427,6 +441,10 @@ class CefriumEngineSession internal constructor(
         runCatching { target.reload() }
     }
 
+    override fun stop() {
+        runCatching { liveBrowser()?.stopLoading() }
+    }
+
     override fun goBack() { runCatching { liveBrowser()?.goBack() } }
     override fun goForward() { runCatching { liveBrowser()?.goForward() } }
 
@@ -436,12 +454,26 @@ class CefriumEngineSession internal constructor(
         val target = (if (active) ensureBrowser() else liveBrowser())?.takeIf { !it.isClosed } ?: return
         runCatching {
             when {
-                active -> target.onResume()
-                suspendMediaWhenInactive -> target.onPause()
+                active -> {
+                    target.onResume()
+                    target.setPageVisible(true)
+                }
+                suspendMediaWhenInactive -> {
+                    target.onPause()
+                    target.setPageVisible(false)
+                }
                 // Con audio de fondo permitido: la página se oculta pero sigue sonando.
                 else -> target.setPageVisible(false)
             }
         }
+    }
+
+    /** Oculta la superficie sin pausar ni invocar onResume() mientras la Activity pasa a segundo plano. */
+    internal fun keepAudioInBackground() {
+        this.active = false
+        if (closed) return
+        val target = liveBrowser()?.takeIf { !it.isClosed } ?: return
+        runCatching { target.setPageVisible(false) }
     }
 
     override fun setFocused(focused: Boolean) {
@@ -626,9 +658,24 @@ class CefriumEngineSession internal constructor(
             liveBrowser()?.onRequestPermissionsResult(requestCode, permissions as Array<String>, grantResults) == true
         }.getOrDefault(false)
 
-    /** Solo HTTPS: las navegaciones principales a http:// pasan a https://. */
-    private fun upgrade(url: String): String =
-        if (BrowserPrefs.httpsOnly(appContext) && url.startsWith("http://", ignoreCase = true)) "https://" + url.substring(7) else url
+    /** Solo HTTPS: las navegaciones principales a http:// pasan a https://, salvo localhost y red local. */
+    private fun upgrade(url: String): String {
+        if (!BrowserPrefs.httpsOnly(appContext) || !url.startsWith("http://", ignoreCase = true)) return url
+        val host = runCatching { java.net.URI(url).host?.lowercase()?.trim('[', ']') }.getOrNull().orEmpty()
+        if (isLocalOrPrivateHost(host)) return url
+        return "https://" + url.substring(7)
+    }
+
+    private fun isLocalOrPrivateHost(host: String): Boolean {
+        if (host.isEmpty()) return false
+        if (host == "localhost" || host == "127.0.0.1" || host == "::1" || host.endsWith(".local")) return true
+        if (host.startsWith("10.") || host.startsWith("192.168.")) return true
+        if (host.startsWith("172.")) {
+            val second = host.removePrefix("172.").substringBefore('.').toIntOrNull()
+            if (second != null && second in 16..31) return true
+        }
+        return false
+    }
 
     private fun scheduleState() {
         main.removeCallbacks(stateTask)
@@ -688,25 +735,28 @@ class CefriumEngineSession internal constructor(
         /** Navegación de la página principal: solo HTTPS, decisión de Nexo y URL sin rastreo. True la cancela. */
         override fun onBeforeNavigate(browser: CefriumBrowser, request: CefriumNavigationRequest): Boolean {
             if (!request.isForMainFrame) return false
-            // Esquema oscuro del sitio de destino antes de que llegue su documento (también tras redirecciones).
-            request.url?.let {
-                if (!ExtensionStoreResolver.usesStoreDesktopProfile(it)) storeDesktopOptOut = false
-                applyUserAgent(browser, it)
-                applyDarkFor(browser, it)
-            }
-            if (request.isRedirect) return false
             val url = request.url ?: return false
+            // Esquema oscuro del sitio de destino antes de que llegue su documento (también tras redirecciones).
+            if (!ExtensionStoreResolver.usesStoreDesktopProfile(url)) storeDesktopOptOut = false
+            applyUserAgent(browser, url)
+            applyDarkFor(browser, url)
             val observer = observer ?: return true
+
+            // Incluso en redirecciones HTTP 3xx: evitar degradaciones HTTPS-Only (con guardia anti-bucle).
             val upgraded = upgrade(url)
-            if (upgraded != url) {
+            if (upgraded != url && lastUpgradedHttpUrl != url) {
+                lastUpgradedHttpUrl = url
                 main.post { if (!closed && !browser.isClosed) runCatching { browser.loadUrl(upgraded) } }
                 return true
             }
+            if (url.startsWith("https://", ignoreCase = true)) lastUpgradedHttpUrl = null
+
             val engineRequest = EngineLoadRequest(url, request.hasGesture(), isDirectNavigation = false, opensNewWindow = false)
             val cleaned = PhantomShield.cleanNavigation(url)
-            return when (observer.onLoadRequest(this@CefriumEngineSession, engineRequest) { allow ->
+            val decision = observer.onLoadRequest(this@CefriumEngineSession, engineRequest) { allow ->
                 if (allow && !closed && !browser.isClosed) runCatching { browser.loadUrl(cleaned) }
-            }) {
+            }
+            return when (decision) {
                 // Sin parámetros de rastreo (utm_*, gclid, fbclid…): se carga la dirección limpia.
                 LoadDecision.DEFAULT, LoadDecision.ALLOW -> if (cleaned != url) {
                     main.post { if (!closed && !browser.isClosed) runCatching { browser.loadUrl(cleaned) } }
@@ -940,6 +990,10 @@ class CefriumEngineSession internal constructor(
                 }
             }
         }
+    }
+
+    companion object {
+        private val nextSessionUid = java.util.concurrent.atomic.AtomicLong(0L)
     }
 }
 

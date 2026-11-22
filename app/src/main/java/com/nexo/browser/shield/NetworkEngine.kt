@@ -1,5 +1,6 @@
 package com.nexo.browser.shield
 
+import com.google.re2j.Pattern
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -25,7 +26,7 @@ internal class NetworkEngine {
         val simpleDomain: String?
     ) {
         var raw: String? = null
-        @Volatile var regex: Regex? = null
+        @Volatile var regex: Pattern? = null
         @Volatile var dead = false
         val important: Boolean get() = "important" in flags
         val popup: Boolean get() = "popup" in flags
@@ -182,12 +183,12 @@ internal class NetworkEngine {
             rule.dead = true
             return false
         }
-        return regex.containsMatchIn(url)
+        return regex.matcher(url).find()
     }
 
     internal fun isCompiled(rule: Rule): Boolean = rule.regex != null
 
-    private fun compilePattern(rule: Rule): Regex {
+    private fun compilePattern(rule: Rule): Pattern {
         fun escapePart(value: String): String = buildString {
             for (char in value) {
                 when (char) {
@@ -203,11 +204,17 @@ internal class NetworkEngine {
             val host = if (boundary == -1) rule.pattern else rule.pattern.substring(0, boundary)
             val rest = if (boundary == -1) "" else rule.pattern.substring(boundary)
             require(isValidHostname(host.replace('*', 'a'))) { "Invalid host" }
-            "^[a-z][a-z0-9+.-]*://(?:[^./?#]+\\.)*" + escapePart(host) + "(?=[:/?#]|$)" + escapePart(rest)
+            // RE2J guarantees linear-time matching without backtracking (no lookahead needed).
+            val suffix = when {
+                rest.isEmpty() -> "(?:[:/?#]|$)"
+                rest.startsWith("^") -> "(?:[:/?#]|$)" + escapePart(rest.substring(1))
+                else -> escapePart(rest)
+            }
+            "^[a-z][a-z0-9+.-]*://(?:[^./?#]+\\.)*" + escapePart(host) + suffix
         } else {
             (if (rule.leftAnchor) "^" else "") + escapePart(rule.pattern) + (if (rule.rightAnchor) "$" else "")
         }
-        return Regex(expression, RegexOption.IGNORE_CASE)
+        return Pattern.compile(expression, Pattern.CASE_INSENSITIVE)
     }
 
     fun addRule(rule: Rule?): Boolean {

@@ -168,3 +168,80 @@ test('extractSafeSnapshot drops hidden/aria-hidden/off-screen/sr-only prompt-inj
   assert.ok(snap.text.includes('[REDACTADO]'));
   assert.ok(snap.text.includes('Artículo real'));
 });
+
+test('browser agent indexes interactives, clicks safely, blocks sensitive form submit, selects, scrolls, and extracts sections', () => {
+  let clickedSafe = false;
+  let clickedSensitive = false;
+  const safeBtn = makeElement('button', { type: 'button' }, [makeText('Ver detalles')]);
+  safeBtn.click = () => { clickedSafe = true; };
+
+  const pwdInput = makeElement('input', { type: 'password', name: 'pwd' });
+  const submitBtn = makeElement('button', { type: 'submit' }, [makeText('Iniciar sesión')]);
+  submitBtn.click = () => { clickedSensitive = true; };
+  const loginForm = makeElement('form', {}, [pwdInput, submitBtn]);
+  submitBtn.form = loginForm;
+
+  const searchInput = makeElement('input', { type: 'text', name: 'search_box', placeholder: 'Buscar' });
+  const selectEl = makeElement('select', { name: 'category' });
+  selectEl.options = [
+    { value: 'all', text: 'Todas' },
+    { value: 'tech', text: 'Tecnología' }
+  ];
+  selectEl.selectedIndex = 0;
+
+  const section = makeElement('section', {}, [
+    makeElement('h2', {}, [makeText('Precios y planes')]),
+    makeElement('p', {}, [makeText('El plan gratuito cuesta 0 USD al mes.')])
+  ]);
+
+  const body = makeElement('body', {}, [safeBtn, loginForm, searchInput, selectEl, section]);
+  const doc = {
+    title: 'Tienda Demo',
+    location: { href: 'https://demo.example.com/planes' },
+    body,
+    documentElement: { scrollHeight: 2400, clientHeight: 800 },
+    querySelectorAll: (sel) => body.querySelectorAll(sel)
+  };
+  let scrollCalls = [];
+  const win = {
+    scrollY: 0,
+    innerHeight: 800,
+    scrollTo: (arg) => scrollCalls.push(['to', arg]),
+    scrollBy: (arg) => scrollCalls.push(['by', arg]),
+    getSelection: () => ({ toString: () => '' })
+  };
+
+  const snap = agent.extractSafeSnapshot(doc, win, 3000);
+  assert.ok(Array.isArray(snap.interactives) && snap.interactives.length >= 3);
+  assert.ok(snap.interactives.every(item => item.fieldName !== 'pwd'));
+  const btnRef = snap.interactives.find(i => i.text.includes('Ver detalles'));
+  assert.ok(btnRef && btnRef.ref.startsWith('e'));
+
+  const clickOk = agent.clickElement(doc, win, btnRef.ref);
+  assert.equal(clickOk.ok, true);
+  assert.equal(clickedSafe, true);
+
+  const clickBlocked = agent.clickElement(doc, win, 'Iniciar sesión');
+  assert.equal(clickBlocked.ok, false);
+  assert.equal(clickedSensitive, false);
+
+  const searchRef = snap.interactives.find(i => i.fieldName === 'search_box');
+  assert.ok(searchRef);
+  const fillOk = agent.fillDraftField(doc, searchRef.ref, 'Nexo Browser');
+  assert.equal(fillOk.ok, true);
+  assert.equal(searchInput.value, 'Nexo Browser');
+
+  const selOk = agent.selectOption(doc, 'category', 'tecnología');
+  assert.equal(selOk.ok, true);
+  assert.equal(selectEl.selectedIndex, 1);
+
+  const scrollRes = agent.scrollPage(doc, win, 'down');
+  assert.equal(scrollRes.ok, true);
+  assert.equal(scrollCalls.length, 1);
+  assert.equal(scrollCalls[0][0], 'by');
+
+  const sec = agent.extractSection(doc, win, 'precios', 1000);
+  assert.equal(sec.ok, true);
+  assert.ok(sec.text.includes('0 USD'));
+});
+

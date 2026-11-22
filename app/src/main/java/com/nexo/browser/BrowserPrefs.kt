@@ -160,13 +160,16 @@ object BrowserPrefs {
     private fun secret(c: Context, name: String): String {
         val legacy = p(c).getString(name, null)
         if (legacy != null) {
-            SecretStore.put(c, name, legacy)
-            p(c).edit().remove(name).apply()
+            if (SecretStore.put(c, name, legacy)) {
+                p(c).edit().remove(name).apply()
+            } else {
+                return legacy.trim()
+            }
         }
         return SecretStore.get(c, name)
     }
     fun deepgramKey(c: Context) = secret(c, "deepgram_key")
-    fun setDeepgramKey(c: Context, v: String) = SecretStore.put(c, "deepgram_key", v)
+    fun setDeepgramKey(c: Context, v: String) { SecretStore.put(c, "deepgram_key", v) }
     fun captionLanguage(c: Context) = p(c).getString("caption_language", "multi") ?: "multi"
     fun setCaptionLanguage(c: Context, v: String) = p(c).edit().putString("caption_language", v).apply()
     fun captionTranslateTo(c: Context) = p(c).getString("caption_translate", "") ?: ""
@@ -174,7 +177,7 @@ object BrowserPrefs {
     fun translationProvider(c: Context) = p(c).getString("translation_provider", TRANSLATE_GOOGLE) ?: TRANSLATE_GOOGLE
     fun setTranslationProvider(c: Context, v: String) = p(c).edit().putString("translation_provider", v).apply()
     fun deeplKey(c: Context) = secret(c, "deepl_key")
-    fun setDeeplKey(c: Context, v: String) = SecretStore.put(c, "deepl_key", v)
+    fun setDeeplKey(c: Context, v: String) { SecretStore.put(c, "deepl_key", v) }
     // Traducción con un modelo de IA (por lotes, con contexto).
     const val TRANSLATE_AI = "ai"
     fun aiTranslateProvider(c: Context) = p(c).getString("ai_translate_provider", "openai") ?: "openai"
@@ -184,7 +187,7 @@ object BrowserPrefs {
     fun aiTranslateEndpoint(c: Context) = p(c).getString("ai_translate_endpoint", "") ?: ""
     fun setAiTranslateEndpoint(c: Context, v: String) = p(c).edit().putString("ai_translate_endpoint", v.trim()).apply()
     fun aiTranslateKey(c: Context) = secret(c, "ai_translate_key")
-    fun setAiTranslateKey(c: Context, v: String) = SecretStore.put(c, "ai_translate_key", v)
+    fun setAiTranslateKey(c: Context, v: String) { SecretStore.put(c, "ai_translate_key", v) }
     // Segundo modelo de IA (otra API/proveedor): se piden los dos a la vez y gana el primero que responde.
     fun aiTranslate2Enabled(c: Context) = p(c).getBoolean("ai_translate2_enabled", false)
     fun setAiTranslate2Enabled(c: Context, v: Boolean) = p(c).edit().putBoolean("ai_translate2_enabled", v).apply()
@@ -195,7 +198,7 @@ object BrowserPrefs {
     fun aiTranslate2Endpoint(c: Context) = p(c).getString("ai_translate2_endpoint", "") ?: ""
     fun setAiTranslate2Endpoint(c: Context, v: String) = p(c).edit().putString("ai_translate2_endpoint", v.trim()).apply()
     fun aiTranslate2Key(c: Context) = secret(c, "ai_translate2_key")
-    fun setAiTranslate2Key(c: Context, v: String) = SecretStore.put(c, "ai_translate2_key", v)
+    fun setAiTranslate2Key(c: Context, v: String) { SecretStore.put(c, "ai_translate2_key", v) }
     // Original, traducido o ambos.
     fun captionMode(c: Context) = p(c).getString("caption_mode", "translated") ?: "translated"
     fun setCaptionMode(c: Context, v: String) = p(c).edit().putString("caption_mode", v).apply()
@@ -230,8 +233,8 @@ object BrowserPrefs {
         val total = captionSecondsToday(c) + seconds
         p(c).edit().putString("caption_usage_day", today()).putInt("caption_usage_seconds", total).apply()
     }
-    fun captionSize(c: Context) = p(c).getInt("caption_size", 16).coerceIn(10, 26)
-    fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(10, 26)).apply()
+    fun captionSize(c: Context) = p(c).getInt("caption_size", 13).coerceIn(9, 24)
+    fun setCaptionSize(c: Context, v: Int) = p(c).edit().putInt("caption_size", v.coerceIn(9, 24)).apply()
     // Diseño de los subtítulos: fondo ("solid", "soft", "none"), color del texto y longitud.
     fun captionBackground(c: Context) = p(c).getString("caption_background", "solid")?.takeIf { it in setOf("solid", "soft", "none") } ?: "solid"
     fun setCaptionBackground(c: Context, v: String) = p(c).edit().putString("caption_background", v).apply()

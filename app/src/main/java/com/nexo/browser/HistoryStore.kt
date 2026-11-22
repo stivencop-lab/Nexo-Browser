@@ -63,8 +63,13 @@ object HistoryStore {
         save(context, items.take(MAX))
     }
 
-    @Synchronized
     fun list(context: Context): List<HistoryEntry> {
+        cache?.let { return it }
+        return loadLocked(context)
+    }
+
+    @Synchronized
+    private fun loadLocked(context: Context): List<HistoryEntry> {
         cache?.let { return it }
         val raw = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .getString(KEY, "[]") ?: "[]"

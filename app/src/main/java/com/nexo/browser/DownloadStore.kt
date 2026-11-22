@@ -76,7 +76,8 @@ data class DownloadSource(
     val isPrivate: Boolean,
     val referrer: String?,
     /** false: una sola conexión (Ajustes); la reanudación con rangos sigue activa. */
-    val split: Boolean = true
+    val split: Boolean = true,
+    val burnerId: String? = null
 )
 
 object DownloadStore {
@@ -105,6 +106,7 @@ object DownloadStore {
     private val fileLock = Any()
     private val running = ConcurrentHashMap<String, ActiveDownload>()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
+    private val channelReady = AtomicBoolean(false)
     private var appContext: Context? = null
 
     // ---------------------------------------------------------------
@@ -184,6 +186,7 @@ object DownloadStore {
         referrer: String?,
         parallel: Boolean = true,
         split: Boolean = true,
+        burnerId: String? = null,
         callback: (Boolean, String) -> Unit
     ) {
         if (!UrlSafety.isWebUrl(url)) {
@@ -192,10 +195,10 @@ object DownloadStore {
         }
 
         val app = context.applicationContext
-        val source = if (parallel) DownloadSource(isPrivate, referrer, split) else null
+        val source = if (parallel) DownloadSource(isPrivate, referrer, split, burnerId) else null
         io.execute {
             val response = try {
-                Engines.current.downloadFetcher.fetch(url, emptyMap(), referrer?.takeIf { UrlSafety.isWebUrl(it) }, isPrivate)
+                Engines.current.downloadFetcher.fetch(url, emptyMap(), referrer?.takeIf { UrlSafety.isWebUrl(it) }, isPrivate, burnerId)
             } catch (error: Throwable) {
                 main.post { callback(false, "Descarga fallida: ${error.message ?: "error de red"}") }
                 return@execute
@@ -204,7 +207,7 @@ object DownloadStore {
                 response.close()
                 main.post { callback(false, "Descarga fallida: HTTP ${response.statusCode}") }
             } else {
-                receive(app, response, source, callback)
+                receive(app, response, source, isPrivate, callback)
             }
         }
     }
@@ -229,7 +232,7 @@ object DownloadStore {
                 response.close()
                 main.post { callback(false, "Descarga fallida: HTTP ${response.statusCode}") }
             } else {
-                receive(app, response, source, callback)
+                receive(app, response, source, source?.isPrivate == true, callback)
             }
         }
     }
@@ -239,15 +242,17 @@ object DownloadStore {
         val app = context.applicationContext
         io.execute {
             var file: File? = null
-            runCatching {
+            try {
                 val target = reserveFile(downloadsFolder(app), FileNames.sanitize("$title.png", "captura.png"))
                 file = target
                 target.outputStream().buffered().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 add(app, DownloadEntry(UUID.randomUUID().toString(), target.name, target.absolutePath, "", "image/png", target.length(), System.currentTimeMillis()))
                 main.post { callback(true, "Captura guardada en Descargas: ${target.name}") }
-            }.onFailure {
+            } catch (error: Throwable) {
                 file?.let { partial -> runCatching { partial.delete() } }
-                main.post { callback(false, "No se pudo guardar la captura: ${it.message}") }
+                main.post { callback(false, "No se pudo guardar la captura: ${error.message}") }
+            } finally {
+                if (!bitmap.isRecycled) runCatching { bitmap.recycle() }
             }
         }
     }
@@ -285,7 +290,13 @@ object DownloadStore {
     // Recepción
     // ---------------------------------------------------------------
 
-    private fun receive(app: Context, response: DownloadResponse, source: DownloadSource?, callback: (Boolean, String) -> Unit) {
+    private fun receive(
+        app: Context,
+        response: DownloadResponse,
+        source: DownloadSource?,
+        isPrivate: Boolean,
+        callback: (Boolean, String) -> Unit
+    ) {
         var file: File? = null
         var job: ActiveDownload? = null
         try {
@@ -311,7 +322,8 @@ object DownloadStore {
 
             val target = reserveFile(folder, requested)
             file = target
-            val active = ActiveDownload(UUID.randomUUID().toString(), target.name, total)
+            val displayName = if (isPrivate) "Descarga privada" else target.name
+            val active = ActiveDownload(UUID.randomUUID().toString(), displayName, total)
             job = active
             active.activeResponses += response
             running[active.id] = active
@@ -322,7 +334,7 @@ object DownloadStore {
                 val channel = raf.channel
                 val rangeable = source != null && total > 0 && UrlSafety.isWebUrl(response.uri) &&
                     header(headers, "Accept-Ranges")?.trim()?.equals("bytes", ignoreCase = true) == true
-                if (rangeable && source!!.split && DownloadPlan.canSplit(headers, total)) {
+                if (source != null && rangeable && source.split && DownloadPlan.canSplit(headers, total)) {
                     receiveSplit(app, active, response, body, channel, folder, source)
                 } else {
                     receiveSequential(app, active, response, body, channel, folder, if (rangeable) source else null)
@@ -333,20 +345,23 @@ object DownloadStore {
             synchronized(active) {
                 if (active.terminal.get() || active.cancelled) throw CancellationException("cancelada")
                 active.terminal.set(true)
-                add(
-                    app,
-                    DownloadEntry(
-                        UUID.randomUUID().toString(),
-                        target.name,
-                        target.absolutePath,
-                        redactSourceUrl(response.uri),
-                        mime,
-                        target.length(),
-                        System.currentTimeMillis()
+                // En modo privado no se persiste el nombre ni el origen de la descarga en disco.
+                if (!isPrivate) {
+                    add(
+                        app,
+                        DownloadEntry(
+                            UUID.randomUUID().toString(),
+                            target.name,
+                            target.absolutePath,
+                            redactSourceUrl(response.uri),
+                            mime,
+                            target.length(),
+                            System.currentTimeMillis()
+                        )
                     )
-                )
+                }
             }
-            showDone(app, target.name)
+            showDone(app, if (isPrivate) "Archivo privado guardado" else target.name)
             main.post { callback(true, "Descargado: ${target.name}") }
         } catch (error: Throwable) {
             // No dejar archivos a medio descargar.
@@ -509,7 +524,8 @@ object DownloadStore {
             original.uri,
             mapOf("Range" to "bytes=$start-${end - 1}"),
             source.referrer?.takeIf { UrlSafety.isWebUrl(it) },
-            source.isPrivate
+            source.isPrivate,
+            source.burnerId
         )
         val range = DownloadPlan.parseContentRange(header(response.headers, "Content-Range"))
         val valid = response.statusCode == 206 && range != null && range.start == start &&
@@ -592,13 +608,15 @@ object DownloadStore {
         if (Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return null
-        runCatching {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Descargas", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Progreso de las descargas de Nexo"
-                    setShowBadge(false)
-                }
-            )
+        if (channelReady.compareAndSet(false, true)) {
+            runCatching {
+                manager.createNotificationChannel(
+                    NotificationChannel(CHANNEL, "Descargas", NotificationManager.IMPORTANCE_LOW).apply {
+                        description = "Progreso de las descargas de Nexo"
+                        setShowBadge(false)
+                    }
+                )
+            }.onFailure { channelReady.set(false) }
         }
         return manager
     }
@@ -799,7 +817,8 @@ object DownloadStore {
     private fun redactSourceUrl(url: String): String =
         runCatching {
             if (url.isBlank()) return@runCatching ""
-            val uri = Uri.parse(url)
+            val clean = UrlSafety.stripCredentials(url)
+            val uri = Uri.parse(clean)
             uri.buildUpon()
                 .clearQuery()
                 .fragment(null)

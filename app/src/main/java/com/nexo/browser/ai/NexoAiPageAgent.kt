@@ -5,30 +5,41 @@ import android.app.Dialog
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.nexo.browser.BrowserHosts
 import com.nexo.browser.BrowserPrefs
+import com.nexo.browser.HistoryStore
 import com.nexo.browser.NexoSheets
 import com.nexo.browser.NexoUi
+import com.nexo.browser.SearchResolver
+import com.nexo.browser.SiteControlModel
 import com.nexo.browser.TabManager
 import com.nexo.browser.Toastish
+import com.nexo.browser.TranslatorManager
 import com.nexo.browser.UrlSafety
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
+import com.nexo.browser.reader.NexoReader
+import com.nexo.browser.workspace.BookmarkStore
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Agente de página de Nexo AI: extracción segura de contexto de la pestaña activa
- * (excluyendo contraseñas, tarjetas, cookies, elementos ocultos y campos sensibles)
- * mediante retorno directo de `evaluateJavaScript` (sin exponer tokens en `cefriumQuery`),
- * vinculación estricta a `(tabId, url, documentGeneration)` y acciones asistidas con
- * confirmación explícita obligatoria antes de cualquier efecto secundario.
+ * Agente de página y navegador de Nexo AI: extracción segura de contexto de la pestaña activa
+ * (excluyendo contraseñas, tarjetas, cookies, elementos ocultos y campos sensibles),
+ * indexación de elementos interactivos `[e1..e35]`, ejecución de herramientas del navegador
+ * para el Modo Agente y acciones con efectos secundarios siempre protegidas con confirmación.
  */
 object NexoAiPageAgent {
     private const val AGENT_ASSET = "nexo/ai-page-agent.js"
     private const val SNAPSHOT_TIMEOUT_MS = 2500L
+    private const val TOOL_EVAL_TIMEOUT_MS = 3200L
+    private const val NAV_SETTLE_MAX_MS = 3800L
     private const val MAX_LIVE_COMPARE_TABS = 4
 
     data class PageSnapshot(
@@ -40,13 +51,25 @@ object NexoAiPageAgent {
         val tables: List<List<List<String>>>,
         val forms: List<FormField>,
         val text: String,
-        val binding: NexoAiModels.PageBinding? = null
+        val binding: NexoAiModels.PageBinding? = null,
+        val interactives: List<InteractiveElement> = emptyList(),
+        val scrollPercent: Int = 0
     ) {
         data class FormField(val name: String, val type: String, val placeholder: String)
+        data class InteractiveElement(
+            val ref: String,
+            val tag: String,
+            val text: String,
+            val href: String = "",
+            val fieldName: String = ""
+        )
 
         fun toContextText(scope: String): String = buildString {
             appendLine("Título: $title")
             if (url.isNotBlank()) appendLine("URL saneada: $url")
+            if (scope == "agent") {
+                appendLine("Posición de scroll: $scrollPercent%")
+            }
             if (scope == "selection") {
                 appendLine("Texto seleccionado:")
                 appendLine(selection.ifBlank { "(sin selección activa)" })
@@ -65,11 +88,22 @@ object NexoAiPageAgent {
                     rows.forEach { row -> appendLine("  " + row.joinToString(" | ")) }
                 }
             }
+            if (scope == "agent" && interactives.isNotEmpty()) {
+                appendLine("Elementos interactivos visibles (${interactives.size}):")
+                interactives.take(30).forEach { el ->
+                    val extra = when {
+                        el.href.isNotBlank() -> " -> ${el.href.take(90)}"
+                        el.fieldName.isNotBlank() -> " [campo: ${el.fieldName}]"
+                        else -> ""
+                    }
+                    appendLine("  [${el.ref}] <${el.tag}> ${el.text}$extra")
+                }
+            }
             if (forms.isNotEmpty()) {
                 appendLine("Campos de formulario no sensibles (${forms.size}):")
                 forms.forEach { f -> appendLine("  - ${f.name.ifBlank { "(sin nombre)" }} [${f.type}] ${f.placeholder}") }
             }
-            if (links.isNotEmpty()) {
+            if (links.isNotEmpty() && scope != "agent") {
                 appendLine("Enlaces destacados:")
                 links.take(12).forEach { (label, href) -> appendLine("  - $label -> $href") }
             }
@@ -166,7 +200,7 @@ object NexoAiPageAgent {
             onDone(null, "Nexo AI está bloqueado en pestañas privadas por seguridad (puedes cambiarlo en Configuración de Nexo AI).")
             return
         }
-        val activeHost = com.nexo.browser.SiteControlModel.hostOf(tab.url)
+        val activeHost = SiteControlModel.hostOf(tab.url)
         if (activeHost.isNotEmpty() && !NexoAiConfig.isHostAllowed(context, activeHost)) {
             onDone(null, "Nexo AI está desactivado para $activeHost (puedes habilitarlo en Nexo Site Control).")
             return
@@ -252,6 +286,25 @@ object NexoAiPageAgent {
                 )
             }
         }
+        val interactives = mutableListOf<PageSnapshot.InteractiveElement>()
+        json.optJSONArray("interactives")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val ref = o.optString("ref")
+                val tag = o.optString("tag")
+                val text = o.optString("text")
+                if (ref.isNotBlank() && tag.isNotBlank()) {
+                    interactives += PageSnapshot.InteractiveElement(
+                        ref = ref,
+                        tag = tag,
+                        text = text,
+                        href = o.optString("href"),
+                        fieldName = o.optString("fieldName")
+                    )
+                }
+            }
+        }
+        val scrollPercent = json.optJSONObject("scroll")?.optInt("percent", 0)?.coerceIn(0, 100) ?: 0
         return PageSnapshot(
             title = json.optString("title"),
             url = json.optString("url"),
@@ -260,7 +313,9 @@ object NexoAiPageAgent {
             links = links,
             tables = tables,
             forms = forms,
-            text = json.optString("text")
+            text = json.optString("text"),
+            interactives = interactives,
+            scrollPercent = scrollPercent
         )
     }
 
@@ -281,7 +336,7 @@ object NexoAiPageAgent {
 
     /**
      * Captura contexto real saneado de hasta [MAX_LIVE_COMPARE_TABS] pestañas vivas dentro
-     * del presupuesto total de caracteres, y añade título+host del resto de pestañas abiertas.
+     * del presupuesto total de caracteres, respetando las exclusiones por sitio de Nexo Site Control.
      */
     fun captureOpenTabsContext(
         context: Context,
@@ -290,10 +345,15 @@ object NexoAiPageAgent {
         onDone: (String) -> Unit
     ) {
         val tabs = TabManager.allTabs()
-            .filter { !BrowserPrefs.isNexoHome(it.url) && (allowPrivate || !it.isPrivate) }
+            .filter { tab ->
+                if (BrowserPrefs.isNexoHome(tab.url)) return@filter false
+                if (!allowPrivate && tab.isPrivate) return@filter false
+                val host = SiteControlModel.hostOf(tab.url)
+                host.isEmpty() || NexoAiConfig.isHostAllowed(context, host)
+            }
             .take(12)
         if (tabs.isEmpty()) {
-            onDone("No hay pestañas web abiertas para comparar.")
+            onDone("No hay pestañas web permitidas abiertas para comparar.")
             return
         }
         val source = loadAgentScript(context)
@@ -359,6 +419,312 @@ object NexoAiPageAgent {
         }
     }
 
+    /**
+     * Crea un ejecutor real de herramientas del navegador para el Modo Agente.
+     * Solo retiene `applicationContext` (jamás `Activity` ni `Dialog`).
+     */
+    fun createBrowserToolExecutor(
+        context: Context,
+        allowPrivate: Boolean,
+        maxChars: Int
+    ): NexoAiAgent.ToolExecutor {
+        val app = context.applicationContext
+        val boundedChars = NexoAiConfig.clampContextChars(maxChars).coerceAtMost(7000)
+
+        fun captureSync(): Pair<PageSnapshot?, String?> {
+            val latch = CountDownLatch(1)
+            val result = AtomicReference<Pair<PageSnapshot?, String?>>(null to "Tiempo de espera agotado.")
+            main.post {
+                captureActiveSnapshot(app, boundedChars, allowPrivate) { snap, err ->
+                    result.set(snap to err)
+                    latch.countDown()
+                }
+            }
+            latch.await(SNAPSHOT_TIMEOUT_MS + 600L, TimeUnit.MILLISECONDS)
+            return result.get()
+        }
+
+        fun waitForPageReady(prevUrl: String?) {
+            val deadline = System.currentTimeMillis() + NAV_SETTLE_MAX_MS
+            Thread.sleep(350L)
+            while (System.currentTimeMillis() < deadline) {
+                val tab = TabManager.activeTab()
+                if (tab != null && !tab.isLoading && (prevUrl == null || tab.url != prevUrl || System.currentTimeMillis() > deadline - 1600L)) {
+                    Thread.sleep(320L)
+                    break
+                }
+                Thread.sleep(160L)
+            }
+        }
+
+        fun evalOnActivePage(jsBuilder: (String) -> String): JSONObject? {
+            val latch = CountDownLatch(1)
+            val out = AtomicReference<JSONObject?>(null)
+            main.post {
+                val tab = TabManager.activeTab()
+                val session = tab?.session as? CefriumEngineSession
+                val source = loadAgentScript(app)
+                val host = SiteControlModel.hostOf(tab?.url.orEmpty())
+                if (tab == null || session == null || source == null ||
+                    (tab.isPrivate && !allowPrivate) ||
+                    (host.isNotEmpty() && !NexoAiConfig.isHostAllowed(app, host))
+                ) {
+                    latch.countDown()
+                    return@post
+                }
+                session.evaluateJsonInMainFrame(jsBuilder(source)) { raw ->
+                    out.set(unwrapJsonObject(raw))
+                    latch.countDown()
+                }
+            }
+            latch.await(TOOL_EVAL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            return out.get()
+        }
+
+        return NexoAiAgent.ToolExecutor { call ->
+            if (call.risk == NexoAiAgent.Risk.CONFIRM) {
+                val action = NexoAiClient.ProposedAction(
+                    type = call.tool,
+                    label = call.reason.take(54),
+                    target = call.args["target"].orEmpty(),
+                    value = call.args["value"].orEmpty()
+                )
+                return@ToolExecutor NexoAiAgent.ToolOutcome(
+                    ok = true,
+                    summary = "Requiere confirmación: ${call.reason}",
+                    observation = "Esta acción modifica un campo del formulario (${action.target}). " +
+                        "Se ha preparado un botón de confirmación para que el usuario la apruebe explícitamente.",
+                    pendingAction = action
+                )
+            }
+
+            when (call.tool) {
+                "observe_page" -> {
+                    val (snap, err) = captureSync()
+                    if (snap != null) {
+                        NexoAiAgent.ToolOutcome(true, "Inspeccionado: ${snap.title.ifBlank { snap.url }.take(48)}", snap.toContextText("agent"))
+                    } else {
+                        NexoAiAgent.ToolOutcome(false, err ?: "No se pudo leer la página", err ?: "Sin acceso a la página.")
+                    }
+                }
+
+                "scroll_page" -> {
+                    val dir = call.args["direction"] ?: "down"
+                    val res = evalOnActivePage { src ->
+                        "(function(){try{$src;var r=window.__nexoAiPageAgent.scrollPage(document,window,${JSONObject.quote(dir)});return JSON.stringify(r);}catch(_){return null;}})();"
+                    }
+                    Thread.sleep(280L)
+                    val (snap, _) = captureSync()
+                    val pct = res?.optJSONObject("scroll")?.optInt("percent") ?: snap?.scrollPercent ?: 0
+                    val obs = snap?.toContextText("agent") ?: "Scroll completado ($pct%)."
+                    NexoAiAgent.ToolOutcome(res?.optBoolean("ok") == true || snap != null, "Desplazado ($dir · $pct%)", obs)
+                }
+
+                "navigate" -> {
+                    val url = call.args["url"].orEmpty()
+                    val host = SiteControlModel.hostOf(url)
+                    if (host.isNotEmpty() && !NexoAiConfig.isHostAllowed(app, host)) {
+                        NexoAiAgent.ToolOutcome(false, "Bloqueado por Site Control ($host)", "Nexo AI está desactivado para $host.")
+                    } else {
+                        val prevUrl = TabManager.activeTab()?.url
+                        val latch = CountDownLatch(1)
+                        main.post {
+                            TabManager.navigate(url)
+                            latch.countDown()
+                        }
+                        latch.await(1000L, TimeUnit.MILLISECONDS)
+                        waitForPageReady(prevUrl)
+                        val (snap, err) = captureSync()
+                        NexoAiAgent.ToolOutcome(
+                            snap != null,
+                            "Abierto: ${host.ifBlank { url.take(40) }}",
+                            snap?.toContextText("agent") ?: (err ?: "Navegación iniciada a $url.")
+                        )
+                    }
+                }
+
+                "web_search" -> {
+                    val query = call.args["query"].orEmpty()
+                    val searchUrl = SearchResolver.searchUrl(app, query)
+                    val prevUrl = TabManager.activeTab()?.url
+                    val latch = CountDownLatch(1)
+                    main.post {
+                        TabManager.navigate(searchUrl)
+                        latch.countDown()
+                    }
+                    latch.await(1000L, TimeUnit.MILLISECONDS)
+                    waitForPageReady(prevUrl)
+                    val (snap, err) = captureSync()
+                    NexoAiAgent.ToolOutcome(
+                        snap != null,
+                        "Buscado: «${query.take(36)}»",
+                        snap?.toContextText("agent") ?: (err ?: "Búsqueda iniciada para $query.")
+                    )
+                }
+
+                "open_tab" -> {
+                    val url = call.args["url"].orEmpty()
+                    val latch = CountDownLatch(1)
+                    main.post {
+                        val isPriv = TabManager.activeTab()?.isPrivate == true
+                        TabManager.createTab(url, isPrivate = isPriv, activate = true)
+                        latch.countDown()
+                    }
+                    latch.await(1000L, TimeUnit.MILLISECONDS)
+                    waitForPageReady(null)
+                    val (snap, err) = captureSync()
+                    val host = SiteControlModel.hostOf(url)
+                    NexoAiAgent.ToolOutcome(
+                        true,
+                        "Nueva pestaña: ${host.ifBlank { url.take(36) }}",
+                        snap?.toContextText("agent") ?: (err ?: "Pestaña abierta en $url.")
+                    )
+                }
+
+                "list_tabs" -> {
+                    val tabs = TabManager.allTabs()
+                        .filter { !BrowserPrefs.isNexoHome(it.url) && (allowPrivate || !it.isPrivate) }
+                        .take(15)
+                    val activeId = TabManager.activeTab()?.id
+                    val text = if (tabs.isEmpty()) "No hay pestañas web abiertas." else buildString {
+                        appendLine("Pestañas abiertas (${tabs.size}):")
+                        tabs.forEachIndexed { i, t ->
+                            val mark = if (t.id == activeId) " [ACTIVA]" else ""
+                            appendLine("${i + 1}. ${t.title.ifBlank { t.url }} — ${SiteControlModel.hostOf(t.url)}$mark")
+                        }
+                    }
+                    NexoAiAgent.ToolOutcome(true, "${tabs.size} pestañas abiertas", text)
+                }
+
+                "switch_tab" -> {
+                    val rawIndex = call.args["index"].orEmpty()
+                    val tabs = TabManager.allTabs()
+                        .filter { !BrowserPrefs.isNexoHome(it.url) && (allowPrivate || !it.isPrivate) }
+                    val target = rawIndex.toIntOrNull()?.let { idx -> tabs.getOrNull(idx - 1) }
+                        ?: tabs.firstOrNull { it.id == rawIndex }
+                    if (target == null) {
+                        NexoAiAgent.ToolOutcome(false, "Pestaña no encontrada ($rawIndex)", "No existe una pestaña con índice $rawIndex.")
+                    } else {
+                        val latch = CountDownLatch(1)
+                        main.post {
+                            TabManager.switchTo(target.id)
+                            latch.countDown()
+                        }
+                        latch.await(1000L, TimeUnit.MILLISECONDS)
+                        Thread.sleep(350L)
+                        val (snap, err) = captureSync()
+                        NexoAiAgent.ToolOutcome(
+                            true,
+                            "Cambiado a: ${target.title.take(38)}",
+                            snap?.toContextText("agent") ?: (err ?: "Pestaña activa: ${target.title} (${target.url})")
+                        )
+                    }
+                }
+
+                "go_back" -> {
+                    val prevUrl = TabManager.activeTab()?.url
+                    val latch = CountDownLatch(1)
+                    main.post {
+                        TabManager.goBack()
+                        latch.countDown()
+                    }
+                    latch.await(1000L, TimeUnit.MILLISECONDS)
+                    waitForPageReady(prevUrl)
+                    val (snap, _) = captureSync()
+                    NexoAiAgent.ToolOutcome(true, "Vuelto a la página anterior", snap?.toContextText("agent") ?: "Historial retrocedido.")
+                }
+
+                "find_in_page" -> {
+                    val query = call.args["query"].orEmpty()
+                    val res = evalOnActivePage { src ->
+                        "(function(){try{$src;var r=window.__nexoAiPageAgent.highlightText(document,${JSONObject.quote(query)});return JSON.stringify(r);}catch(_){return null;}})();"
+                    }
+                    val found = res?.optBoolean("found") == true
+                    NexoAiAgent.ToolOutcome(
+                        found,
+                        if (found) "Resaltado: «${query.take(32)}»" else "Sin coincidencia para «${query.take(32)}»",
+                        if (found) "Se encontró y resaltó «$query» en la página actual." else "No se encontró «$query» en el contenido visible."
+                    )
+                }
+
+                "click_element" -> {
+                    val target = call.args["target"].orEmpty()
+                    val prevUrl = TabManager.activeTab()?.url
+                    val res = evalOnActivePage { src ->
+                        "(function(){try{$src;var r=window.__nexoAiPageAgent.clickElement(document,window,${JSONObject.quote(target)});return JSON.stringify(r);}catch(_){return null;}})();"
+                    }
+                    val ok = res?.optBoolean("ok") == true
+                    if (!ok) {
+                        val err = res?.optString("error")?.ifBlank { "No se pudo pulsar $target." } ?: "No se pudo pulsar $target."
+                        NexoAiAgent.ToolOutcome(false, err, err)
+                    } else {
+                        Thread.sleep(650L)
+                        if (TabManager.activeTab()?.isLoading == true) waitForPageReady(prevUrl)
+                        val (snap, _) = captureSync()
+                        val clicked = res.optString("clicked").ifBlank { target }
+                        NexoAiAgent.ToolOutcome(true, "Pulsado: ${clicked.take(36)}", snap?.toContextText("agent") ?: "Elemento activado.")
+                    }
+                }
+
+                "extract_section" -> {
+                    val query = call.args["query"].orEmpty()
+                    val res = evalOnActivePage { src ->
+                        "(function(){try{$src;var r=window.__nexoAiPageAgent.extractSection(document,window,${JSONObject.quote(query)},3000);return JSON.stringify(r);}catch(_){return null;}})();"
+                    }
+                    val txt = res?.optString("text").orEmpty()
+                    NexoAiAgent.ToolOutcome(
+                        txt.isNotBlank(),
+                        if (txt.isNotBlank()) "Sección extraída: ${query.take(30)}" else "Sección no encontrada",
+                        txt.ifBlank { "No se encontró una sección que coincida con «$query»." }
+                    )
+                }
+
+                "search_bookmarks" -> {
+                    val query = call.args["query"].orEmpty()
+                    val matches = BookmarkStore.search(BookmarkStore.file(app), query).take(10)
+                    val obs = if (matches.isEmpty()) "No hay marcadores que coincidan con «$query»." else buildString {
+                        appendLine("Marcadores encontrados (${matches.size}):")
+                        matches.forEachIndexed { i, bm -> appendLine("${i + 1}. ${bm.title} (${bm.folder}) -> ${bm.url}") }
+                    }
+                    NexoAiAgent.ToolOutcome(true, "${matches.size} marcadores para «${query.take(24)}»", obs)
+                }
+
+                "search_history" -> {
+                    val query = call.args["query"].orEmpty().lowercase(Locale.ROOT)
+                    val entries = HistoryStore.list(app)
+                        .filter { query.isBlank() || it.title.lowercase(Locale.ROOT).contains(query) || it.url.lowercase(Locale.ROOT).contains(query) }
+                        .take(10)
+                    val obs = if (entries.isEmpty()) "No hay entradas del historial que coincidan con «$query»." else buildString {
+                        appendLine("Historial encontrado (${entries.size}):")
+                        entries.forEachIndexed { i, h -> appendLine("${i + 1}. ${h.title} -> ${h.url}") }
+                    }
+                    NexoAiAgent.ToolOutcome(true, "${entries.size} visitas en historial", obs)
+                }
+
+                "open_reader" -> {
+                    val activity = BrowserHosts.current() as? android.app.Activity
+                    if (activity == null) {
+                        NexoAiAgent.ToolOutcome(false, "Ventana no disponible", "No hay una actividad activa para abrir Modo Lectura.")
+                    } else {
+                        main.post { runCatching { NexoReader.openActiveTab(activity) } }
+                        NexoAiAgent.ToolOutcome(true, "Modo Lectura abierto", "Se activó el Modo Lectura de Nexo en la pestaña actual.")
+                    }
+                }
+
+                "translate_page" -> {
+                    main.post {
+                        runCatching {
+                            TranslatorManager.translateActive(app) { _, _ -> }
+                        }
+                    }
+                    NexoAiAgent.ToolOutcome(true, "Traducción activada", "Se inició la traducción de la página con Nexo Translator.")
+                }
+
+                else -> NexoAiAgent.ToolOutcome(false, "Herramienta no soportada", "Herramienta desconocida: ${call.tool}")
+            }
+        }
+    }
+
     /** Acción de solo lectura: resalta texto en la página activa sin modificar datos. */
     fun highlightInActivePage(context: Context, query: String) {
         val session = TabManager.activeTab()?.session as? CefriumEngineSession ?: return
@@ -370,7 +736,7 @@ object NexoAiPageAgent {
 
     /**
      * Ejecuta una acción con efecto secundario SOLO tras confirmación explícita del usuario.
-     * Si la acción depende del DOM (`highlight`, `fill_draft`) y el usuario ya cambió de pestaña,
+     * Si la acción depende del DOM (`highlight`, `fill_draft`, `select_option`) y el usuario ya cambió de pestaña,
      * URL o documento respecto a [expectedBinding], se bloquea por seguridad sin ejecutarse sobre otra página.
      */
     fun confirmAndExecuteAction(
@@ -379,10 +745,9 @@ object NexoAiPageAgent {
         expectedBinding: NexoAiModels.PageBinding? = null
     ) {
         val currentBinding = currentActiveBinding()
-        val tab = TabManager.activeTab()
         val host = currentBinding?.host.orEmpty()
 
-        val requiresSamePage = action.type == "highlight" || action.type == "fill_draft"
+        val requiresSamePage = action.type == "highlight" || action.type == "fill_draft" || action.type == "select_option"
         if (requiresSamePage && expectedBinding != null && !isBindingMatchingCurrent(expectedBinding, currentBinding)) {
             val orig = expectedBinding.host.ifBlank { expectedBinding.title.ifBlank { "la página original" } }
             Toastish.show(activity, "Acción bloqueada: pertenece a $orig y ya navegaste a otra página.")
@@ -402,6 +767,7 @@ object NexoAiPageAgent {
         val message = when (action.type) {
             "open_link" -> "Nexo AI propone abrir este enlace en una pestaña nueva:\n\n${action.target}"
             "fill_draft" -> "Nexo AI propone rellenar el campo «${action.target}» con este borrador (NO enviará el formulario):\n\n${action.value.take(300)}"
+            "select_option" -> "Nexo AI propone seleccionar «${action.value}» en el desplegable «${action.target}»."
             else -> "Confirmar acción asistida: ${action.label}"
         }
         lateinit var confirmDialog: Dialog
@@ -434,6 +800,18 @@ object NexoAiPageAgent {
                         session.evaluateInMainFrame(js) {}
                         NexoAiConfig.appendLog(activity, "fill_draft:${action.target}", host, "ejecutado")
                         Toastish.show(activity, "Borrador insertado en «${action.target}».")
+                    }
+                }
+                "select_option" -> {
+                    val session = activeTab?.session as? CefriumEngineSession
+                    val source = loadAgentScript(activity)
+                    if (session != null && source != null) {
+                        val f = JSONObject.quote(action.target)
+                        val v = JSONObject.quote(action.value.take(200))
+                        val js = "(function(){try{$source;if(window.__nexoAiPageAgent)window.__nexoAiPageAgent.selectOption(document,$f,$v);}catch(_){}})();"
+                        session.evaluateInMainFrame(js) {}
+                        NexoAiConfig.appendLog(activity, "select_option:${action.target}", host, "ejecutado")
+                        Toastish.show(activity, "Opción seleccionada en «${action.target}».")
                     }
                 }
             }

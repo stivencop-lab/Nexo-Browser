@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Excluir claves, perfiles Chromium, historial, descargas, IA y extensiones de backup/transferencia (Android 12+). -->
+    <cloud-backup>
+        <exclude domain="sharedpref" path="nexo_secrets.xml" />
+        <exclude domain="sharedpref" path="nexo_browser_settings.xml" />
+        <exclude domain="sharedpref" path="nexo_ai.xml" />
+        <exclude domain="sharedpref" path="nexo_downloads.xml" />
+        <exclude domain="sharedpref" path="nexo_history.xml" />
+        <exclude domain="root" path="app_cefrium" />
+        <exclude domain="file" path="phantomshield" />
+        <exclude domain="file" path="nxr_extensions" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="nexo_secrets.xml" />
+        <exclude domain="sharedpref" path="nexo_browser_settings.xml" />
+        <exclude domain="sharedpref" path="nexo_ai.xml" />
+        <exclude domain="sharedpref" path="nexo_downloads.xml" />
+        <exclude domain="sharedpref" path="nexo_history.xml" />
+        <exclude domain="root" path="app_cefrium" />
+        <exclude domain="file" path="phantomshield" />
+        <exclude domain="file" path="nxr_extensions" />
+    </device-transfer>
+</data-extraction-rules>

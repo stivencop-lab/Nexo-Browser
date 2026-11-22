@@ -85,9 +85,16 @@ object NxrPermissions {
         url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
 
     fun extractHost(url: String): String {
-        val after = url.substringAfter("://", "").substringBefore('/').substringBefore('?').substringBefore('#')
-        val hostPort = after.substringAfterLast('@')
-        return hostPort.substringBefore(':').lowercase().removePrefix("www.").trimEnd('.')
+        val after = url.substringAfter("://", "")
+        val end = after.indexOfFirst { it == '/' || it == '?' || it == '#' || it == '\\' }
+        val authority = (if (end >= 0) after.substring(0, end) else after).substringAfterLast('@')
+        val host = if (authority.startsWith("[")) {
+            val close = authority.indexOf(']')
+            if (close > 1) authority.substring(1, close) else return ""
+        } else {
+            authority.substringBefore(':')
+        }
+        return host.lowercase().removePrefix("www.").trimEnd('.')
     }
 
     /** Verifica si la extensión con [policy] puede actuar sobre [url] en modo [isPrivate]. */

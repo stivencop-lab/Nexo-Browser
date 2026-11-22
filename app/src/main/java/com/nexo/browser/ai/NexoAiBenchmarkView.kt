@@ -442,6 +442,7 @@ class NexoAiBenchmarkView(
         }
         private val r = android.graphics.RectF()
         var ttftFraction = 0f
+        private val clip = android.graphics.Path()
         var totalFraction = 0f
         var failed = false
 
@@ -464,7 +465,8 @@ class NexoAiBenchmarkView(
             if (total <= 0f) return
             canvas.save()
             r.set(0f, 0f, total, h)
-            val clip = android.graphics.Path().apply { addRoundRect(r, rad, rad, android.graphics.Path.Direction.CW) }
+            clip.rewind()
+            clip.addRoundRect(r, rad, rad, android.graphics.Path.Direction.CW)
             canvas.clipPath(clip)
             canvas.drawRect(0f, 0f, total, h, gen)
             if (ttft > 0f) canvas.drawRect(0f, 0f, ttft, h, first)
@@ -579,7 +581,7 @@ class NexoAiBenchmarkView(
         if (entry.text.isNotBlank()) {
             val isExpanded = entry.requestId in expandedEntries
             val bodyView = TextView(activity).apply {
-                text = entry.text
+                text = NexoAiRichRenderer.formatInlineSpannable(activity, entry.text, enableLinks = false)
                 textSize = 14f
                 typeface = NexoUi.regular(activity)
                 setTextColor(p.muted)

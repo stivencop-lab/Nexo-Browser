@@ -65,6 +65,13 @@ object PhantomShieldPanel {
         return profile
     }
 
+    /** Cierra la hoja si está abierta (p. ej. al destruir la Activity). */
+    fun dismiss() {
+        runCatching { current?.dismiss() }
+        current = null
+        currentBrowser = null
+    }
+
     /** «Configurar IA» del panel: los ajustes de IA en la misma hoja (atrás vuelve al panel). */
     internal fun openOptions(): Boolean {
         val web = currentBrowser?.takeIf { !it.isClosed } ?: return false

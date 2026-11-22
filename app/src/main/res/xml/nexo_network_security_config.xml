@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        La navegación web general en Chromium requiere permitir sitios http:// bajo demanda del usuario.
+        Todos los endpoints de actualizaciones, tiendas de extensiones y APIs de IA/traducción exigen HTTPS.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <domain includeSubdomains="false">clients2.google.com</domain>
+        <domain includeSubdomains="false">clients2.googleusercontent.com</domain>
+        <domain includeSubdomains="false">microsoftedge.microsoft.com</domain>
+        <domain includeSubdomains="false">edge.microsoft.com</domain>
+        <domain includeSubdomains="false">addons.mozilla.org</domain>
+        <domain includeSubdomains="false">api.openai.com</domain>
+        <domain includeSubdomains="false">api.anthropic.com</domain>
+        <domain includeSubdomains="false">openrouter.ai</domain>
+        <domain includeSubdomains="false">generativelanguage.googleapis.com</domain>
+        <domain includeSubdomains="false">api.deepgram.com</domain>
+        <domain includeSubdomains="false">api.deepl.com</domain>
+        <domain includeSubdomains="false">api-free.deepl.com</domain>
+    </domain-config>
+</network-security-config>

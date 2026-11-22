@@ -70,9 +70,23 @@ internal object ShieldAiHost {
         if (browser != null && !ready) close("no cargó en ${START_TIMEOUT_MS / 1000} s", "No se pudo iniciar la IA de PhantomShield. Inténtalo de nuevo.")
     }
 
-    /** Peticiones a la API de IA: sin cookies, sin caché y sin redirecciones (como el `fetch` original). */
+    /** Peticiones a la API de IA: sin cookies, sin caché, sin redirecciones y con protección SSRF. */
     private val http by lazy {
+        val publicDns = com.nexo.browser.NativeImagePolicy.publicDns(okhttp3.Dns.SYSTEM)
+        val dns = object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<java.net.InetAddress> {
+                val lower = hostname.lowercase().trimEnd('.')
+                if (lower == "localhost" || lower == "127.0.0.1" || lower == "::1") {
+                    return okhttp3.Dns.SYSTEM.lookup(hostname)
+                }
+                return publicDns.lookup(hostname)
+            }
+        }
         OkHttpClient.Builder()
+            .dns(dns)
+            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+            .authenticator(okhttp3.Authenticator.NONE)
+            .proxyAuthenticator(okhttp3.Authenticator.NONE)
             .followRedirects(false).followSslRedirects(false)
             // Por encima del tiempo límite máximo del clasificador (90 s): quien corta es él, con su mensaje.
             .connectTimeout(15, TimeUnit.SECONDS).readTimeout(100, TimeUnit.SECONDS).callTimeout(100, TimeUnit.SECONDS)
@@ -290,7 +304,11 @@ internal object ShieldAiHost {
                         val source = it.body?.source()
                         val buffer = okio.Buffer()
                         // Un byte de más basta para que el clasificador detecte el exceso.
-                        if (source != null) while (buffer.size <= MAX_RESPONSE_BYTES && source.read(buffer, 8192) != -1L) Unit
+                        if (source != null) {
+                            while (buffer.size <= MAX_RESPONSE_BYTES && source.read(buffer, 8192) != -1L) {
+                                // lectura acotada en buffer
+                            }
+                        }
                         val bytes = buffer.readByteArray(minOf(buffer.size, MAX_RESPONSE_BYTES + 1))
                         val out = JSONObject()
                         it.header("Retry-After")?.let { value -> out.put("retry-after", value.take(64)) }

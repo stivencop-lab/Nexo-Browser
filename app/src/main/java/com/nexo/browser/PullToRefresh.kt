@@ -113,6 +113,8 @@ class PullRefreshLayout @JvmOverloads constructor(
         return false
     }
 
+    override fun performClick(): Boolean = super.performClick()
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!pulling) return super.onTouchEvent(event)
         when (event.actionMasked) {
@@ -121,6 +123,7 @@ class PullRefreshLayout @JvmOverloads constructor(
                 pulling = false
                 val distance = dampen(event.y - downY)
                 if (distance >= threshold) startRefresh() else hideIndicator()
+                performClick()
             }
             MotionEvent.ACTION_CANCEL -> {
                 pulling = false
@@ -159,7 +162,12 @@ class PullRefreshLayout @JvmOverloads constructor(
             addUpdateListener { indicator.rotation = it.animatedValue as Float }
             start()
         }
-        performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+        val haptic = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            android.view.HapticFeedbackConstants.CONFIRM
+        } else {
+            android.view.HapticFeedbackConstants.VIRTUAL_KEY
+        }
+        performHapticFeedback(haptic)
         onRefresh()
         // Si la carga no avisa (página en caché), no dejar el indicador girando.
         postDelayed({ finishRefresh() }, 2500L)

@@ -20,10 +20,12 @@ internal class NexoGlassBackdrop(
     private val frameCallback = Choreographer.FrameCallback { capture() }
     private val stackBlur = if (Build.VERSION.SDK_INT < 31) StackBlur() else null
     private var running = false
+    private var paused = false
     private var scheduled = false
     private var dirty = false
     private var copying = false
     private var generation = 0L
+    private var lastCaptureMs = 0L
     private var spare: Bitmap? = null
 
     var bitmap: Bitmap? = null
@@ -44,6 +46,13 @@ internal class NexoGlassBackdrop(
         if (enabled) markDirty() else reset()
     }
 
+    /** Pausa temporalmente PixelCopy mientras CefResumeBridge recupera la superficie. */
+    fun setPaused(pause: Boolean) {
+        if (paused == pause) return
+        paused = pause
+        if (!pause && running) markDirty()
+    }
+
     fun reset() {
         generation++
         bitmap = null
@@ -57,7 +66,7 @@ internal class NexoGlassBackdrop(
 
     fun markDirty() {
         dirty = true
-        if (running && !scheduled && !copying) {
+        if (running && !paused && !scheduled && !copying) {
             scheduled = true
             choreographer.postFrameCallback(frameCallback)
         }
@@ -65,7 +74,13 @@ internal class NexoGlassBackdrop(
 
     private fun capture() {
         scheduled = false
-        if (!running || !dirty) return
+        if (!running || paused || !dirty) return
+        val now = android.os.SystemClock.uptimeMillis()
+        if (bitmap != null && now - lastCaptureMs < MIN_INTERVAL_MS) {
+            dirty = false
+            return
+        }
+        lastCaptureMs = now
         dirty = false
         val view = surface() ?: return
         if (!view.holder.surface.isValid || view.width <= 0 || view.height <= 0) return
@@ -104,6 +119,7 @@ internal class NexoGlassBackdrop(
 
     private companion object {
         const val SCALE = 0.25f
+        const val MIN_INTERVAL_MS = 140L
         val worker by lazy { Handler(HandlerThread("NexoGlassBackdrop").apply { start() }.looper) }
     }
 }

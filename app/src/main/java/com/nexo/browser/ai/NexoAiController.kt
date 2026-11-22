@@ -11,15 +11,16 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
 /**
- * Controlador de conversaciones persistentes de Nexo AI independiente de vistas, `Activity` y `Dialog`.
+ * Controlador de conversaciones persistentes y Agente de Navegador de Nexo AI independiente de vistas,
+ * `Activity` y `Dialog`.
  *
  * Garantías arquitectónicas:
  * - Ninguna petición de larga duración guarda referencias a `Activity`, `Dialog` ni vistas.
- * - Minimizar el panel jamás cancela una consulta activa; la UI se desuscribe y al volver a abrir
- *   restaura exactamente la conversación y el progreso o respuesta generada.
+ * - Minimizar el panel jamás cancela una consulta ni un bucle agente activo; la UI se desuscribe
+ *   y al volver a abrir restaura exactamente la conversación, los pasos ejecutados y la respuesta.
  * - Cada solicitud tiene su propio `requestId` y [NexoAiClient.CancelHandle]; cancelar detiene
  *   únicamente esa solicitud sin afectar otros hilos ni comparaciones del laboratorio.
- * - Persiste automáticamente las conversaciones en [NexoAiStore].
+ * - Persiste automáticamente las conversaciones (con fijado y trazas del agente) en [NexoAiStore].
  */
 object NexoAiController {
 
@@ -47,6 +48,22 @@ object NexoAiController {
             preferStreaming = preferStreaming,
             reasoningEffort = reasoningEffort,
             history = history,
+            agentMode = false,
+            onDelta = onDelta
+        )
+    }
+
+    private val defaultAgentTransport = Transport { settings, apiKey, userTask, untrustedContext, cancelHandle, preferStreaming, reasoningEffort, history, onDelta ->
+        NexoAiClient.executeStreaming(
+            settings = settings,
+            apiKey = apiKey,
+            userTask = userTask,
+            untrustedContext = untrustedContext,
+            cancelHandle = cancelHandle,
+            preferStreaming = preferStreaming,
+            reasoningEffort = reasoningEffort,
+            history = history,
+            agentMode = true,
             onDelta = onDelta
         )
     }
@@ -66,6 +83,7 @@ object NexoAiController {
     @Volatile private var appContext: Context? = null
 
     @Volatile internal var transport: Transport = defaultTransport
+    @Volatile internal var agentTransport: Transport = defaultAgentTransport
     @Volatile internal var ioExecutor: Executor = defaultExecutor
     @Volatile internal var uiDispatcher: ((Runnable) -> Unit)? = null
 
@@ -103,7 +121,8 @@ object NexoAiController {
         storageFile: File,
         testTransport: Transport = defaultTransport,
         testExecutor: Executor = Executor { it.run() },
-        syncUi: Boolean = true
+        syncUi: Boolean = true,
+        testAgentTransport: Transport = testTransport
     ) {
         synchronized(lock) {
             controllerGeneration++
@@ -113,6 +132,7 @@ object NexoAiController {
             listeners.clear()
             appContext = null
             transport = testTransport
+            agentTransport = testAgentTransport
             ioExecutor = testExecutor
             uiDispatcher = if (syncUi) { r -> r.run() } else null
             panelState = NexoAiModels.PanelState.MINIMIZED
@@ -255,11 +275,21 @@ object NexoAiController {
         notifyListeners(snap)
     }
 
+    fun togglePinConversation(conversationId: String) {
+        val snap = synchronized(lock) {
+            val idx = conversations.indexOfFirst { it.id == conversationId }
+            if (idx < 0) return
+            conversations[idx] = conversations[idx].copy(pinned = !conversations[idx].pinned)
+            persistLocked()
+            buildSnapshotLocked()
+        }
+        notifyListeners(snap)
+    }
+
     fun deleteConversation(conversationId: String) {
         val snap = synchronized(lock) {
             val idx = conversations.indexOfFirst { it.id == conversationId }
             if (idx < 0) return
-            // Cancelar únicamente solicitudes activas de ese hilo
             val toCancel = activeRequests.values.filter { it.conversationId == conversationId }.map { it.requestId }
             toCancel.forEach { reqId ->
                 activeHandles.remove(reqId)?.cancel()
@@ -370,13 +400,7 @@ object NexoAiController {
         notifyListeners(snap)
     }
 
-    /**
-     * Envía un prompt dentro de [conversationId] (o el hilo activo).
-     *
-     * - Crea de inmediato el mensaje de usuario y el placeholder del asistente en estado `SENDING`.
-     * - Lanza la petición HTTP/SSE en un hilo en segundo plano sin retener vistas ni `Activity`.
-     * - Devuelve el `requestId` asignado para cancelación individual.
-     */
+    /** Envía un prompt estándar (un turno) dentro de [conversationId] o el hilo activo. */
     fun sendPrompt(
         settings: NexoAiConfig.Settings,
         apiKey: String,
@@ -396,6 +420,251 @@ object NexoAiController {
         val effectiveModel = settings.effectiveModel()
         val cancelHandle = NexoAiClient.CancelHandle()
 
+        val (targetConvId, historyTurns, launchGen) = enqueueConversationTurn(
+            requestId = requestId,
+            userMsgId = userMsgId,
+            assistantMsgId = assistantMsgId,
+            now = now,
+            settings = settings,
+            userTask = userTask,
+            scope = scope,
+            pageBinding = pageBinding,
+            reasoningEffort = reasoningEffort,
+            conversationId = conversationId,
+            cancelHandle = cancelHandle
+        )
+
+        val logHost = pageBinding?.host.orEmpty()
+        val ctxForLog = appContext
+
+        ioExecutor.execute {
+            val streamText = StringBuilder()
+            var lastUiEmitMs = 0L
+
+            val result = transport.execute(
+                settings = settings,
+                apiKey = apiKey,
+                userTask = userTask,
+                untrustedContext = untrustedContext,
+                cancelHandle = cancelHandle,
+                preferStreaming = preferStreaming,
+                reasoningEffort = reasoningEffort,
+                history = historyTurns
+            ) { delta ->
+                if (cancelHandle.isCancelled) return@execute
+                streamText.append(delta)
+                val nowEmit = System.currentTimeMillis()
+                if (nowEmit - lastUiEmitMs >= 60L || streamText.length <= delta.length) {
+                    lastUiEmitMs = nowEmit
+                    val partialSnap = synchronized(lock) {
+                        if (controllerGeneration != launchGen) return@synchronized null
+                        updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
+                            msg.copy(
+                                text = streamText.toString(),
+                                status = NexoAiModels.MessageStatus.STREAMING
+                            )
+                        }
+                        buildSnapshotLocked()
+                    }
+                    if (partialSnap != null) notifyListeners(partialSnap)
+                }
+            }
+
+            completeTurn(
+                launchGen = launchGen,
+                requestId = requestId,
+                targetConvId = targetConvId,
+                assistantMsgId = assistantMsgId,
+                cancelHandle = cancelHandle,
+                streamFallback = streamText.toString(),
+                result = result,
+                agentSteps = emptyList(),
+                extraActions = emptyList(),
+                ctxForLog = ctxForLog,
+                logLabel = logLabel,
+                logHost = logHost
+            )
+        }
+
+        return requestId
+    }
+
+    /**
+     * Ejecuta el **Modo Agente de Navegador** en bucle multi-paso acotado (`Observar → Herramienta → Actuar → Observar`,
+     * hasta [NexoAiAgent.MAX_AGENT_STEPS] pasos), publicando en tiempo real cada paso ejecutado y haciendo
+     * streaming de la respuesta final.
+     */
+    fun sendAgentPrompt(
+        settings: NexoAiConfig.Settings,
+        apiKey: String,
+        userTask: String,
+        initialContext: String,
+        toolExecutor: NexoAiAgent.ToolExecutor,
+        pageBinding: NexoAiModels.PageBinding? = null,
+        reasoningEffort: String? = null,
+        preferStreaming: Boolean = true,
+        conversationId: String? = null,
+        logLabel: String = "agente"
+    ): String {
+        val now = System.currentTimeMillis()
+        val requestId = "req_${UUID.randomUUID().toString().take(12)}"
+        val userMsgId = "msg_u_${UUID.randomUUID().toString().take(10)}"
+        val assistantMsgId = "msg_a_${UUID.randomUUID().toString().take(10)}"
+        val cancelHandle = NexoAiClient.CancelHandle()
+
+        val (targetConvId, baseHistory, launchGen) = enqueueConversationTurn(
+            requestId = requestId,
+            userMsgId = userMsgId,
+            assistantMsgId = assistantMsgId,
+            now = now,
+            settings = settings,
+            userTask = userTask,
+            scope = "agent",
+            pageBinding = pageBinding,
+            reasoningEffort = reasoningEffort,
+            conversationId = conversationId,
+            cancelHandle = cancelHandle
+        )
+
+        val logHost = pageBinding?.host.orEmpty()
+        val ctxForLog = appContext
+
+        ioExecutor.execute {
+            val steps = mutableListOf<NexoAiModels.AgentStep>()
+            val pendingActions = mutableListOf<NexoAiClient.ProposedAction>()
+            val loopHistory = baseHistory.toMutableList()
+            var currentTask = userTask
+            var currentContext = initialContext
+            var finalResult: Result<NexoAiClient.AiResponse>? = null
+            var lastStream = ""
+
+            for (stepIdx in 1..NexoAiAgent.MAX_AGENT_STEPS) {
+                if (cancelHandle.isCancelled) break
+                val stepStream = StringBuilder()
+                var lastEmit = 0L
+
+                val turnResult = agentTransport.execute(
+                    settings = settings,
+                    apiKey = apiKey,
+                    userTask = currentTask,
+                    untrustedContext = currentContext,
+                    cancelHandle = cancelHandle,
+                    preferStreaming = preferStreaming,
+                    reasoningEffort = reasoningEffort,
+                    history = loopHistory
+                ) { delta ->
+                    if (cancelHandle.isCancelled) return@execute
+                    stepStream.append(delta)
+                    val nowEmit = System.currentTimeMillis()
+                    if (nowEmit - lastEmit >= 70L || stepStream.length <= delta.length) {
+                        lastEmit = nowEmit
+                        val snap = synchronized(lock) {
+                            if (controllerGeneration != launchGen) return@synchronized null
+                            updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
+                                msg.copy(
+                                    text = stepStream.toString(),
+                                    status = NexoAiModels.MessageStatus.STREAMING,
+                                    agentSteps = steps.toList()
+                                )
+                            }
+                            buildSnapshotLocked()
+                        }
+                        if (snap != null) notifyListeners(snap)
+                    }
+                }
+
+                lastStream = stepStream.toString()
+                if (cancelHandle.isCancelled || turnResult.isFailure) {
+                    finalResult = turnResult
+                    break
+                }
+
+                val aiResp = turnResult.getOrThrow()
+                val toolCall = NexoAiAgent.parseToolCall(aiResp.text)
+                if (toolCall == null || stepIdx == NexoAiAgent.MAX_AGENT_STEPS) {
+                    val cleanedFinal = NexoAiRichContent.stripInternalBlocks(aiResp.text)
+                        .ifBlank { aiResp.text }
+                    finalResult = Result.success(aiResp.copy(text = cleanedFinal))
+                    break
+                }
+
+                // Mostrar paso en curso en la UI antes de ejecutarlo
+                val runningStep = NexoAiModels.AgentStep(toolCall.tool, "${toolCall.reason}…", ok = true)
+                val stepRunningSnap = synchronized(lock) {
+                    if (controllerGeneration != launchGen) return@synchronized null
+                    updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
+                        msg.copy(
+                            text = "",
+                            status = NexoAiModels.MessageStatus.STREAMING,
+                            agentSteps = steps + runningStep
+                        )
+                    }
+                    buildSnapshotLocked()
+                }
+                if (stepRunningSnap != null) notifyListeners(stepRunningSnap)
+
+                val outcome = runCatching { toolExecutor.run(toolCall) }.getOrElse { err ->
+                    NexoAiAgent.ToolOutcome(false, "Error al ejecutar ${toolCall.tool}", err.message ?: "Error interno.")
+                }
+                steps += NexoAiModels.AgentStep(toolCall.tool, outcome.summary, outcome.ok)
+                outcome.pendingAction?.let { pendingActions += it }
+
+                val stepDoneSnap = synchronized(lock) {
+                    if (controllerGeneration != launchGen) return@synchronized null
+                    updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
+                        msg.copy(
+                            agentSteps = steps.toList(),
+                            actions = (msg.actions + pendingActions).distinctBy { "${it.type}|${it.target}|${it.value}" }
+                        )
+                    }
+                    buildSnapshotLocked()
+                }
+                if (stepDoneSnap != null) notifyListeners(stepDoneSnap)
+
+                // Añadir el paso ejecutado al historial temporal del bucle agente
+                if (stepIdx == 1) {
+                    loopHistory += "user" to userTask
+                } else {
+                    loopHistory += "user" to currentTask
+                }
+                loopHistory += "assistant" to "Ejecuté la herramienta ${toolCall.tool} (${toolCall.reason})."
+                currentTask = NexoAiAgent.wrapToolObservation(toolCall, outcome, stepIdx)
+                currentContext = ""
+            }
+
+            completeTurn(
+                launchGen = launchGen,
+                requestId = requestId,
+                targetConvId = targetConvId,
+                assistantMsgId = assistantMsgId,
+                cancelHandle = cancelHandle,
+                streamFallback = lastStream,
+                result = finalResult ?: Result.failure(IllegalStateException("El agente no pudo completar la respuesta.")),
+                agentSteps = steps.toList(),
+                extraActions = pendingActions.toList(),
+                ctxForLog = ctxForLog,
+                logLabel = logLabel,
+                logHost = logHost
+            )
+        }
+
+        return requestId
+    }
+
+    private fun enqueueConversationTurn(
+        requestId: String,
+        userMsgId: String,
+        assistantMsgId: String,
+        now: Long,
+        settings: NexoAiConfig.Settings,
+        userTask: String,
+        scope: String,
+        pageBinding: NexoAiModels.PageBinding?,
+        reasoningEffort: String?,
+        conversationId: String?,
+        cancelHandle: NexoAiClient.CancelHandle
+    ): Triple<String, List<Pair<String, String>>, Long> {
+        val effectiveModel = settings.effectiveModel()
         val targetConvId: String
         val historyTurns: List<Pair<String, String>>
         val launchGen: Long
@@ -410,7 +679,6 @@ object NexoAiController {
             val idx = conversations.indexOfFirst { it.id == targetConvId }
             val conv = conversations[idx]
 
-            // Historial de turnos completados previos del mismo hilo
             historyTurns = conv.messages
                 .filter { it.status == NexoAiModels.MessageStatus.COMPLETED && it.text.isNotBlank() }
                 .map { (if (it.role == NexoAiModels.Role.USER) "user" else "assistant") to it.text }
@@ -451,7 +719,6 @@ object NexoAiController {
                 hostHint = pageBinding?.host?.takeIf { it.isNotBlank() } ?: conv.hostHint
             )
             conversations[idx] = updatedConv
-            // Mover hilo actualizado arriba del listado
             if (idx > 0) {
                 conversations.removeAt(idx)
                 conversations.add(0, updatedConv)
@@ -471,102 +738,83 @@ object NexoAiController {
             buildSnapshotLocked()
         }
         notifyListeners(snapStart)
+        return Triple(targetConvId, historyTurns, launchGen)
+    }
 
-        val logHost = pageBinding?.host.orEmpty()
-        val ctxForLog = appContext
+    private fun completeTurn(
+        launchGen: Long,
+        requestId: String,
+        targetConvId: String,
+        assistantMsgId: String,
+        cancelHandle: NexoAiClient.CancelHandle,
+        streamFallback: String,
+        result: Result<NexoAiClient.AiResponse>,
+        agentSteps: List<NexoAiModels.AgentStep>,
+        extraActions: List<NexoAiClient.ProposedAction>,
+        ctxForLog: Context?,
+        logLabel: String,
+        logHost: String
+    ) {
+        val finalSnap = synchronized(lock) {
+            if (controllerGeneration != launchGen) return@synchronized null
+            activeHandles.remove(requestId)
+            activeRequests.remove(requestId)
 
-        ioExecutor.execute {
-            val streamText = StringBuilder()
-            var lastUiEmitMs = 0L
-
-            val result = transport.execute(
-                settings = settings,
-                apiKey = apiKey,
-                userTask = userTask,
-                untrustedContext = untrustedContext,
-                cancelHandle = cancelHandle,
-                preferStreaming = preferStreaming,
-                reasoningEffort = reasoningEffort,
-                history = historyTurns
-            ) { delta ->
-                if (cancelHandle.isCancelled) return@execute
-                streamText.append(delta)
-                val nowEmit = System.currentTimeMillis()
-                // Limita refrescos UI a ~15 fps durante streaming rápido para no ahogar el hilo principal
-                if (nowEmit - lastUiEmitMs >= 60L || streamText.length <= delta.length) {
-                    lastUiEmitMs = nowEmit
-                    val partialSnap = synchronized(lock) {
-                        if (controllerGeneration != launchGen) return@synchronized null
+            if (cancelHandle.isCancelled) {
+                updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
+                    msg.copy(
+                        text = msg.text.ifBlank { streamFallback },
+                        status = NexoAiModels.MessageStatus.CANCELLED,
+                        errorMessage = "Generación detenida por el usuario.",
+                        agentSteps = agentSteps.ifEmpty { msg.agentSteps }
+                    )
+                }
+            } else {
+                result.fold(
+                    onSuccess = { aiResp ->
+                        val mergedActions = (extraActions + aiResp.actions)
+                            .distinctBy { "${it.type}|${it.target}|${it.value}" }
                         updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
                             msg.copy(
-                                text = streamText.toString(),
-                                status = NexoAiModels.MessageStatus.STREAMING
+                                text = aiResp.text,
+                                status = NexoAiModels.MessageStatus.COMPLETED,
+                                usage = aiResp.usage,
+                                metrics = aiResp.metrics,
+                                actions = mergedActions,
+                                errorMessage = null,
+                                agentSteps = agentSteps.ifEmpty { msg.agentSteps }
                             )
                         }
-                        buildSnapshotLocked()
-                    }
-                    if (partialSnap != null) notifyListeners(partialSnap)
-                }
-            }
-
-            val finalSnap = synchronized(lock) {
-                if (controllerGeneration != launchGen) return@synchronized null
-                activeHandles.remove(requestId)
-                activeRequests.remove(requestId)
-
-                if (cancelHandle.isCancelled) {
-                    updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
-                        msg.copy(
-                            text = msg.text.ifBlank { streamText.toString() },
-                            status = NexoAiModels.MessageStatus.CANCELLED,
-                            errorMessage = "Generación detenida por el usuario."
-                        )
-                    }
-                } else {
-                    result.fold(
-                        onSuccess = { aiResp ->
-                            updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
-                                msg.copy(
-                                    text = aiResp.text,
-                                    status = NexoAiModels.MessageStatus.COMPLETED,
-                                    usage = aiResp.usage,
-                                    metrics = aiResp.metrics,
-                                    actions = aiResp.actions,
-                                    errorMessage = null
-                                )
-                            }
-                            if (panelState == NexoAiModels.PanelState.MINIMIZED || activeConversationId != targetConvId) {
-                                unreadReadyConversationId = targetConvId
-                                if (panelState == NexoAiModels.PanelState.MINIMIZED) {
-                                    minimizedPillVisible = true
-                                }
-                            }
-                            ctxForLog?.let { NexoAiConfig.appendLog(it, logLabel, logHost, "ok") }
-                        },
-                        onFailure = { err ->
-                            val cleanErr = NexoAiConfig.sanitizeLogText(err.message ?: "No se pudo completar la solicitud.")
-                            updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
-                                msg.copy(
-                                    text = msg.text.ifBlank { streamText.toString() },
-                                    status = NexoAiModels.MessageStatus.ERROR,
-                                    errorMessage = cleanErr
-                                )
-                            }
-                            lastErrorSummary = cleanErr
+                        if (panelState == NexoAiModels.PanelState.MINIMIZED || activeConversationId != targetConvId) {
+                            unreadReadyConversationId = targetConvId
                             if (panelState == NexoAiModels.PanelState.MINIMIZED) {
                                 minimizedPillVisible = true
                             }
-                            ctxForLog?.let { NexoAiConfig.appendLog(it, logLabel, logHost, "error") }
                         }
-                    )
-                }
-                persistLocked()
-                buildSnapshotLocked()
+                        ctxForLog?.let { NexoAiConfig.appendLog(it, logLabel, logHost, "ok") }
+                    },
+                    onFailure = { err ->
+                        val cleanErr = NexoAiConfig.sanitizeLogText(err.message ?: "No se pudo completar la solicitud.")
+                        updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
+                            msg.copy(
+                                text = msg.text.ifBlank { streamFallback },
+                                status = NexoAiModels.MessageStatus.ERROR,
+                                errorMessage = cleanErr,
+                                agentSteps = agentSteps.ifEmpty { msg.agentSteps }
+                            )
+                        }
+                        lastErrorSummary = cleanErr
+                        if (panelState == NexoAiModels.PanelState.MINIMIZED) {
+                            minimizedPillVisible = true
+                        }
+                        ctxForLog?.let { NexoAiConfig.appendLog(it, logLabel, logHost, "error") }
+                    }
+                )
             }
-            if (finalSnap != null) notifyListeners(finalSnap)
+            persistLocked()
+            buildSnapshotLocked()
         }
-
-        return requestId
+        if (finalSnap != null) notifyListeners(finalSnap)
     }
 
     /** Cancela explícitamente UNA solicitud concreta sin tocar otras conversaciones ni el benchmark. */

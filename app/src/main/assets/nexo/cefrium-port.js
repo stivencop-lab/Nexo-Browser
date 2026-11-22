@@ -13,6 +13,9 @@ function nexoCefriumPort(isTop, options) {
   'use strict';
   const query = globalThis.cefriumQuery;
   if (typeof query !== 'function') return false;
+  const jsonParse = JSON.parse;
+  const jsonStringify = JSON.stringify;
+  const createNullObj = Object.create;
   // Congelar cefriumQuery en document_start impide que scripts de la página la reemplacen para espiar tokens NXR.
   try {
     Object.defineProperty(globalThis, 'cefriumQuery', {
@@ -26,7 +29,7 @@ function nexoCefriumPort(isTop, options) {
     ? options.pollMs
     : (isTop ? 2000 : 1500);
   const listeners = [];
-  const seen = Object.create(null);
+  const seen = createNullObj(null);
   const seenOrder = [];
   let seq = -1;
   let polling = false;
@@ -48,7 +51,7 @@ function nexoCefriumPort(isTop, options) {
   function handle(raw) {
     if (typeof raw !== 'string' || !raw) return;
     let envelope;
-    try { envelope = JSON.parse(raw); } catch (_) { return; }
+    try { envelope = jsonParse(raw); } catch (_) { return; }
     if (!envelope || typeof envelope !== 'object') return;
     const hasSeq = typeof envelope.seq === 'number';
     if (hasSeq && envelope.seq > seq) seq = envelope.seq;
@@ -65,11 +68,14 @@ function nexoCefriumPort(isTop, options) {
 
   function ask(message, done) {
     try {
-      query({
-        request: JSON.stringify({ m: message, s: seq }),
-        onSuccess: function(response) { if (done) done(); handle(response); },
-        onFailure: function() { if (done) done(); }
-      });
+      const req = createNullObj(null);
+      req.m = message;
+      req.s = seq;
+      const opts = createNullObj(null);
+      opts.request = jsonStringify(req);
+      opts.onSuccess = function(response) { if (done) done(); handle(response); };
+      opts.onFailure = function() { if (done) done(); };
+      query(opts);
       return true;
     } catch (_) {
       if (done) done();

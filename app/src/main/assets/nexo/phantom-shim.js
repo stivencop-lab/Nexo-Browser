@@ -7,8 +7,10 @@
  * cuanto se captura. Nexo decide qué puede pedir cada origen: este código no
  * concede nada por sí mismo.
  */
-function nexoPhantomShim(base, manifest) {
+function nexoPhantomShim(base, manifest, isPanel) {
   'use strict';
+  const jsonParse = JSON.parse;
+  const jsonStringify = JSON.stringify;
   const port = globalThis.__nexoShield;
   if (!port || typeof port.postMessage !== 'function') return null;
   try { delete globalThis.__nexoShield; } catch (_) {}
@@ -19,7 +21,7 @@ function nexoPhantomShim(base, manifest) {
 
   port.addEventListener('message', function(event) {
     let message;
-    try { message = JSON.parse(event.data); } catch (_) { return; }
+    try { message = jsonParse(event.data); } catch (_) { return; }
     if (!message || typeof message !== 'object') return;
     if (typeof message.id === 'number' && pending.has(message.id)) {
       const entry = pending.get(message.id);
@@ -60,12 +62,18 @@ function nexoPhantomShim(base, manifest) {
       const id = ++seq;
       pending.set(id, { resolve: resolve, reject: reject });
       try {
-        port.postMessage(JSON.stringify({ id: id, kind: kind, payload: payload === undefined ? null : payload }));
+        port.postMessage(jsonStringify({ id: id, kind: kind, payload: payload === undefined ? null : payload }));
       } catch (error) {
         pending.delete(id);
         reject(error);
       }
     });
+  }
+
+  if (isPanel === true && typeof globalThis.window === 'object' && globalThis.window) {
+    try {
+      globalThis.window.close = function() { call('close', null).catch(function() {}); };
+    } catch (_) {}
   }
 
   function event(list) {

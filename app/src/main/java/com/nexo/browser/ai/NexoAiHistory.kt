@@ -4,7 +4,7 @@ import java.text.Normalizer
 import java.util.Calendar
 import java.util.Locale
 
-/** Reglas puras del historial de Nexo AI (búsqueda, agrupación por fecha, borrado). Probadas en la JVM. */
+/** Reglas puras del historial de Nexo AI (búsqueda, agrupación por fecha, fijado, borrado). Probadas en la JVM. */
 object NexoAiHistory {
     private const val MAX_TITLE = 60
 
@@ -37,7 +37,19 @@ object NexoAiHistory {
         return conv.messages.any { fold(it.text).contains(q) }
     }
 
-    enum class Group(val label: String) { TODAY("Hoy"), YESTERDAY("Ayer"), WEEK("Últimos 7 días"), OLDER("Anteriores") }
+    /** Extracto limpio del último mensaje con contenido (sin Markdown crudo). */
+    fun lastSnippet(conv: NexoAiModels.AiConversation, maxChars: Int = 96): String {
+        val last = conv.messages.lastOrNull { it.text.isNotBlank() } ?: return ""
+        return NexoAiRichContent.toPlainPreview(last.text, maxChars)
+    }
+
+    enum class Group(val label: String) {
+        PINNED("Fijadas"),
+        TODAY("Hoy"),
+        YESTERDAY("Ayer"),
+        WEEK("Últimos 7 días"),
+        OLDER("Anteriores")
+    }
 
     fun group(updatedAtMs: Long, nowMs: Long, calendar: Calendar = Calendar.getInstance()): Group {
         calendar.timeInMillis = nowMs
@@ -55,7 +67,7 @@ object NexoAiHistory {
         }
     }
 
-    /** Conversaciones con contenido, más recientes primero, filtradas y agrupadas. */
+    /** Conversaciones con contenido, fijadas primero y luego más recientes, filtradas y agrupadas. */
     fun sections(
         conversations: List<NexoAiModels.AiConversation>,
         query: String,
@@ -63,8 +75,8 @@ object NexoAiHistory {
     ): List<Pair<Group, List<NexoAiModels.AiConversation>>> =
         conversations
             .filter { it.messages.isNotEmpty() && matches(it, query) }
-            .sortedByDescending { it.updatedAtMs }
-            .groupBy { group(it.updatedAtMs, nowMs) }
+            .sortedWith(compareByDescending<NexoAiModels.AiConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
+            .groupBy { if (it.pinned) Group.PINNED else group(it.updatedAtMs, nowMs) }
             .toList()
             .sortedBy { it.first.ordinal }
 }

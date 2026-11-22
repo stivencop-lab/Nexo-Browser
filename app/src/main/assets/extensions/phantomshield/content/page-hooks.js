@@ -15,9 +15,13 @@
   const state = {
     adblockEnabled: false,
     privacyEnabled: false,
-    popupBlockEnabled: true
+    popupBlockEnabled: true,
+    antiBlockEnabled: false,
+    gpcEnabled: true
   };
-  let canvasRestore = null;
+  let privacyRestore = null;
+  let antiBlockInstalled = false;
+  let gpcInstalled = false;
   let updateYouTubeMonitoring = function() {};
 
   function readBooleanAttribute(name, fallback) {
@@ -32,8 +36,12 @@
     state.adblockEnabled = readBooleanAttribute('data-phantomshield-adblock', false);
     state.privacyEnabled = readBooleanAttribute('data-phantomshield-privacy', false);
     state.popupBlockEnabled = readBooleanAttribute('data-phantomshield-popups', true);
-    if (state.privacyEnabled) installCanvasPrivacy();
-    else if (canvasRestore) { canvasRestore(); canvasRestore = null; }
+    state.antiBlockEnabled = readBooleanAttribute('data-phantomshield-antiblock', false);
+    state.gpcEnabled = readBooleanAttribute('data-phantomshield-gpc', true);
+    if (state.gpcEnabled) installGpcSignal();
+    if (state.privacyEnabled) installFingerprintPrivacy();
+    else if (privacyRestore) { privacyRestore(); privacyRestore = null; }
+    if (state.adblockEnabled && state.antiBlockEnabled) installAntiAdblockScriptlets();
     if (!state.adblockEnabled) restoreYouTubeVideo();
     updateYouTubeMonitoring();
   }
@@ -278,18 +286,36 @@
   }
 
 
-  function installCanvasPrivacy() {
-    if (canvasRestore || !window.HTMLCanvasElement || !window.CanvasRenderingContext2D) return;
+  function installGpcSignal() {
+    if (gpcInstalled || typeof navigator === 'undefined' || !navigator) return;
+    gpcInstalled = true;
+    try {
+      const target = Object.getPrototypeOf(navigator) || navigator;
+      Object.defineProperty(target, 'globalPrivacyControl', {
+        configurable: true,
+        enumerable: true,
+        get: function() { return Boolean(state.gpcEnabled); }
+      });
+    } catch (_) {
+      try {
+        Object.defineProperty(navigator, 'globalPrivacyControl', {
+          configurable: true,
+          enumerable: true,
+          get: function() { return Boolean(state.gpcEnabled); }
+        });
+      } catch (_) {}
+    }
+  }
 
-    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-    const originalPutImageData = CanvasRenderingContext2D.prototype.putImageData;
+  function installFingerprintPrivacy() {
+    if (privacyRestore) return;
+    const restorers = [];
     let seed = Math.floor(Math.random() * 0xffffffff) >>> 0;
     try {
       const values = new Uint32Array(1);
       crypto.getRandomValues(values);
       seed = values[0];
-    } catch (error) {}
+    } catch (_) {}
 
     function randomIndex(length, salt) {
       let value = (seed ^ salt) >>> 0;
@@ -299,45 +325,207 @@
       return length > 0 ? (value >>> 0) % length : 0;
     }
 
-    const variedGetImageData = function() {
-      const imageData = originalGetImageData.apply(this, arguments);
-      if (!state.privacyEnabled || !imageData || imageData.data.length < 4) return imageData;
-      const pixelCount = Math.floor(imageData.data.length / 4);
-      const offset = randomIndex(pixelCount, 0x13579bdf) * 4;
-      imageData.data[offset] = (imageData.data[offset] + 1) % 256;
-      return imageData;
-    };
+    // 1. Canvas 2D: getImageData, toDataURL y toBlob
+    if (window.HTMLCanvasElement && window.CanvasRenderingContext2D) {
+      const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+      const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+      const originalPutImageData = CanvasRenderingContext2D.prototype.putImageData;
 
-    const variedToDataURL = function() {
-      if (!state.privacyEnabled || this.width === 0 || this.height === 0) {
-        return originalToDataURL.apply(this, arguments);
-      }
-      try {
+      function perturbCopy(canvas, salt) {
         const copy = document.createElement('canvas');
-        copy.width = this.width;
-        copy.height = this.height;
+        copy.width = canvas.width;
+        copy.height = canvas.height;
         const context = copy.getContext('2d');
-        context.drawImage(this, 0, 0);
+        context.drawImage(canvas, 0, 0);
         const imageData = originalGetImageData.call(context, 0, 0, copy.width, copy.height);
         const pixelCount = Math.floor(imageData.data.length / 4);
-        const offset = randomIndex(pixelCount, 0x2468ace0) * 4;
+        const offset = randomIndex(pixelCount, salt) * 4;
         imageData.data[offset] = (imageData.data[offset] + 1) % 256;
         originalPutImageData.call(context, imageData, 0, 0);
-        return originalToDataURL.apply(copy, arguments);
-      } catch (error) {
-        return originalToDataURL.apply(this, arguments);
+        return copy;
+      }
+
+      const variedGetImageData = function() {
+        const imageData = originalGetImageData.apply(this, arguments);
+        if (!state.privacyEnabled || !imageData || imageData.data.length < 4) return imageData;
+        const pixelCount = Math.floor(imageData.data.length / 4);
+        const offset = randomIndex(pixelCount, 0x13579bdf) * 4;
+        imageData.data[offset] = (imageData.data[offset] + 1) % 256;
+        return imageData;
+      };
+
+      const variedToDataURL = function() {
+        if (!state.privacyEnabled || this.width === 0 || this.height === 0) {
+          return originalToDataURL.apply(this, arguments);
+        }
+        try {
+          return originalToDataURL.apply(perturbCopy(this, 0x2468ace0), arguments);
+        } catch (_) {
+          return originalToDataURL.apply(this, arguments);
+        }
+      };
+
+      const variedToBlob = function() {
+        if (!state.privacyEnabled || this.width === 0 || this.height === 0 || typeof originalToBlob !== 'function') {
+          return originalToBlob.apply(this, arguments);
+        }
+        try {
+          return originalToBlob.apply(perturbCopy(this, 0x369cf012), arguments);
+        } catch (_) {
+          return originalToBlob.apply(this, arguments);
+        }
+      };
+
+      CanvasRenderingContext2D.prototype.getImageData = variedGetImageData;
+      HTMLCanvasElement.prototype.toDataURL = variedToDataURL;
+      if (typeof originalToBlob === 'function') HTMLCanvasElement.prototype.toBlob = variedToBlob;
+      restorers.push(function() {
+        if (CanvasRenderingContext2D.prototype.getImageData === variedGetImageData) {
+          CanvasRenderingContext2D.prototype.getImageData = originalGetImageData;
+        }
+        if (HTMLCanvasElement.prototype.toDataURL === variedToDataURL) {
+          HTMLCanvasElement.prototype.toDataURL = originalToDataURL;
+        }
+        if (typeof originalToBlob === 'function' && HTMLCanvasElement.prototype.toBlob === variedToBlob) {
+          HTMLCanvasElement.prototype.toBlob = originalToBlob;
+        }
+      });
+    }
+
+    // 2. WebGL: enmascara GPU vendor/renderer usados en fingerprinting
+    for (const ctorName of ['WebGLRenderingContext', 'WebGL2RenderingContext']) {
+      try {
+        const Ctor = window[ctorName];
+        if (!Ctor || !Ctor.prototype || typeof Ctor.prototype.getParameter !== 'function') continue;
+        const origGetParam = Ctor.prototype.getParameter;
+        const wrappedGetParam = function(param) {
+          if (state.privacyEnabled) {
+            if (param === 0x9245) return 'Google Inc.';
+            if (param === 0x9246) return 'ANGLE (Generic Mobile GPU)';
+          }
+          return origGetParam.apply(this, arguments);
+        };
+        Ctor.prototype.getParameter = wrappedGetParam;
+        restorers.push(function() {
+          if (Ctor.prototype.getParameter === wrappedGetParam) Ctor.prototype.getParameter = origGetParam;
+        });
+      } catch (_) {}
+    }
+
+    // 3. AudioContext: ligera variación determinista por sesión en AudioBuffer.getChannelData
+    try {
+      if (window.AudioBuffer && AudioBuffer.prototype && typeof AudioBuffer.prototype.getChannelData === 'function') {
+        const origGetChannelData = AudioBuffer.prototype.getChannelData;
+        const perturbed = new WeakSet();
+        const wrappedChannelData = function() {
+          const data = origGetChannelData.apply(this, arguments);
+          if (state.privacyEnabled && data && data.length > 0 && !perturbed.has(data)) {
+            perturbed.add(data);
+            const idx = randomIndex(data.length, 0x7f4a7c15);
+            data[idx] = data[idx] + 1e-7;
+          }
+          return data;
+        };
+        AudioBuffer.prototype.getChannelData = wrappedChannelData;
+        restorers.push(function() {
+          if (AudioBuffer.prototype.getChannelData === wrappedChannelData) {
+            AudioBuffer.prototype.getChannelData = origGetChannelData;
+          }
+        });
+      }
+    } catch (_) {}
+
+    // 4. Hardware & Battery API: valores genéricos para reducir entropía
+    try {
+      if (typeof navigator !== 'undefined' && navigator) {
+        const proto = Object.getPrototypeOf(navigator);
+        for (const entry of [['hardwareConcurrency', 4], ['deviceMemory', 4]]) {
+          const prop = entry[0], clamped = entry[1];
+          const desc = (proto && Object.getOwnPropertyDescriptor(proto, prop)) || Object.getOwnPropertyDescriptor(navigator, prop);
+          if (desc && desc.configurable && typeof desc.get === 'function') {
+            const origGet = desc.get;
+            Object.defineProperty(navigator, prop, {
+              configurable: true,
+              enumerable: true,
+              get: function() { return state.privacyEnabled ? clamped : origGet.call(navigator); }
+            });
+            restorers.push(function() {
+              try { delete navigator[prop]; } catch (_) {}
+            });
+          }
+        }
+        if (typeof navigator.getBattery === 'function') {
+          const origBattery = navigator.getBattery;
+          const blockedBattery = function() {
+            return state.privacyEnabled ? Promise.reject(new DOMException('Not allowed', 'NotAllowedError')) : origBattery.apply(this, arguments);
+          };
+          navigator.getBattery = blockedBattery;
+          restorers.push(function() {
+            if (navigator.getBattery === blockedBattery) navigator.getBattery = origBattery;
+          });
+        }
+      }
+    } catch (_) {}
+
+    privacyRestore = function() {
+      for (let i = restorers.length - 1; i >= 0; i--) {
+        try { restorers[i](); } catch (_) {}
       }
     };
-    CanvasRenderingContext2D.prototype.getImageData = variedGetImageData;
-    HTMLCanvasElement.prototype.toDataURL = variedToDataURL;
-    canvasRestore = function() {
-      if (CanvasRenderingContext2D.prototype.getImageData === variedGetImageData) {
-        CanvasRenderingContext2D.prototype.getImageData = originalGetImageData;
+  }
+
+  /**
+   * Scriptlets anti-bloqueo reales: neutraliza detectores habituales de bloqueador
+   * (`canRunAds`, `blockAdBlock`, `fuckAdBlock`, `isAdBlockActive`) sin inyectar anuncios.
+   */
+  function installAntiAdblockScriptlets() {
+    if (antiBlockInstalled) return;
+    antiBlockInstalled = true;
+    try {
+      const defineConst = function(name, value) {
+        try {
+          Object.defineProperty(window, name, {
+            configurable: true,
+            enumerable: false,
+            get: function() { return state.adblockEnabled && state.antiBlockEnabled ? value : undefined; },
+            set: function() {}
+          });
+        } catch (_) {}
+      };
+      defineConst('canRunAds', true);
+      defineConst('isAdBlockActive', false);
+      defineConst('adblockDetected', false);
+      defineConst('adBlockDetected', false);
+
+      const noopFab = function() {
+        const api = {
+          onDetected: function() { return api; },
+          onNotDetected: function(fn) {
+            if (typeof fn === 'function') setTimeout(function() { try { fn(); } catch (_) {} }, 0);
+            return api;
+          },
+          on: function(detected, fn) { return detected ? api : api.onNotDetected(fn); },
+          setOption: function() { return api; },
+          check: function() { return false; },
+          emitEvent: function() { return api; },
+          clearEvent: function() { return api; }
+        };
+        return api;
+      };
+      for (const bait of ['blockAdBlock', 'fuckAdBlock', 'sniffAdBlock']) {
+        try {
+          if (!(bait in window)) {
+            Object.defineProperty(window, bait, {
+              configurable: true,
+              enumerable: false,
+              get: function() { return noopFab(); },
+              set: function() {}
+            });
+          }
+        } catch (_) {}
       }
-      if (HTMLCanvasElement.prototype.toDataURL === variedToDataURL) {
-        HTMLCanvasElement.prototype.toDataURL = originalToDataURL;
-      }
-    };
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------
