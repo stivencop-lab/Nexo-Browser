@@ -220,7 +220,7 @@ class NexoAiSecurityTest {
                     else -> "Informe final completado con éxito."
                 }
                 onDelta(reply)
-                Result.success(NexoAiClient.AiResponse(text = reply))
+                Result.success(NexoAiClient.AiResponse(text = reply, usage = null))
             }
         )
 
@@ -255,7 +255,8 @@ class NexoAiSecurityTest {
                     NexoAiClient.AiResponse(
                         text = """```nexo-tool
                         {"tool":"scroll_page","args":{"direction":"down"}}
-                        ```""".trimIndent()
+                        ```""".trimIndent(),
+                        usage = null
                     )
                 )
             }
