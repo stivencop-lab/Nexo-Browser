@@ -543,6 +543,20 @@ object NexoAiController {
                 val stepStream = StringBuilder()
                 var lastEmit = 0L
 
+                val planSnap = synchronized(lock) {
+                    if (controllerGeneration != launchGen) return@synchronized null
+                    activeRequests[requestId]?.let { req ->
+                        activeRequests[requestId] = req.copy(
+                            isAgent = true,
+                            currentStepIndex = stepIdx,
+                            maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
+                            currentStepLabel = if (stepIdx == 1) "Planificando acciones…" else "Analizando paso $stepIdx…"
+                        )
+                    }
+                    buildSnapshotLocked()
+                }
+                if (planSnap != null) notifyListeners(planSnap)
+
                 val turnResult = agentTransport.execute(
                     settings = settings,
                     apiKey = apiKey,
@@ -588,10 +602,21 @@ object NexoAiController {
                     break
                 }
 
-                // Mostrar paso en curso en la UI antes de ejecutarlo
+                // Mostrar paso en curso en la UI (sheet + HUD flotante en vivo) antes de ejecutarlo
                 val runningStep = NexoAiModels.AgentStep(toolCall.tool, "${toolCall.reason}…", ok = true)
                 val stepRunningSnap = synchronized(lock) {
                     if (controllerGeneration != launchGen) return@synchronized null
+                    activeRequests[requestId]?.let { req ->
+                        activeRequests[requestId] = req.copy(
+                            isAgent = true,
+                            currentStepIndex = stepIdx,
+                            maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
+                            currentStepLabel = "${toolCall.reason}…"
+                        )
+                    }
+                    if (panelState == NexoAiModels.PanelState.MINIMIZED) {
+                        minimizedPillVisible = true
+                    }
                     updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
                         msg.copy(
                             text = "",
@@ -611,6 +636,14 @@ object NexoAiController {
 
                 val stepDoneSnap = synchronized(lock) {
                     if (controllerGeneration != launchGen) return@synchronized null
+                    activeRequests[requestId]?.let { req ->
+                        activeRequests[requestId] = req.copy(
+                            isAgent = true,
+                            currentStepIndex = stepIdx,
+                            maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
+                            currentStepLabel = outcome.summary
+                        )
+                    }
                     updateAssistantMessageLocked(targetConvId, assistantMsgId) { msg ->
                         msg.copy(
                             agentSteps = steps.toList(),
@@ -731,7 +764,11 @@ object NexoAiController {
                 assistantMessageId = assistantMsgId,
                 model = effectiveModel,
                 provider = settings.provider,
-                startedAtMs = now
+                startedAtMs = now,
+                isAgent = scope == "agent",
+                currentStepIndex = if (scope == "agent") 1 else 0,
+                maxSteps = NexoAiAgent.MAX_AGENT_STEPS,
+                currentStepLabel = if (scope == "agent") "Iniciando agente…" else ""
             )
             lastErrorSummary = null
             persistLocked()
@@ -842,6 +879,14 @@ object NexoAiController {
     fun cancelActiveConversationRequest(): Boolean {
         val reqId = synchronized(lock) {
             activeRequests.values.firstOrNull { it.conversationId == activeConversationId }?.requestId
+        } ?: return false
+        return cancelRequest(reqId)
+    }
+
+    /** Detiene inmediatamente cualquier agente autónomo en ejecución (desde el HUD flotante). */
+    fun cancelActiveAgentRequest(): Boolean {
+        val reqId = synchronized(lock) {
+            activeRequests.values.firstOrNull { it.isAgent }?.requestId
         } ?: return false
         return cancelRequest(reqId)
     }

@@ -167,4 +167,27 @@ class NexoAiRichAndAgentTest {
         assertFalse(snippet.contains("**"))
         assertTrue(snippet.contains("Resultado clave"))
     }
+
+    @Test
+    fun agentSupportsLiveBrowserControlToolsAndVisualClassification() {
+        val closeTab = NexoAiAgent.parseToolCall(
+            "```nexo-tool\n{\"tool\":\"close_tab\",\"reason\":\"Cerrar pestaña duplicada\",\"args\":{\"index\":\"2\"}}\n```"
+        )
+        assertNotNull(closeTab)
+        assertEquals("close_tab", closeTab!!.tool)
+        assertEquals("2", closeTab.args["index"])
+        assertEquals(NexoAiAgent.Risk.AUTO, closeTab.risk)
+
+        assertNotNull(NexoAiAgent.parseToolCall("```nexo-tool\n{\"tool\":\"go_forward\",\"args\":{}}\n```"))
+        assertNotNull(NexoAiAgent.parseToolCall("```nexo-tool\n{\"tool\":\"reload_page\",\"args\":{}}\n```"))
+        assertNotNull(NexoAiAgent.parseToolCall("```nexo-tool\n{\"tool\":\"bookmark_page\",\"args\":{}}\n```"))
+        assertNull(NexoAiAgent.parseToolCall("```nexo-tool\n{\"tool\":\"close_tab\",\"args\":{}}\n```"))
+
+        assertTrue(NexoAiAgent.isVisualBrowserTool("navigate"))
+        assertTrue(NexoAiAgent.isVisualBrowserTool("web_search"))
+        assertTrue(NexoAiAgent.isVisualBrowserTool("click_element"))
+        assertTrue(NexoAiAgent.isVisualBrowserTool("close_tab"))
+        assertFalse(NexoAiAgent.isVisualBrowserTool("list_tabs"))
+        assertFalse(NexoAiAgent.isVisualBrowserTool("search_history"))
+    }
 }

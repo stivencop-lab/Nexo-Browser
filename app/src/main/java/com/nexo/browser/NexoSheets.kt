@@ -137,22 +137,40 @@ object NexoSheets {
         return dialog
     }
 
-    /** Controlador de hoja adaptable de 3 estados (Minimizado / Parcial / Expandido) sin reconstruir vistas. */
+    /** Controlador de hoja adaptable de 3 estados (Minimizado / Parcial / Expandido) con panel lateral opcional. */
     class AdaptiveSheetHandle(
         val dialog: Dialog,
         val scrollView: ScrollView,
         private val sheetLayout: DragDismissLayout,
-        private val applyRatio: (Float, Boolean) -> Unit
+        private val applyRatio: (Float, Boolean) -> Unit,
+        private val drawerControl: ((Boolean) -> Unit)? = null,
+        private val drawerOpenState: () -> Boolean = { false }
     ) {
         var isExpanded: Boolean = false
             private set
+
+        val isDrawerOpen: Boolean
+            get() = drawerOpenState()
 
         fun setExpanded(expanded: Boolean, animated: Boolean = true) {
             isExpanded = expanded
             applyRatio(if (expanded) 0.94f else 0.66f, animated)
         }
 
+        fun openDrawer() {
+            drawerControl?.invoke(true)
+        }
+
+        fun closeDrawer() {
+            drawerControl?.invoke(false)
+        }
+
+        fun toggleDrawer() {
+            drawerControl?.invoke(!drawerOpenState())
+        }
+
         fun dismissAnimated() {
+            if (drawerOpenState()) closeDrawer()
             sheetLayout.dismissAnimated()
         }
     }
@@ -180,7 +198,7 @@ object NexoSheets {
 
     /**
      * Hoja adaptable de 3 estados (Minimizado → Panel parcial → Pantalla expandida) con gestos
-     * bidireccionales y animaciones suaves que respetan la reducción de movimiento.
+     * bidireccionales, animaciones suaves y panel lateral izquierdo opcional (historial y modos de Nexo AI).
      */
     fun showAdaptiveFixed(
         activity: Activity,
@@ -188,7 +206,8 @@ object NexoSheets {
         bodyContent: View,
         footerView: View? = null,
         initialExpanded: Boolean = false,
-        onExpandGesture: (() -> Unit)? = null
+        onExpandGesture: (() -> Unit)? = null,
+        leftDrawerView: View? = null
     ): AdaptiveSheetHandle {
         val p = ThemeManager.palette(activity)
         val dialog = Dialog(activity)
@@ -259,22 +278,159 @@ object NexoSheets {
         sheet.onDismiss = { if (dialog.isShowing) runCatching { dialog.dismiss() } }
         sheet.onExpandUp = onExpandGesture
 
-        dialog.setContentView(sheet)
-        ViewCompat.setOnApplyWindowInsetsListener(sheet) { _, insets ->
+        // Contenedor opcional para panel lateral izquierdo integrado dentro de la hoja redondeada.
+        var drawerOpen = false
+        var drawerControlFn: ((Boolean) -> Unit)? = null
+        var drawerContainerRef: android.widget.FrameLayout? = null
+
+        val contentRoot: View = if (leftDrawerView != null) {
+            val sheetWidth = minOf(activity.resources.displayMetrics.widthPixels, dp(activity, UiLayout.SHEET_MAX_DP.toFloat()))
+            val drawerWidth = minOf(dp(activity, 304f), (sheetWidth * 0.82f).toInt()).coerceAtLeast(dp(activity, 240f))
+            val topR = dp(activity, NexoUi.Tokens.RADIUS_SHEET).toFloat()
+            val innerR = dp(activity, 24f).toFloat()
+
+            val scrim = View(activity).apply {
+                background = GradientDrawable().apply {
+                    setColor(if (p.isDark) 0x99000000.toInt() else 0x55000000)
+                    cornerRadii = floatArrayOf(topR, topR, topR, topR, 0f, 0f, 0f, 0f)
+                }
+                alpha = 0f
+                visibility = View.GONE
+                isClickable = true
+                isFocusable = true
+                contentDescription = "Cerrar panel lateral"
+            }
+
+            val drawerBg = GradientDrawable().apply {
+                setColor(if (p.isDark) p.surfaceContainer else p.surface)
+                cornerRadii = floatArrayOf(topR, topR, innerR, innerR, 0f, 0f, 0f, 0f)
+                setStroke(dp(activity, 0.75f).coerceAtLeast(1), ThemeManager.hairline(p))
+            }
+
+            var dragStartX = 0f
+            var dragStartY = 0f
+            var draggingDrawer = false
+            val touchSlop = android.view.ViewConfiguration.get(activity).scaledTouchSlop
+
+            val drawerContainer = object : android.widget.FrameLayout(activity) {
+                override fun onInterceptTouchEvent(ev: android.view.MotionEvent): Boolean {
+                    when (ev.actionMasked) {
+                        android.view.MotionEvent.ACTION_DOWN -> {
+                            dragStartX = ev.rawX
+                            dragStartY = ev.rawY
+                            draggingDrawer = false
+                        }
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            val dx = ev.rawX - dragStartX
+                            val dy = ev.rawY - dragStartY
+                            if (dx < -touchSlop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.4f) {
+                                draggingDrawer = true
+                                return true
+                            }
+                        }
+                    }
+                    return super.onInterceptTouchEvent(ev)
+                }
+
+                override fun onTouchEvent(ev: android.view.MotionEvent): Boolean {
+                    if (!draggingDrawer) return super.onTouchEvent(ev)
+                    when (ev.actionMasked) {
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            val dx = (ev.rawX - dragStartX).coerceAtMost(0f)
+                            translationX = dx
+                            val progress = (1f + dx / drawerWidth.toFloat()).coerceIn(0f, 1f)
+                            scrim.alpha = progress
+                        }
+                        android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                            draggingDrawer = false
+                            val dx = ev.rawX - dragStartX
+                            drawerControlFn?.invoke(dx > -drawerWidth * 0.28f)
+                        }
+                    }
+                    return true
+                }
+
+                override fun performClick(): Boolean = super.performClick()
+            }.apply {
+                background = drawerBg
+                clipToOutline = true
+                elevation = dp(activity, 12f).toFloat()
+                visibility = View.GONE
+                translationX = -drawerWidth.toFloat()
+                isClickable = true
+                addView(leftDrawerView, android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                ))
+            }
+            drawerContainerRef = drawerContainer
+
+            val setDrawerOpen: (Boolean) -> Unit = { open ->
+                drawerOpen = open
+                if (open) {
+                    scrim.visibility = View.VISIBLE
+                    drawerContainer.visibility = View.VISIBLE
+                    NexoMotion.spring(scrim, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 1f)
+                    NexoMotion.spring(drawerContainer, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, 0f)
+                } else {
+                    NexoMotion.spring(scrim, androidx.dynamicanimation.animation.DynamicAnimation.ALPHA, 0f) {
+                        if (!drawerOpen) scrim.visibility = View.GONE
+                    }
+                    NexoMotion.spring(drawerContainer, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, -drawerWidth.toFloat()) {
+                        if (!drawerOpen) drawerContainer.visibility = View.GONE
+                    }
+                }
+            }
+            drawerControlFn = setDrawerOpen
+            scrim.setOnClickListener { setDrawerOpen(false) }
+
+            dialog.setOnKeyListener { _, keyCode, event ->
+                if (keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+                    event.action == android.view.KeyEvent.ACTION_UP &&
+                    drawerOpen
+                ) {
+                    setDrawerOpen(false)
+                    true
+                } else false
+            }
+
+            android.widget.FrameLayout(activity).apply {
+                addView(sheet, android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ))
+                addView(scrim, android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                ))
+                addView(drawerContainer, android.widget.FrameLayout.LayoutParams(
+                    drawerWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START
+                ))
+            }
+        } else {
+            sheet
+        }
+
+        dialog.setContentView(contentRoot)
+        ViewCompat.setOnApplyWindowInsetsListener(contentRoot) { _, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
             lastSafeTop = safe.top
             lastBottom = maxOf(safe.bottom, ime)
             sheet.setPadding(safe.left, dp(activity, 10f), safe.right, dp(activity, 8f) + lastBottom)
+            drawerContainerRef?.setPadding(safe.left, dp(activity, 10f), 0, dp(activity, 8f) + lastBottom)
             scroll.limitHeight(computeTargetBodyHeight(activeRatio), exact = true)
             WindowInsetsCompat.CONSUMED
         }
-        configureAndShow(activity, dialog, sheet, p)
+        configureAndShow(activity, dialog, sheet, p, insetsRoot = contentRoot)
         scroll.limitHeight(computeTargetBodyHeight(activeRatio), exact = true)
-        return AdaptiveSheetHandle(dialog, scroll, sheet, ::applyRatio)
+        return AdaptiveSheetHandle(dialog, scroll, sheet, ::applyRatio, drawerControlFn, { drawerOpen })
     }
 
-    private fun configureAndShow(activity: Activity, dialog: Dialog, sheet: DragDismissLayout, p: BrowserPalette) {
+    private fun configureAndShow(
+        activity: Activity,
+        dialog: Dialog,
+        sheet: DragDismissLayout,
+        p: BrowserPalette,
+        insetsRoot: View = sheet
+    ) {
         val sheetWidth = minOf(activity.resources.displayMetrics.widthPixels, dp(activity, UiLayout.SHEET_MAX_DP.toFloat()))
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -297,7 +453,7 @@ object NexoSheets {
         NexoGlass.blurBehind(dialog, activity)
         dialog.show()
         dialog.window?.setLayout(sheetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
-        ViewCompat.requestApplyInsets(sheet)
+        ViewCompat.requestApplyInsets(insetsRoot)
         sheet.animateEnter()
     }
 

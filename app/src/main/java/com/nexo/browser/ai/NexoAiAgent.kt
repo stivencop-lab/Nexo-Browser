@@ -16,7 +16,7 @@ import java.net.URI
  *   campos sensibles (`password`, `card`, `cvv`, `otp`, `token`).
  */
 object NexoAiAgent {
-    const val MAX_AGENT_STEPS = 6
+    const val MAX_AGENT_STEPS = 8
 
     enum class Risk {
         /** Lectura, navegación o inspección sin mutar datos del usuario: ejecutable en bucle agente. */
@@ -55,10 +55,14 @@ object NexoAiAgent {
         "open_tab",
         "list_tabs",
         "switch_tab",
+        "close_tab",
         "go_back",
+        "go_forward",
+        "reload_page",
         "find_in_page",
         "click_element",
         "extract_section",
+        "bookmark_page",
         "search_bookmarks",
         "search_history",
         "open_reader",
@@ -72,10 +76,29 @@ object NexoAiAgent {
 
     val ALL_TOOLS = AUTO_TOOLS + CONFIRM_TOOLS
 
+    /** Herramientas que controlan visualmente la página o pestañas (útiles para mostrar el navegador en vivo). */
+    private val VISUAL_BROWSER_TOOLS = setOf(
+        "scroll_page",
+        "navigate",
+        "web_search",
+        "open_tab",
+        "switch_tab",
+        "close_tab",
+        "go_back",
+        "go_forward",
+        "reload_page",
+        "find_in_page",
+        "click_element",
+        "open_reader",
+        "translate_page"
+    )
+
+    fun isVisualBrowserTool(tool: String): Boolean = tool.lowercase() in VISUAL_BROWSER_TOOLS
+
     /** Instrucciones de herramientas inyectadas solo cuando el usuario activa Modo Agente. */
     const val AGENT_SYSTEM_PROMPT = """
 MODO AGENTE DE NAVEGADOR ACTIVO:
-Puedes actuar de forma autónoma en varios pasos sobre Nexo Browser usando un bloque ```nexo-tool con UN solo objeto JSON por turno:
+Controlas Nexo Browser en tiempo real en varios pasos usando un bloque ```nexo-tool con UN solo objeto JSON por turno:
 ```nexo-tool
 {"tool":"nombre","reason":"breve explicación en español","args":{...}}
 ```
@@ -87,10 +110,14 @@ Herramientas disponibles:
 - open_tab {"url":"https://..."} → abre una URL segura en una nueva pestaña.
 - list_tabs {} → lista las pestañas abiertas (título, dominio e índice).
 - switch_tab {"index":"1"} → cambia a la pestaña indicada y devuelve su contenido.
+- close_tab {"index":"2"} → cierra la pestaña indicada (nunca cierra la única pestaña abierta).
 - go_back {} → vuelve a la página anterior en el historial de la pestaña.
+- go_forward {} → avanza a la página siguiente en el historial de la pestaña.
+- reload_page {} → recarga la página actual y devuelve el contenido actualizado.
 - find_in_page {"query":"..."} → resalta y enfoca una coincidencia de texto en la página actual.
 - click_element {"target":"e3 o texto visible del enlace/botón"} → pulsa un botón o enlace visible no sensible (p. ej. siguiente página, aceptar pestaña, abrir artículo) y devuelve el nuevo estado.
 - extract_section {"query":"título o tema"} → extrae con más detalle una sección específica de la página.
+- bookmark_page {} → guarda la página actual en los marcadores de Nexo.
 - search_bookmarks {"query":"..."} → busca en los marcadores guardados localmente.
 - search_history {"query":"..."} → busca en el historial reciente local.
 - open_reader {} → activa el Modo Lectura limpio sobre el artículo actual.
@@ -155,7 +182,7 @@ REGLAS DEL AGENTE:
                 args["target"] = t
                 args["value"] = v
             }
-            "switch_tab" -> {
+            "switch_tab", "close_tab" -> {
                 val idx = args["index"].orEmpty().ifBlank { args["tab_id"].orEmpty() }.trim()
                 if (idx.isEmpty()) return null
                 args["index"] = idx
@@ -191,10 +218,14 @@ REGLAS DEL AGENTE:
         "open_tab" -> "Abrir nueva pestaña"
         "list_tabs" -> "Revisar pestañas abiertas"
         "switch_tab" -> "Cambiar de pestaña"
+        "close_tab" -> "Cerrar pestaña"
         "go_back" -> "Volver atrás"
+        "go_forward" -> "Avanzar"
+        "reload_page" -> "Recargar página"
         "find_in_page" -> "Buscar en la página"
         "click_element" -> "Pulsar elemento"
         "extract_section" -> "Extraer sección"
+        "bookmark_page" -> "Guardar marcador"
         "search_bookmarks" -> "Buscar marcadores"
         "search_history" -> "Buscar historial"
         "open_reader" -> "Abrir Modo Lectura"

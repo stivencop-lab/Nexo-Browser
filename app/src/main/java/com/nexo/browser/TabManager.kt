@@ -708,13 +708,13 @@ object TabManager {
         persistNow()
     }
 
-    fun resumeActive() {
+    fun resumeActive(focusBrowser: Boolean = true) {
         activeSession()?.let {
             session ->
 
             session.setHighPriority(true)
             session.setActive(true)
-            session.setFocused(true)
+            if (focusBrowser) session.setFocused(true)
 
             ExtensionManager.setTabActive(
                 session,

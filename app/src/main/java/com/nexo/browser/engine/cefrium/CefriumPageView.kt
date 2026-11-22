@@ -37,6 +37,10 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
     }
     internal var onBackdropInvalidated: (() -> Unit)? = null
     internal var onRecoveryStateChanged: ((Boolean) -> Unit)? = null
+    internal var isNativeInputFocused: () -> Boolean = { false }
+    private fun hasNativeTextInputFocus(): Boolean =
+        isNativeInputFocused() || (context as? Activity)?.currentFocus is android.widget.EditText
+
     private val resumeBridge = CefResumeBridge(
         overlay = snapshotOverlay,
         invalidateContainer = ::postInvalidateOnAnimation,
@@ -47,6 +51,7 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
             activeTab != null && BrowserMediaController.shouldKeepAlive(activeTab.id, 10_000L)
         },
         onRecoveryChanged = { recovering -> onRecoveryStateChanged?.invoke(recovering) },
+        shouldFocusBrowser = { !hasNativeTextInputFocus() },
         recreateBrowser = { browser -> current?.recreateSurface(browser) == true }
     )
 
@@ -97,7 +102,7 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
         // Garantiza que una pestaña recién activada o tomada del SpareRendererPool sea visible inmediatamente.
         if (session.isActiveSession() && !browser.isClosed) {
             runCatching {
-                browser.onResume()
+                if (!hasNativeTextInputFocus()) browser.onResume()
                 browser.setPageVisible(true)
                 browser.invalidate()
             }

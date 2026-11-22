@@ -621,6 +621,33 @@ object NexoAiPageAgent {
                     }
                 }
 
+                "close_tab" -> {
+                    val rawIndex = call.args["index"].orEmpty()
+                    val allOpen = TabManager.allTabs()
+                    val visible = allOpen.filter { !BrowserPrefs.isNexoHome(it.url) && (allowPrivate || !it.isPrivate) }
+                    val target = rawIndex.toIntOrNull()?.let { idx -> visible.getOrNull(idx - 1) }
+                        ?: visible.firstOrNull { it.id == rawIndex }
+                    if (target == null) {
+                        NexoAiAgent.ToolOutcome(false, "Pestaña no encontrada ($rawIndex)", "No existe una pestaña con índice $rawIndex.")
+                    } else if (allOpen.size <= 1) {
+                        NexoAiAgent.ToolOutcome(false, "Última pestaña protegida", "No se cierra la única pestaña abierta.")
+                    } else {
+                        val latch = CountDownLatch(1)
+                        main.post {
+                            TabManager.closeTab(target.id)
+                            latch.countDown()
+                        }
+                        latch.await(1000L, TimeUnit.MILLISECONDS)
+                        Thread.sleep(250L)
+                        val (snap, _) = captureSync()
+                        NexoAiAgent.ToolOutcome(
+                            true,
+                            "Cerrada: ${target.title.ifBlank { target.url }.take(34)}",
+                            snap?.toContextText("agent") ?: "Pestaña cerrada correctamente."
+                        )
+                    }
+                }
+
                 "go_back" -> {
                     val prevUrl = TabManager.activeTab()?.url
                     val latch = CountDownLatch(1)
@@ -632,6 +659,32 @@ object NexoAiPageAgent {
                     waitForPageReady(prevUrl)
                     val (snap, _) = captureSync()
                     NexoAiAgent.ToolOutcome(true, "Vuelto a la página anterior", snap?.toContextText("agent") ?: "Historial retrocedido.")
+                }
+
+                "go_forward" -> {
+                    val prevUrl = TabManager.activeTab()?.url
+                    val latch = CountDownLatch(1)
+                    main.post {
+                        TabManager.goForward()
+                        latch.countDown()
+                    }
+                    latch.await(1000L, TimeUnit.MILLISECONDS)
+                    waitForPageReady(prevUrl)
+                    val (snap, _) = captureSync()
+                    NexoAiAgent.ToolOutcome(true, "Avanzado a la siguiente página", snap?.toContextText("agent") ?: "Historial avanzado.")
+                }
+
+                "reload_page" -> {
+                    val prevUrl = TabManager.activeTab()?.url
+                    val latch = CountDownLatch(1)
+                    main.post {
+                        TabManager.reload()
+                        latch.countDown()
+                    }
+                    latch.await(1000L, TimeUnit.MILLISECONDS)
+                    waitForPageReady(prevUrl)
+                    val (snap, _) = captureSync()
+                    NexoAiAgent.ToolOutcome(true, "Página recargada", snap?.toContextText("agent") ?: "Recarga completada.")
                 }
 
                 "find_in_page" -> {
@@ -677,6 +730,23 @@ object NexoAiPageAgent {
                         if (txt.isNotBlank()) "Sección extraída: ${query.take(30)}" else "Sección no encontrada",
                         txt.ifBlank { "No se encontró una sección que coincida con «$query»." }
                     )
+                }
+
+                "bookmark_page" -> {
+                    val tab = TabManager.activeTab()
+                    if (tab == null || BrowserPrefs.isNexoHome(tab.url) || !UrlSafety.isWebUrl(tab.url)) {
+                        NexoAiAgent.ToolOutcome(false, "Sin página web para guardar", "Abre una página web antes de guardarla en marcadores.")
+                    } else {
+                        val saved = runCatching {
+                            BookmarkStore.add(app, tab.title.ifBlank { tab.url }, tab.url)
+                        }.getOrNull()
+                        val title = tab.title.ifBlank { SiteControlModel.hostOf(tab.url) }.take(38)
+                        NexoAiAgent.ToolOutcome(
+                            saved != null,
+                            if (saved != null) "Marcador guardado: $title" else "Ya estaba en marcadores",
+                            "Página ${tab.url} registrada en marcadores de Nexo."
+                        )
+                    }
                 }
 
                 "search_bookmarks" -> {

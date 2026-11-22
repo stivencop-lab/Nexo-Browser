@@ -21,6 +21,7 @@ internal class CefResumeBridge(
     private val resolveSurface: () -> SurfaceView?,
     private val isMediaActive: () -> Boolean,
     private val onRecoveryChanged: (Boolean) -> Unit,
+    private val shouldFocusBrowser: () -> Boolean = { true },
     private val recreateBrowser: (CefriumBrowser) -> Boolean
 ) : SurfaceHolder.Callback {
     private val main = Handler(Looper.getMainLooper())
@@ -118,7 +119,9 @@ internal class CefResumeBridge(
     fun onWindowFocusChanged(hasFocus: Boolean) {
         focused = hasFocus
         if (hasFocus) {
-            runCatching { browser?.takeUnless { it.isClosed }?.setFocus(true) }
+            if (CefResumePolicy.shouldFocusBrowser(hasFocus, !shouldFocusBrowser())) {
+                runCatching { browser?.takeUnless { it.isClosed }?.setFocus(true) }
+            }
             wakeIfReady()
         }
     }
@@ -173,7 +176,9 @@ internal class CefResumeBridge(
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (holder === surface?.holder && width > 0 && height > 0) {
-            if (resumed && !pip) ensureBrowserVisible()
+            if (CefResumePolicy.shouldResumeOnSurfaceChanged(resumed, recovering, pip)) {
+                ensureBrowserVisible()
+            }
             wakeIfReady()
             if (!recovering) frameAvailable()
         }
@@ -210,10 +215,11 @@ internal class CefResumeBridge(
         val target = browser?.takeUnless { it.isClosed } ?: return
         val view = currentSurface()
         if (view == null || !surfaceReady(view)) return
+        val allowFocus = CefResumePolicy.shouldFocusBrowser(focused, !shouldFocusBrowser())
         runCatching {
             target.onResume()
             target.setPageVisible(true)
-            if (focused) target.setFocus(true)
+            if (allowFocus) target.setFocus(true)
             target.invalidate()
             invalidateContainer()
         }.onFailure { Log.w(TAG, "Cefrium visibility restore failed", it) }
@@ -257,10 +263,11 @@ internal class CefResumeBridge(
     private fun wakeIfReady() {
         if (armed || !canProbe()) return
         val target = browser?.takeUnless { it.isClosed } ?: return
+        val allowFocus = CefResumePolicy.shouldFocusBrowser(focused, !shouldFocusBrowser())
         runCatching {
             target.onResume()
             target.setPageVisible(true)
-            if (focused) target.setFocus(true)
+            if (allowFocus) target.setFocus(true)
             target.invalidate()
             invalidateContainer()
         }.onFailure { Log.w(TAG, "Cefrium wakeup failed", it) }

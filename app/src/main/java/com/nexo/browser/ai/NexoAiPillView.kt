@@ -44,6 +44,7 @@ class NexoAiPillView @JvmOverloads constructor(
 
     var onRestore: () -> Unit = {}
     var onDismissPill: () -> Unit = {}
+    var onStopAgent: () -> Unit = {}
 
     private val dotView: BreathingDot
     private val apertureView: ImageView
@@ -54,6 +55,7 @@ class NexoAiPillView @JvmOverloads constructor(
     private var currentlyVisible = false
     private var suppressed = false
     private var compactMode = false
+    private var agentLiveActive = false
     private var restingOffsetY = 0f
     private var lastSnapshot: NexoAiModels.ControllerSnapshot? = null
     private var webBackdrop: NexoGlassBackdrop? = null
@@ -79,6 +81,7 @@ class NexoAiPillView @JvmOverloads constructor(
         labelView = TextView(context).apply {
             textSize = 12.5f
             maxLines = 1
+            maxWidth = dp(210f)
             ellipsize = TextUtils.TruncateAt.END
             setPadding(dp(6f), 0, dp(2f), 0)
             importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -89,7 +92,9 @@ class NexoAiPillView @JvmOverloads constructor(
             scaleType = ImageView.ScaleType.CENTER
             scaleX = 0.76f
             scaleY = 0.76f
-            setOnClickListener { onDismissPill() }
+            setOnClickListener {
+                if (agentLiveActive) onStopAgent() else onDismissPill()
+            }
         }
 
         addView(dotView, LayoutParams(dp(7f), dp(7f)).apply { marginEnd = dp(8f) })
@@ -143,14 +148,16 @@ class NexoAiPillView @JvmOverloads constructor(
     private fun applyCompactLayout() {
         val d = resources.displayMetrics.density
         val dp = { v: Float -> (v * d).toInt() }
-        labelView.visibility = if (compactMode) GONE else VISIBLE
-        dismissBtn.visibility = if (compactMode) GONE else VISIBLE
-        if (compactMode) {
+        // Mientras el Agente está ejecutando acciones en vivo, mantener visible la etiqueta y el botón Detener.
+        val collapseText = compactMode && !agentLiveActive
+        labelView.visibility = if (collapseText) GONE else VISIBLE
+        dismissBtn.visibility = if (collapseText) GONE else VISIBLE
+        if (collapseText) {
             setPadding(dp(11f), 0, dp(11f), 0)
         } else {
             setPadding(dp(12f), 0, dp(2f), 0)
         }
-        val targetAlpha = if (compactMode) 0.90f else 1f
+        val targetAlpha = if (collapseText) 0.90f else 1f
         if (currentlyVisible && visibility == VISIBLE) {
             NexoMotion.spring(this, DynamicAnimation.ALPHA, targetAlpha)
         }
@@ -158,20 +165,31 @@ class NexoAiPillView @JvmOverloads constructor(
 
     fun render(activity: Activity, snapshot: NexoAiModels.ControllerSnapshot) {
         lastSnapshot = snapshot
-        val show = !suppressed && snapshot.minimizedPillVisible && snapshot.panelState == NexoAiModels.PanelState.MINIMIZED
+        val agentReq = snapshot.activeAgentRequest
+        agentLiveActive = agentReq != null
+        val show = !suppressed &&
+            (snapshot.minimizedPillVisible || agentLiveActive) &&
+            snapshot.panelState == NexoAiModels.PanelState.MINIMIZED
         if (!show) {
             hideAnimated()
             return
         }
         val p = ThemeManager.palette(activity)
         val live = if (p.isMonochrome) p.success.color else p.accent
-        val (dot, title) = when (snapshot.indicatorState) {
-            NexoAiModels.IndicatorState.GENERATING -> live to "Escribiendo…"
-            NexoAiModels.IndicatorState.READY -> p.success.color to "Listo · Ver"
-            NexoAiModels.IndicatorState.ERROR -> p.danger to "Error"
-            NexoAiModels.IndicatorState.IDLE -> p.muted to "Nexo AI"
+        val (dot, title) = if (agentReq != null) {
+            val stepPrefix = if (agentReq.currentStepIndex > 0) "Agente ${agentReq.currentStepIndex}/${agentReq.maxSteps}" else "Agente"
+            val stepDetail = agentReq.currentStepLabel.ifBlank { "Ejecutando…" }
+            live to "$stepPrefix · $stepDetail"
+        } else {
+            when (snapshot.indicatorState) {
+                NexoAiModels.IndicatorState.GENERATING -> live to "Escribiendo…"
+                NexoAiModels.IndicatorState.READY -> p.success.color to "Listo · Ver"
+                NexoAiModels.IndicatorState.ERROR -> p.danger to "Error"
+                NexoAiModels.IndicatorState.IDLE -> p.muted to "Nexo AI"
+            }
         }
-        val streaming = snapshot.indicatorState == NexoAiModels.IndicatorState.GENERATING && !NexoUi.reducedMotion(activity)
+        val streaming = (snapshot.indicatorState == NexoAiModels.IndicatorState.GENERATING || agentLiveActive) &&
+            !NexoUi.reducedMotion(activity)
 
         val glass = NexoGlassDrawable(activity, p, NexoTokens.PILL_RADIUS, smoked = true).also {
             val wb = webBackdrop
@@ -191,9 +209,15 @@ class NexoAiPillView @JvmOverloads constructor(
         labelView.text = title
         labelView.typeface = NexoUi.medium(activity)
         labelView.setTextColor(p.text)
+        dismissBtn.setImageResource(if (agentLiveActive) R.drawable.ic_ai_stop else R.drawable.ic_menu_close)
+        dismissBtn.contentDescription = if (agentLiveActive) {
+            "Detener agente en ejecución"
+        } else {
+            "Ocultar indicador de Nexo AI sin borrar historial"
+        }
         dismissBtn.background = ThemeManager.ripple(activity, null, NexoUi.Tokens.RADIUS_PILL)
-        dismissBtn.imageTintList = ColorStateList.valueOf(p.muted)
-        contentDescription = "Nexo AI: $title. Toca para restaurar la conversación."
+        dismissBtn.imageTintList = ColorStateList.valueOf(if (agentLiveActive) p.danger else p.muted)
+        contentDescription = "Nexo AI: $title. Toca para ver el detalle."
         applyCompactLayout()
         showAnimated()
     }
