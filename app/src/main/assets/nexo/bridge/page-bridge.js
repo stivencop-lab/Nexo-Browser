@@ -1032,6 +1032,7 @@
   const DOM_CAPTION_TEXT = [
     ".ytp-caption-segment",
     ".ytm-caption-segment",
+    ".caption-window .captions-text span",
     ".player-timedtext-text-container",
     ".atvwebplayersdk-captions-text",
     ".vjs-text-track-display .vjs-text-track-cue",
@@ -1046,6 +1047,7 @@
   const DOM_CAPTION_BOXES = [
     ".ytp-caption-window-container",
     ".ytm-caption-window-container",
+    ".caption-window",
     ".player-timedtext",
     ".atvwebplayersdk-captions-overlay",
     ".vjs-text-track-display",
@@ -1114,13 +1116,14 @@
     }
   }
 
-  function youtubeTracks(api) {
-    try {
-      const list = api.getOption("captions", "tracklist");
-      return list && list.length ? Array.from(list) : [];
-    } catch (_) {
-      return [];
+  function youtubeCaptionModule(api) {
+    for (const mod of ["captions", "cc"]) {
+      try {
+        const list = api.getOption(mod, "tracklist");
+        if (list && list.length) return { mod, tracks: Array.from(list) };
+      } catch (_) {}
     }
+    return { mod: "captions", tracks: [] };
   }
 
   /** Idioma pedido, si no una pista hecha por personas y si no la automática. */
@@ -1139,16 +1142,26 @@
     try { api.loadModule("captions"); } catch (_) {}
     return new Promise(resolve => {
       let attempts = 0;
+      let triedCc = false;
       const check = () => {
         if (!captions.active || token !== captions.token) { resolve(false); return; }
-        const tracks = youtubeTracks(api);
+        let found = youtubeCaptionModule(api);
+        if (!found.tracks.length && !triedCc) {
+          triedCc = true;
+          try { api.loadModule("cc"); } catch (_) {}
+          found = youtubeCaptionModule(api);
+        }
+        const { mod, tracks } = found;
         if (tracks.length) {
           let current = null;
-          try { current = api.getOption("captions", "track"); } catch (_) {}
+          try { current = api.getOption(mod, "track"); } catch (_) {}
           if (!current || !current.languageCode) {
             const track = pickYoutubeTrack(tracks, lang);
             try {
-              if (track) { api.setOption("captions", "track", track); captions.ytEnabled = true; }
+              if (track) {
+                api.setOption(mod, "track", track);
+                captions.ytEnabled = mod;
+              }
             } catch (_) {}
           }
           resolve(true);
@@ -1165,9 +1178,10 @@
   /** Solo se apagan si los encendió Nexo: la elección del usuario se respeta. */
   function disableYoutubeCaptions() {
     if (!captions.ytEnabled) return;
+    const mod = typeof captions.ytEnabled === "string" ? captions.ytEnabled : "captions";
     captions.ytEnabled = false;
     const api = youtubePlayer();
-    try { if (api) api.unloadModule("captions"); } catch (_) {}
+    try { if (api) api.unloadModule(mod); } catch (_) {}
   }
 
   function pollDomCaptions() {
@@ -1396,7 +1410,8 @@
     if (!captions.active || !captions.granted) return;
     const token = captions.token;
     captions.choosing = true;
-    if (domCaptionText() !== null) { startDomCaptions(); return; }
+    // Un contenedor vacío (.plyr__caption, .ytp-caption-segment vacío) no implica subtítulos activos.
+    if (domCaptionText()) { startDomCaptions(); return; }
     loadSubtitleFile(token).then(loaded => {
       if (loaded || token !== captions.token || !captions.active || !captions.granted || textSource()) return;
       return enableYoutubeCaptions(captions.lang, token).then(found => {

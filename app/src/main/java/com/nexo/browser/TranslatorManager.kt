@@ -384,10 +384,128 @@ object TranslatorManager {
         return translateWithGoogle(lines, target, job)
     }
 
+    private const val GOOGLE_UA =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Mobile Safari/537.36"
+
+    /**
+     * Traduce un fragmento seleccionado por el usuario usando el proveedor e idioma destino
+     * configurados en Nexo. Devuelve `(textoTraducido, mensajeError)` en el hilo principal.
+     */
+    fun translateSnippet(
+        context: Context,
+        text: String,
+        onResult: (translated: String?, error: String?) -> Unit
+    ) {
+        val cleaned = text.trim().take(2000)
+        if (cleaned.isEmpty()) {
+            main.post { onResult(null, "No hay texto seleccionado para traducir.") }
+            return
+        }
+        val appContext = context.applicationContext
+        val target = resolveTargetLanguage(appContext)
+        val paragraphs = cleaned.split(Regex("""\n+"""))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .ifEmpty { listOf(cleaned) }
+        val job = ActiveTranslation(docGen = 0L, targetLang = target)
+        io.execute {
+            val translated = translateBatch(appContext, paragraphs, target, job)
+            main.post {
+                if (translated != null && translated.isNotEmpty()) {
+                    onResult(translated.joinToString("\n\n"), null)
+                } else {
+                    onResult(null, "No se pudo traducir la selección. Revisa tu conexión o proveedor.")
+                }
+            }
+        }
+    }
+
+    /** Hoja rápida Nexo UI 7.0 para traducir texto seleccionado directamente desde Chromium. */
+    fun showSelectionSheet(activity: android.app.Activity, selectedText: String) {
+        val clean = selectedText.trim().take(2000)
+        if (clean.isEmpty() || activity.isFinishing || activity.isDestroyed) return
+        val target = resolveTargetLanguage(activity)
+        val targetLabel = CaptionProtocol.languageLabel(target)
+        val p = ThemeManager.palette(activity)
+        val dp = { v: Float -> NexoUi.dp(activity, v) }
+
+        val body = NexoUi.column(activity, horizontalDp = NexoUi.Tokens.SHEET_PADDING)
+        val card = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            background = ThemeManager.rounded(activity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_CARD)
+            setPadding(dp(16f), dp(14f), dp(16f), dp(14f))
+            NexoGlass.paperShadow(this, p)
+        }
+        val origView = android.widget.TextView(activity).apply {
+            text = clean
+            textSize = 13f
+            typeface = NexoUi.regular(activity)
+            setTextColor(p.muted)
+            maxLines = 4
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setLineSpacing(0f, 1.25f)
+        }
+        val resultView = android.widget.TextView(activity).apply {
+            text = "Traduciendo a $targetLabel…"
+            textSize = 16f
+            typeface = NexoUi.regular(activity)
+            setTextColor(p.text)
+            setTextIsSelectable(true)
+            setLineSpacing(0f, 1.35f)
+            setPadding(0, dp(10f), 0, dp(4f))
+        }
+        card.addView(origView)
+        card.addView(NexoUi.divider(activity, 8f))
+        card.addView(resultView)
+        body.addView(card)
+
+        var translatedResult: String? = null
+        lateinit var sheet: android.app.Dialog
+        val copyBtn = NexoUi.actionRow(activity, R.drawable.ic_menu_copy, "Copiar traducción") {
+            val out = translatedResult ?: return@actionRow
+            val clipboard = activity.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Traducción", out))
+            Toastish.show(activity, "Traducción copiada")
+            sheet.dismiss()
+        }.apply {
+            isEnabled = false
+            alpha = 0.45f
+        }
+        val actions = android.widget.LinearLayout(activity).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            background = ThemeManager.rounded(activity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_CARD)
+            clipToOutline = true
+            addView(copyBtn)
+        }
+        body.addView(actions, android.widget.LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(12f) })
+
+        sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Traducción ($targetLabel)"), body))
+        translateSnippet(activity, clean) { translated, error ->
+            if (activity.isFinishing || activity.isDestroyed || !sheet.isShowing) return@translateSnippet
+            if (translated != null) {
+                translatedResult = translated
+                resultView.text = translated
+                copyBtn.isEnabled = true
+                copyBtn.alpha = 1f
+            } else {
+                resultView.text = error ?: "No se pudo traducir la selección."
+                resultView.setTextColor(p.danger)
+            }
+        }
+    }
+
     private fun translateWithGoogle(lines: List<String>, target: String, job: ActiveTranslation): List<String>? = runCatching {
         val body = CaptionProtocol.googleBatchBody(lines, target)
             .toRequestBody("application/x-www-form-urlencoded; charset=utf-8".toMediaType())
-        val req = Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL).post(body).build()
+        val req = Request.Builder()
+            .url(CaptionProtocol.GOOGLE_BATCH_URL)
+            .header("User-Agent", GOOGLE_UA)
+            .header("Accept", "application/json, text/plain, */*")
+            .post(body)
+            .build()
         val call = http.newCall(req)
         job.attach(call)
         call.execute().use { resp ->

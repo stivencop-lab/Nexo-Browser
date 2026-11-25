@@ -166,4 +166,40 @@ class CaptionProtocolTest {
         assertEquals(0, DomCaptionTracker.overlap("the cathedral", "dral is old"))
         assertEquals(0, DomCaptionTracker.overlap("abc", "xyz"))
     }
+
+    @Test fun nova2FallbackRefusesMultiLanguageAndSingleRetry() {
+        assertFalse("nova-2 rejects language=multi with HTTP 400",
+            CaptionProtocol.shouldFallbackToNova2(400, "nova-3", "multi", alreadyTried = false))
+        assertFalse(CaptionProtocol.shouldFallbackToNova2(403, "nova-3", "multi", alreadyTried = false))
+        assertTrue(CaptionProtocol.shouldFallbackToNova2(400, "nova-3", "en", alreadyTried = false))
+        assertTrue(CaptionProtocol.shouldFallbackToNova2(400, "nova-3", "es", alreadyTried = false))
+        assertFalse("HTTP 401 is an auth error and must not retry with nova-2",
+            CaptionProtocol.shouldFallbackToNova2(401, "nova-3", "es", alreadyTried = false))
+        assertFalse(CaptionProtocol.shouldFallbackToNova2(400, "nova-3", "en", alreadyTried = true))
+        assertFalse(CaptionProtocol.shouldFallbackToNova2(400, "nova-2", "en", alreadyTried = false))
+        assertFalse(CaptionProtocol.shouldFallbackToNova2(500, "nova-3", "en", alreadyTried = false))
+    }
+
+    @Test fun audioChunkRateLimiterAllowsInitialWebmHeaderBurst() {
+        val limiter = AudioChunkRateLimiter(burstCapacity = 12, refillIntervalMs = 40L)
+        repeat(12) { idx ->
+            assertTrue("initial header/cluster chunk #$idx must not be dropped", limiter.tryAcquire(1000L))
+        }
+        assertFalse("13th instantaneous chunk exceeds burst cap", limiter.tryAcquire(1000L))
+        assertFalse("no refill before 40ms", limiter.tryAcquire(1020L))
+        assertTrue("refills 1 token after 40ms", limiter.tryAcquire(1040L))
+        assertFalse("spent refilled token", limiter.tryAcquire(1040L))
+        limiter.reset()
+        assertTrue("reset restores burst capacity", limiter.tryAcquire(2000L))
+    }
+
+    @Test fun captionTextHasTranslationTracksProvisionalAndFinal() {
+        val text = CaptionText()
+        val seg = text.onTranscript(CaptionProtocol.Transcript("Hello world", isFinal = true, speechFinal = true))!!
+        assertFalse(text.hasTranslation(seg.id))
+        text.setTranslation(seg.id, "Hola mundo", provisional = true)
+        assertTrue(text.hasTranslation(seg.id))
+        text.resetTranslations()
+        assertFalse(text.hasTranslation(seg.id))
+    }
 }

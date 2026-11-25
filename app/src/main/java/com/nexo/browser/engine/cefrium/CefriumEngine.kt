@@ -150,6 +150,7 @@ object CefriumEngine : BrowserEngine {
         }
         runCatching { CefriumProfile.getDefault().setWebRtcIpHandlingPolicy(policy) }
         runCatching { CefriumProfile.incognito().setWebRtcIpHandlingPolicy(policy) }
+        CefriumProfiles.syncDefaultWebRtcPolicy(policy)
     }
 
     /** DNS sobre HTTPS de Chromium: proveedor y modo estricto. */

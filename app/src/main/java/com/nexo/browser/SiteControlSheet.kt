@@ -384,18 +384,14 @@ object SiteControlSheet {
             clipToOutline = true
         }
         val cookieStatus = TextView(activity).apply {
-            text = "Consultando cookies…"
+            text = "Consultando cookies y datos…"
             textSize = 13f
             typeface = NexoUi.regular(activity)
             setTextColor(p.muted)
             setPadding(dp(16f), dp(14f), dp(16f), dp(4f))
         }
-        session.countSiteCookies(url) { count ->
-            cookieStatus.text = when (count) {
-                null -> "Política de cookies según Ajustes"
-                1 -> "1 cookie guardada"
-                else -> "$count cookies guardadas"
-            }
+        session.inspectSiteData(url) { cookies, bytes ->
+            cookieStatus.text = SiteControlModel.formatSiteDataSummary(cookies, bytes)
         }
         cookieCard.addView(cookieStatus)
         cookieCard.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_close, "Borrar cookies y datos", danger = true) {

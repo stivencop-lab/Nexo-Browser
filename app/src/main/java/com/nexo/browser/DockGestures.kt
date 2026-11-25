@@ -92,8 +92,10 @@ class GestureDock @JvmOverloads constructor(
                 tracker?.addMovement(event)
                 val dx = event.rawX - startX
                 val dy = event.rawY - startY
+                val threshold = if (interceptOverChildren) slop * 2.5f else slop * 2f
+                val ratio = if (interceptOverChildren) 1.8f else 1.5f
                 // Solo gestos claros: horizontales o hacia arriba, más allá del margen de toque.
-                if ((abs(dx) > slop * 2 && abs(dx) > abs(dy) * 1.5f) || (-dy > slop * 2 && -dy > abs(dx) * 1.5f)) {
+                if ((abs(dx) > threshold && abs(dx) > abs(dy) * ratio) || (-dy > threshold && -dy > abs(dx) * ratio)) {
                     intercepted = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                     return true

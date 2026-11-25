@@ -29,7 +29,8 @@ object PageBridge {
     private const val OFFER_WINDOW_MS = 200L
     private const val MAX_FRAMES = 32
     private const val MAX_OFFERS = 16
-    private const val MIN_AUDIO_INTERVAL_MS = 40L
+    private const val AUDIO_BURST_CAPACITY = 12
+    private const val AUDIO_REFILL_INTERVAL_MS = 40L
     private const val DARK_READER_ASSET = "nexo/bridge/darkreader.js"
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
@@ -44,7 +45,7 @@ object PageBridge {
         var offers: MutableMap<String, Int>? = null
         var pip: PipState? = null
         var mediaFrame: String? = null
-        var lastAudioAt = 0L
+        val audioLimiter = AudioChunkRateLimiter(AUDIO_BURST_CAPACITY, AUDIO_REFILL_INTERVAL_MS)
     }
 
     private val states = WeakHashMap<EngineSession, State>()
@@ -219,13 +220,16 @@ object PageBridge {
         when (type) {
             "captions_release" -> {
                 state.owner = null
+                state.audioLimiter.reset()
                 LiveCaptions.onRecordingStopped(session)
             }
-            "captions_start" -> LiveCaptions.onRecordingStarted(context, session, json.optString("mime"))
+            "captions_start" -> {
+                state.audioLimiter.reset()
+                LiveCaptions.onRecordingStarted(context, session, json.optString("mime"))
+            }
             "captions_audio" -> {
                 val now = android.os.SystemClock.elapsedRealtime()
-                if (now - state.lastAudioAt >= MIN_AUDIO_INTERVAL_MS) {
-                    state.lastAudioAt = now
+                if (state.audioLimiter.tryAcquire(now)) {
                     LiveCaptions.onAudio(session, json.optString("data"))
                 }
             }
@@ -399,6 +403,7 @@ object PageBridge {
         state.owner = null
         state.offers = null
         state.mediaFrame = null
+        state.audioLimiter.reset()
         if (hadOwner) LiveCaptions.onRecordingStopped(session)
     }
 

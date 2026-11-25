@@ -278,6 +278,18 @@ object NexoMediaEngine {
 
         // --- Desplazamiento y tipografía de subtítulos ---
         body.addView(NexoUi.section(activity, "Subtítulos inteligentes"))
+        val captionsActive = LiveCaptions.isActive(session)
+        if (activity is com.nexo.browser.MainActivity) {
+            body.addView(NexoUi.actionRow(
+                activity,
+                com.nexo.browser.R.drawable.ic_menu_translate,
+                if (captionsActive) "Subtítulos en vivo · activos" else "Activar subtítulos en vivo (CC)",
+                if (captionsActive) LiveCaptions.sourceLabel(session) else "Pistas, reproductor, Deepgram o captura universal de Android"
+            ) {
+                sheet.dismiss()
+                activity.openCaptionsFromMediaSheet()
+            })
+        }
         val offsetLabel = TextView(activity).apply {
             textSize = 13.5f
             setTextColor(ThemeManager.palette(activity).text)
