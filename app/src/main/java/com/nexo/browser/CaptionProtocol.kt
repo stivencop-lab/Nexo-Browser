@@ -16,11 +16,6 @@ object CaptionProtocol {
         bytes.take(4) == listOf(0x1a.toByte(), 0x45.toByte(), 0xdf.toByte(), 0xa3.toByte()) ||
         bytes.take(4) == "OggS".toByteArray().toList())
 
-    fun parseError(raw: String): String? = runCatching {
-        val json = JSONObject(raw)
-        if (json.optString("type") == "Error") json.optString("description", "Error de transcripción").take(240) else null
-    }.getOrNull()
-
     const val LISTEN_ENDPOINT = "wss://api.deepgram.com/v1/listen"
 
     /** nova-3 para inglés y el modo multilingüe; nova-2 cubre el resto de idiomas. */
@@ -34,30 +29,71 @@ object CaptionProtocol {
     fun shouldFallbackToNova2(httpCode: Int?, model: String, language: String, alreadyTried: Boolean): Boolean =
         httpCode == 400 && model != "nova-2" && !alreadyTried && language != "multi"
 
-    fun listenUrl(language: String, model: String = modelFor(language)): String {
+    fun listenUrl(language: String, model: String = modelFor(language), separateSpeakers: Boolean = false): String {
         val lang = language.takeIf { it.matches(Regex("[a-z]{2,5}(-[A-Za-z]{2,4})?|multi")) } ?: "multi"
         // Sin smart_format: añade espera a las frases finales; la puntuación basta para subtítulos.
         return "$LISTEN_ENDPOINT?model=$model&language=$lang&punctuate=true" +
-            "&interim_results=true&endpointing=250&utterance_end_ms=1000"
+            "&interim_results=true&endpointing=250&utterance_end_ms=1000&vad_events=true" +
+            if (separateSpeakers) "&diarize_model=latest" else ""
     }
 
-    data class Transcript(val text: String, val isFinal: Boolean, val speechFinal: Boolean)
+    data class Word(val text: String, val start: Double, val end: Double, val speaker: Int?)
 
-    /** Mensaje "Results" de Deepgram; null para metadatos u otros tipos. */
-    fun parseResult(raw: String): Transcript? {
+    data class Transcript(
+        val text: String,
+        val isFinal: Boolean,
+        val speechFinal: Boolean,
+        val words: List<Word> = emptyList(),
+        val end: Double? = null
+    )
+
+    internal sealed interface StreamMessage {
+        data class Result(val transcript: Transcript) : StreamMessage
+        data class UtteranceEnd(val lastWordEnd: Double) : StreamMessage
+        data class Error(val description: String) : StreamMessage
+    }
+
+    internal fun parseMessage(raw: String): StreamMessage? {
         val json = runCatching { JSONObject(raw) }.getOrNull() ?: return null
-        if (json.optString("type") != "Results") return null
-        val text = json.optJSONObject("channel")
-            ?.optJSONArray("alternatives")
-            ?.optJSONObject(0)
-            ?.optString("transcript")
-            .orEmpty()
-            .trim()
-        return Transcript(text, json.optBoolean("is_final"), json.optBoolean("speech_final"))
+        return when (json.optString("type")) {
+            "Results" -> StreamMessage.Result(parseTranscript(json))
+            "UtteranceEnd" -> json.seconds("last_word_end")?.let { StreamMessage.UtteranceEnd(it) }
+            "Error" -> StreamMessage.Error(json.optString("description", "Error de transcripción").take(240))
+            else -> null
+        }
     }
 
-    fun isUtteranceEnd(raw: String): Boolean =
-        runCatching { JSONObject(raw).optString("type") == "UtteranceEnd" }.getOrDefault(false)
+    fun parseResult(raw: String): Transcript? = (parseMessage(raw) as? StreamMessage.Result)?.transcript
+    fun parseError(raw: String): String? = (parseMessage(raw) as? StreamMessage.Error)?.description
+    fun isUtteranceEnd(raw: String): Boolean = parseMessage(raw) is StreamMessage.UtteranceEnd
+
+    private fun JSONObject.seconds(key: String): Double? = optDouble(key).takeIf { it.isFinite() && it >= 0.0 }
+
+    private fun parseTranscript(json: JSONObject): Transcript {
+        val alternative = json.optJSONObject("channel")?.optJSONArray("alternatives")?.optJSONObject(0)
+        val text = alternative?.optString("transcript").orEmpty().trim()
+        val timings = alternative?.optJSONArray("words")
+        val words = if (timings != null && timings.length() in 1..512 && text.isNotBlank()) {
+            parseWords(timings)
+        } else emptyList()
+        val start = json.seconds("start")
+        val duration = json.seconds("duration")
+        val resultEnd = if (start != null && duration != null) (start + duration).takeIf { it.isFinite() } else null
+        val end = maxOf(resultEnd ?: 0.0, words.lastOrNull()?.end ?: 0.0)
+            .takeIf { resultEnd != null || words.isNotEmpty() }
+        return Transcript(text, json.optBoolean("is_final"), json.optBoolean("speech_final"), words, end)
+    }
+
+    private fun parseWords(timings: JSONArray): List<Word> = buildList {
+        for (index in 0 until timings.length()) {
+            val item = timings.optJSONObject(index) ?: return emptyList()
+            val start = item.seconds("start") ?: return emptyList()
+            val end = item.seconds("end") ?: return emptyList()
+            val text = item.optString("punctuated_word").ifBlank { item.optString("word") }.trim()
+            if (text.isEmpty() || end < start || lastOrNull()?.let { start < it.start } == true) return emptyList()
+            add(Word(text, start, end, item.optInt("speaker", -1).takeIf { it >= 0 }))
+        }
+    }
 
     const val KEEP_ALIVE = """{"type":"KeepAlive"}"""
     const val CLOSE_STREAM = """{"type":"CloseStream"}"""
@@ -324,6 +360,21 @@ class TranslationBatcher(private val delayMs: Long, private val maxChars: Int, p
     fun clear() { waiting.clear(); inFlight = false }
 }
 
+/** Consecutive reconnect attempts are cleared only by a real transcription or a user reset. */
+internal class CaptionReconnectBudget {
+    private var attempts = 0
+
+    fun next(limit: Int): Int? = if (attempts < limit) attempts++ else null
+
+    fun onTranscript(text: String) {
+        if (text.isNotBlank()) reset()
+    }
+
+    fun reset() {
+        attempts = 0
+    }
+}
+
 /** Lo que se dibuja: texto principal, parte pendiente (más tenue) y original debajo (modo "ambos"). */
 data class CaptionDisplay(
     val primary: String,
@@ -341,6 +392,10 @@ data class CaptionDisplay(
  */
 class CaptionText(var maxChars: Int = 150) {
     companion object {
+        private const val WORD_PAUSE_SECONDS = 0.65
+        private const val ENDPOINT_PAUSE_SECONDS = 0.45
+        private const val TIMING_TOLERANCE_SECONDS = 0.02
+
         /** La última voz fue hace más de [delayMs]: el subtítulo ya no debe verse. */
         fun expired(lastVoiceAt: Long, now: Long, delayMs: Long): Boolean = lastVoiceAt > 0L && now - lastVoiceAt > delayMs
     }
@@ -350,10 +405,19 @@ class CaptionText(var maxChars: Int = 150) {
      * provisional aún no cubre (la traducción anticipada se hizo con la frase a medias).
      */
     data class Segment(val id: Long, val original: String, var translated: String? = null, var provisional: Boolean = false,
-                       var tail: String = "")
+                       var tail: String = "") {
+        internal var speechBreak = SpeechBreak.NONE
+    }
+
+    internal enum class SpeechBreak { NONE, PAUSE, SPEAKER }
+
+    private data class SpeechPart(val text: String, val speechBreak: SpeechBreak)
 
     private val segments = ArrayDeque<Segment>()
     private var interim = ""
+    private var timedDraft: CaptionProtocol.Transcript? = null
+    private var lastSpeechWord: CaptionProtocol.Word? = null
+    private var speechEnded = false
     // Traducción anticipada del texto provisional (se muestra mientras llega la frase final).
     private var interimSource = ""
     private var interimTranslated = ""
@@ -371,19 +435,121 @@ class CaptionText(var maxChars: Int = 150) {
     /** Devuelve el segmento finalizado nuevo (para traducirlo), si lo hay. */
     fun onTranscript(transcript: CaptionProtocol.Transcript): Segment? {
         if (!transcript.isFinal) {
-            interim = transcript.text
-            if (!interim.startsWith(interimSource)) { interimSource = ""; interimTranslated = "" }
+            updateInterim(transcript.text)
             return null
         }
+        val segment = transcript.text.takeIf { it.isNotBlank() }?.let { appendSegment(it) }
+        updateInterim("")
+        return segment
+    }
+
+    /** Los parciales aparecen ya; las pausas y los hablantes se fijan con palabras confirmadas. */
+    internal fun onSpeechTranscript(transcript: CaptionProtocol.Transcript): List<Segment> {
+        if (transcript.text.isBlank()) {
+            if (transcript.isFinal && transcript.speechFinal && interim.isBlank()) speechEnded = true
+            return emptyList()
+        }
+        if (!transcript.isFinal) {
+            timedDraft = transcript
+            updateInterim(transcript.text)
+            return emptyList()
+        }
+        val remaining = remainingDraft(transcript.end)
+        val parts = splitSpeech(transcript)
+        val finalized = parts.mapIndexed { index, part ->
+            appendSegment(part.text, carryDraft = index == 0).also { it.speechBreak = part.speechBreak }
+        }
+        lastSpeechWord = transcript.words.lastOrNull()
+        speechEnded = transcript.speechFinal
+        timedDraft = remaining
+        updateInterim("")
+        if (remaining != null) updateInterim(remaining.text)
+        return finalized
+    }
+
+    internal fun onUtteranceEnd(lastWordEnd: Double) {
+        val end = lastSpeechWord?.end ?: return
+        if (interim.isBlank() && kotlin.math.abs(end - lastWordEnd) <= TIMING_TOLERANCE_SECONDS) {
+            speechEnded = true
+        }
+    }
+
+    private fun updateInterim(text: String) {
+        interim = text
+        if (text.isEmpty() || !text.startsWith(interimSource)) {
+            interimSource = ""
+            interimTranslated = ""
+        }
+    }
+
+    private fun splitSpeech(transcript: CaptionProtocol.Transcript): List<SpeechPart> {
+        val words = transcript.words
+        val first = words.firstOrNull()
+        val startBreak = boundary(lastSpeechWord, first, followsEndpoint(first))
+        val cuts = (1 until words.size).mapNotNull { index ->
+            val split = boundary(words[index - 1], words[index])
+            if (split == SpeechBreak.NONE) null else index to split
+        }
+        val offsets = if (cuts.isEmpty()) null else transcript.wordOffsets()
+        if (offsets == null) return listOf(SpeechPart(transcript.text, startBreak))
+
+        return buildList {
+            var start = 0
+            var speechBreak = startBreak
+            for ((index, split) in cuts) {
+                val offset = offsets[index]
+                add(SpeechPart(transcript.text.substring(start, offset).trim(), speechBreak))
+                start = offset
+                speechBreak = split
+            }
+            add(SpeechPart(transcript.text.substring(start).trim(), speechBreak))
+        }
+    }
+
+    private fun boundary(previous: CaptionProtocol.Word?, next: CaptionProtocol.Word?, paused: Boolean = false): SpeechBreak {
+        if (previous != null && next != null) {
+            if (previous.speaker != null && next.speaker != null && previous.speaker != next.speaker) return SpeechBreak.SPEAKER
+            if (next.start - previous.end >= WORD_PAUSE_SECONDS) return SpeechBreak.PAUSE
+        }
+        return if (paused) SpeechBreak.PAUSE else SpeechBreak.NONE
+    }
+
+    private fun followsEndpoint(first: CaptionProtocol.Word?): Boolean {
+        if (!speechEnded) return false
+        val previous = lastSpeechWord ?: return true
+        return first == null || first.start - previous.end >= ENDPOINT_PAUSE_SECONDS
+    }
+
+    /** Si el final solo cubre el prefijo de un parcial, deja visible la parte posterior. */
+    private fun remainingDraft(finalEnd: Double?): CaptionProtocol.Transcript? {
+        val draft = timedDraft ?: return null
+        if (finalEnd == null) return null
+        val next = draft.words.indexOfFirst {
+            it.start >= finalEnd - TIMING_TOLERANCE_SECONDS && it.end > finalEnd + TIMING_TOLERANCE_SECONDS
+        }
+        if (next < 0) return null
+        if (next == 0) return draft
+        val offset = draft.wordOffsets()?.get(next) ?: return null
+        return draft.copy(text = draft.text.substring(offset), words = draft.words.drop(next))
+    }
+
+    /** Usa el texto exacto del proveedor, incluso en idiomas sin espacios entre palabras. */
+    private fun CaptionProtocol.Transcript.wordOffsets(): List<Int>? {
+        var end = 0
+        return words.map { word ->
+            val index = text.indexOf(word.text, startIndex = end, ignoreCase = true)
+            if (index < 0 || (end until index).any { text[it].isLetterOrDigit() }) return null
+            end = index + word.text.length
+            index
+        }
+    }
+
+    private fun appendSegment(original: String, carryDraft: Boolean = true): Segment {
         // La traducción anticipada del texto provisional pasa a la frase final al instante:
         // antes se descartaba y la frase salía en el idioma original hasta que respondía el
         // traductor (el salto "primero en inglés, luego traducido").
-        val carried = carry(transcript.text)
-        interim = ""
-        interimSource = ""
-        interimTranslated = ""
-        if (transcript.text.isBlank()) return null
-        val segment = Segment(nextId++, transcript.text)
+        val carried = if (carryDraft) carry(original) else null
+        val segment = Segment(nextId++, original)
         if (carried != null) {
             segment.translated = carried.first
             segment.provisional = true
@@ -437,11 +603,22 @@ class CaptionText(var maxChars: Int = 150) {
     /** Originales recientes ya traducidos: contexto para el siguiente lote. */
     fun context(): List<String> = segments.filter { it.translated != null }.map { it.original }.takeLast(4)
 
-    fun clear() {
+    internal fun clearVisible() {
         segments.clear()
-        interim = ""
-        interimSource = ""
-        interimTranslated = ""
+        timedDraft = null
+        updateInterim("")
+    }
+
+    internal fun resetSpeechClock() {
+        timedDraft = null
+        updateInterim("")
+        lastSpeechWord = null
+        speechEnded = segments.isNotEmpty()
+    }
+
+    fun clear() {
+        clearVisible()
+        resetSpeechClock()
     }
 
     val isEmpty: Boolean get() = segments.isEmpty() && interim.isBlank()
@@ -461,29 +638,44 @@ class CaptionText(var maxChars: Int = 150) {
         val done = StringBuilder()
         val pending = StringBuilder()
         val originals = StringBuilder()
+        var pendingBreak = SpeechBreak.NONE
         for (segment in segments) {
             val text = if (translating) segment.translated else segment.original
             if (text != null) {
-                if (pending.isNotEmpty()) { done.append(pending).append(' '); pending.clear() }
-                done.append(text).append(' ')
-                if (translating && segment.tail.isNotEmpty() && !hide) done.append(segment.tail).append(' ')
-                if (translating) originals.append(segment.original).append(' ')
+                if (pending.isNotEmpty()) {
+                    done.appendCaption(pending, pendingBreak != SpeechBreak.NONE)
+                    pending.clear()
+                }
+                done.appendSegment(text, segment.speechBreak)
+                if (translating && segment.tail.isNotEmpty() && !hide) done.appendCaption(segment.tail)
+                if (translating) originals.appendSegment(segment.original, segment.speechBreak)
             } else if (!hide) {
-                pending.append(segment.original).append(' ')
+                if (pending.isEmpty()) pendingBreak = segment.speechBreak
+                pending.appendSegment(segment.original, segment.speechBreak)
             }
         }
         if (interim.isNotBlank()) {
             if (translating && interimTranslated.isNotBlank() && interim.startsWith(interimSource)) {
-                pending.append(interimTranslated)
+                pending.appendCaption(interimTranslated, followsEndpoint(timedDraft?.words?.firstOrNull()))
                 val tail = interim.substring(interimSource.length).trim()
                 if (tail.isNotEmpty() && !hide) pending.append(' ').append(tail)
             } else if (!hide) {
-                pending.append(interim)
+                pending.appendCaption(interim, followsEndpoint(timedDraft?.words?.firstOrNull()))
             }
         }
         val (primary, rest) = trimStart(done.toString().trim(), pending.toString().trim())
         val secondary = if (translating && mode == "both") tail(originals.toString().trim(), maxChars) else ""
         return CaptionDisplay(primary, rest, secondary)
+    }
+
+    private fun StringBuilder.appendCaption(value: CharSequence, newLine: Boolean = false) {
+        if (isNotEmpty()) append(if (newLine) '\n' else ' ')
+        append(value)
+    }
+
+    private fun StringBuilder.appendSegment(value: String, split: SpeechBreak) {
+        val text = if (split == SpeechBreak.SPEAKER) "— $value" else value
+        appendCaption(text, split != SpeechBreak.NONE)
     }
 
     private fun tail(text: String, limit: Int): String {

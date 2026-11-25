@@ -647,9 +647,8 @@ class MainActivity :
         }
 
         clearOmniboxButton.setOnClickListener {
+            focusOmniboxForEditing()
             omnibox.setText("")
-            omnibox.requestFocus()
-            showKeyboard(omnibox)
         }
 
         suggestions = OmniboxSuggestions(
@@ -660,10 +659,7 @@ class MainActivity :
             handleCommandSuggestion(pick)
         }
 
-        omnibox.setOnClickListener {
-            if (!omnibox.hasFocus()) omnibox.requestFocus()
-            showKeyboard(omnibox)
-        }
+        omnibox.setOnClickListener { focusOmniboxForEditing() }
 
         omnibox.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -704,13 +700,8 @@ class MainActivity :
                 clearOmniboxButton.visibility =
                     if (omnibox.text.isNullOrEmpty()) View.GONE else View.VISIBLE
                 showKeyboard(omnibox)
-                omnibox.post {
-                    if (!isFinishing && !isDestroyed && omnibox.hasFocus()) {
-                        if (!omnibox.text.isNullOrEmpty()) omnibox.selectAll()
-                        showKeyboard(omnibox)
-                    }
-                }
             } else {
+                omniboxKeyboard.cancel()
                 styleChromeGlass()
                 clearOmniboxButton.visibility = View.GONE
                 suggestions.hide()
@@ -727,6 +718,7 @@ class MainActivity :
         })
         findInput.setOnFocusChangeListener { _, focused ->
             if (focused) showKeyboard(findInput)
+            else findKeyboard.cancel()
             layoutEdgeToEdge()
         }
         findInput.setOnEditorActionListener { _, _, _ ->
@@ -742,19 +734,38 @@ class MainActivity :
     private fun focusOmniboxForEditing() {
         setDockScrollHidden(false)
         setChromeCompact(false)
-        if (!omnibox.hasFocus()) omnibox.requestFocus()
-        showKeyboard(omnibox)
+        if (omnibox.hasFocus()) showKeyboard(omnibox) else omnibox.requestFocus()
     }
 
-    /** Muestra el teclado suavemente para [target] con reintento tras el primer ciclo de layout. */
+    private val omniboxKeyboard by lazy { KeyboardRequest(omnibox) }
+    private val findKeyboard by lazy { KeyboardRequest(findInput) }
+
     private fun showKeyboard(target: EditText) {
-        val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
-        imm.showSoftInput(target, 0)
-        target.postDelayed({
-            if (!isFinishing && !isDestroyed && target.hasFocus() && target.isAttachedToWindow && !imeVisible) {
-                imm.showSoftInput(target, 0)
-            }
-        }, 120L)
+        (if (target === omnibox) omniboxKeyboard else findKeyboard).show()
+    }
+
+    private inner class KeyboardRequest(private val input: EditText) {
+        private val retry = Runnable { request() }
+        private val initial = Runnable {
+            if (request()) input.postDelayed(retry, 120L)
+        }
+
+        fun show() {
+            cancel()
+            if (!imeVisible) input.post(initial)
+        }
+
+        fun cancel() {
+            input.removeCallbacks(initial)
+            input.removeCallbacks(retry)
+        }
+
+        private fun request(): Boolean {
+            if (imeVisible || isFinishing || isDestroyed || !input.hasFocus() || !input.isAttachedToWindow) return false
+            val keyboard = getSystemService(InputMethodManager::class.java) ?: return false
+            keyboard.showSoftInput(input, 0)
+            return true
+        }
     }
 
     // ---------------------------------------------------------------
@@ -770,9 +781,8 @@ class MainActivity :
         setChromeCompact(false)
         findBar.visibility = View.VISIBLE
         findCount.text = ""
-        findInput.requestFocus()
+        if (findInput.hasFocus()) showKeyboard(findInput) else findInput.requestFocus()
         layoutEdgeToEdge()
-        showKeyboard(findInput)
         if (!findInput.text.isNullOrEmpty()) findInPage(restart = true)
         syncPredictiveBack()
     }
@@ -959,6 +969,16 @@ class MainActivity :
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (onPage && resources.configuration.screenWidthDp < 400) {
+                val touchTarget = resources.getDimensionPixelSize(R.dimen.touch_target)
+                addView(ImageButton(this@MainActivity).apply {
+                    setImageResource(R.drawable.ic_nav_reload)
+                    contentDescription = "Recargar"
+                    ThemeManager.styleIconButton(this@MainActivity, this)
+                    setOnClickListener { dismiss(); TabManager.reload() }
+                    setOnLongClickListener { dismiss(); TabManager.reload(bypassCache = true); true }
+                }, LinearLayout.LayoutParams(touchTarget, touchTarget))
+            }
             if (onPage && !current.isPrivate && UrlSafety.isWebUrl(current.url)) {
                 val bookmarked = com.nexo.browser.workspace.BookmarkStore.isBookmarked(this@MainActivity, current.url)
                 addView(ImageButton(this@MainActivity).apply {
@@ -1671,7 +1691,8 @@ class MainActivity :
         tabButton.visibility = if (showCluster) View.VISIBLE else View.GONE
         // En Inicio el emblema vive dentro de la cápsula unificada de búsqueda y consulta.
         aiButton.visibility = if (home && liquidChrome) View.GONE else View.VISIBLE
-        pillReloadButton.visibility = if (liquidChrome && !focused && TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true) View.VISIBLE else View.GONE
+        pillReloadButton.visibility = if (liquidChrome && !focused && !home &&
+            resources.configuration.screenWidthDp >= 400) View.VISIBLE else View.GONE
     }
 
     /** Scroll Compacto: pliega el cromo en una mini-píldora de 34dp con candado y dominio. */
@@ -3031,6 +3052,8 @@ class MainActivity :
         com.nexo.browser.engine.cefrium.SpareRendererPool.stop(this)
         GlassPreferences.removeListener(glassSettingsChanged)
         webBackdrop?.setRunning(false)
+        if (::omnibox.isInitialized) omniboxKeyboard.cancel()
+        if (::findInput.isInitialized) findKeyboard.cancel()
         PageBridge.onScrollDirection = null
         unregisterPredictiveBack()
         PerfLog.detach(this)

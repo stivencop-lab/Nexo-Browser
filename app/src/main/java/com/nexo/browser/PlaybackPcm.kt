@@ -21,7 +21,8 @@ object PlaybackPcm {
         return false
     }
 
-    fun listenUrl(language: String, model: String): String = CaptionProtocol.listenUrl(language,model) +
+    fun listenUrl(language: String, model: String, separateSpeakers: Boolean = false): String =
+        CaptionProtocol.listenUrl(language, model, separateSpeakers) +
         "&encoding=linear16&sample_rate=$SAMPLE_RATE&channels=1"
 
     /** Pico absoluto de un bloque PCM16 little-endian. */

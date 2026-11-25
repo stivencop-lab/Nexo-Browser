@@ -682,7 +682,7 @@
    * nativo de MediaRecorder: muy poco trabajo para el teléfono. Solo se
    * graba mientras el video se reproduce en primer plano.
    */
-  const CAPTION_SLICE_MS = 250;
+  const CAPTION_SLICE_MS = 125;
   const captions = {
     active: false, live: false, lang: "multi", granted: false, choosing: false, token: 0,
     video: null, recorder: null, silentTimer: 0, epoch: 0, stream: null, meter: null,

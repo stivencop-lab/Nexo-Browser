@@ -185,11 +185,26 @@ class ScreenshotTest {
         val mini = root.findViewById<android.widget.Button>(R.id.miniPlayerButton)
         mini.visibility = View.VISIBLE
         CaptionsUi.styleChip(activity, mini, false)
-        CaptionsUi.render(activity, root.findViewById(R.id.captionView), frame.width, frame.height, rect,
-            CaptionDisplay("Hoy vamos a ver cómo funciona el motor de un navegador.", "And the rendering",
-                "Today we will see how a browser engine works."), false)
+        val caption = root.findViewById<android.widget.TextView>(R.id.captionView)
+        val display = CaptionDisplay("Hoy vamos a ver cómo funciona el motor de un navegador.", "And the rendering",
+            "Today we will see how a browser engine works.")
+        CaptionsUi.render(activity, caption, frame.width, frame.height, rect, display, false)
+        org.junit.Assert.assertEquals(listOf(display.primary, display.pending, display.secondary),
+            caption.text.toString().lines())
         org.robolectric.shadows.ShadowLooper.idleMainLooper()
         save(activity.window.decorView, "captions-overlay")
+        CaptionsUi.render(activity, caption, frame.width, frame.height, null, display, true)
+        org.junit.Assert.assertEquals("${display.primary} ${display.pending}", caption.text.toString())
+        org.junit.Assert.assertTrue(caption.maxLines <= 2)
+
+        val turns = CaptionDisplay("¿Todo listo?\n— Sí.\n— Empecemos.", "Primero revisamos el sonido.")
+        CaptionsUi.render(activity, caption, frame.width, frame.height, rect, turns, false)
+        org.junit.Assert.assertEquals("— Empecemos.\nPrimero revisamos el sonido.", caption.text.toString())
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        save(activity.window.decorView, "captions-speaker-turns")
+        BrowserPrefs.setCaptionLines(activity, 1)
+        CaptionsUi.render(activity, caption, frame.width, frame.height, rect, turns, false)
+        org.junit.Assert.assertEquals(turns.pending, caption.text.toString())
     }
 
     @Test fun captionsQuick() {
@@ -204,11 +219,33 @@ class ScreenshotTest {
     }
 
     @Test fun siteControlDark() {
-        seedTabs(*sampleTabs())
-        val activity = themed(BrowserPrefs.THEME_MIDNIGHT)
-        activity.setContentView(FrameLayout(activity))
-        SiteControlSheet.show(activity)
-        dialogShot(null, "site-control-dark")
+        val themes = listOf(
+            Triple(BrowserPrefs.THEME_MIDNIGHT, "dark", 1f),
+            Triple(BrowserPrefs.THEME_LIGHT, "paper", 1f),
+            Triple(BrowserPrefs.THEME_OLED, "oled", 1f),
+            Triple(BrowserPrefs.THEME_LIGHT, "font200", 2f)
+        )
+        for ((theme, label, fontScale) in themes) {
+            org.robolectric.RuntimeEnvironment.setFontScale(fontScale)
+            seedTabs(*sampleTabs())
+            val activity = themed(theme)
+            activity.setContentView(FrameLayout(activity))
+            SiteControlSheet.show(activity)
+            val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+            val labels = dialog.window!!.decorView.labels()
+            listOf("Privacidad y permisos", "Vista y contenido", "Herramientas del sitio").forEach {
+                org.junit.Assert.assertTrue(it, it in labels)
+            }
+            dialogShot(dialog, "site-control-$label")
+            dialog.dismiss()
+            activity.finish()
+        }
+    }
+
+    private fun View.labels(): List<String> = when (this) {
+        is android.widget.TextView -> listOf(text.toString())
+        is android.view.ViewGroup -> (0 until childCount).flatMap { getChildAt(it).labels() }
+        else -> emptyList()
     }
 
     @Test fun malwareWarning() {
