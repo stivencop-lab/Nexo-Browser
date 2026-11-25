@@ -130,4 +130,89 @@ object SiteControlModel {
 
     fun normalizeHost(host: String): String =
         host.trim().lowercase(Locale.ROOT).removePrefix("www.").trimEnd('.')
+
+    /** Empareja una entrada de `CefriumProfile.listSiteData` (host u origen) con el sitio actual. */
+    fun siteDataMatches(entrySite: String, targetOrigin: String, targetHost: String): Boolean {
+        val raw = entrySite.trim()
+        if (raw.isEmpty()) return false
+        val normTarget = normalizeHost(targetHost)
+        if (normTarget.isEmpty()) return false
+        return if ("://" in raw) {
+            val entryOrigin = originOf(raw)
+            entryOrigin != null && entryOrigin.equals(targetOrigin, ignoreCase = true)
+        } else {
+            normalizeHost(raw) == normTarget
+        }
+    }
+
+    /** Formatea bytes de almacenamiento local de un sitio (IndexedDB, Cache Storage, etc.). */
+    fun formatStorageBytes(bytes: Long): String {
+        if (bytes <= 0L) return "0 B"
+        val kb = 1024.0
+        val mb = kb * 1024.0
+        val gb = mb * 1024.0
+        return when {
+            bytes < 1024L -> "$bytes B"
+            bytes < 1024L * 1024L -> "${(bytes / 1024L).coerceAtLeast(1L)} KB"
+            bytes < 1024L * 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / mb)
+            else -> String.format(Locale.US, "%.2f GB", bytes / gb)
+        }
+    }
+
+    /** Resume cookies y bytes almacenados para la subhoja de permisos del sitio. */
+    fun formatSiteDataSummary(cookieCount: Long?, storageBytes: Long?): String {
+        if (cookieCount == null && (storageBytes == null || storageBytes <= 0L)) {
+            return "Política de cookies según Ajustes"
+        }
+        val cookiesLabel = when (cookieCount) {
+            null -> null
+            1L -> "1 cookie"
+            else -> "$cookieCount cookies"
+        }
+        val storageLabel = storageBytes?.takeIf { it > 0L }?.let { "${formatStorageBytes(it)} almacenados" }
+        return when {
+            cookiesLabel != null && storageLabel != null -> "$cookiesLabel · $storageLabel"
+            cookiesLabel != null -> if (cookieCount == 1L) "1 cookie guardada" else "$cookieCount cookies guardadas"
+            storageLabel != null -> storageLabel
+            else -> "Política de cookies según Ajustes"
+        }
+    }
+
+    /** Entrada filtrada del historial nativo atrás/adelante de una pestaña con su salto relativo. */
+    data class TabHistoryItem(
+        val title: String,
+        val url: String,
+        val offset: Int
+    )
+
+    /**
+     * Convierte la lista cronológica de `CefriumBrowser.getNavigationEntries()` (más antiguo primero)
+     * en entradas saltables atrás (`offset < 0`) o adelante (`offset > 0`), ordenadas de la más
+     * cercana a la más lejana.
+     */
+    fun buildHistoryItems(
+        entries: List<Triple<Boolean, String, String>>,
+        backwards: Boolean,
+        limit: Int = 20
+    ): List<TabHistoryItem> {
+        val currentIdx = entries.indexOfFirst { it.first }
+        if (currentIdx < 0) return emptyList()
+        val indices = if (backwards) {
+            (currentIdx - 1 downTo 0).asSequence()
+        } else {
+            (currentIdx + 1 until entries.size).asSequence()
+        }
+        return indices
+            .take(limit.coerceAtLeast(1))
+            .mapNotNull { idx ->
+                val (_, url, title) = entries[idx]
+                if (url.isBlank()) return@mapNotNull null
+                TabHistoryItem(
+                    title = title.trim(),
+                    url = url.trim(),
+                    offset = idx - currentIdx
+                )
+            }
+            .toList()
+    }
 }

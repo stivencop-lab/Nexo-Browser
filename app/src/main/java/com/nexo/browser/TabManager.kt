@@ -37,6 +37,9 @@ object TabManager {
 
         /** Aviso justo antes de dejar una pestaña activa (para guardar su última miniatura). */
         fun onBeforeTabSwitch(leaving: BrowserTab) = Unit
+
+        /** true mientras el usuario edita en un campo nativo (omnibox o buscar en página). */
+        fun isNativeInputFocused(): Boolean = false
     }
 
     private val tabs = CopyOnWriteArrayList<BrowserTab>()
@@ -361,7 +364,9 @@ object TabManager {
         val session = ensureSession(target, loadUrl)
         session.setHighPriority(true)
         session.setActive(true)
-        session.setFocused(true)
+        if (!BrowserPrefs.isNexoHome(target.url) && listener?.isNativeInputFocused() != true) {
+            session.setFocused(true)
+        }
 
         ExtensionManager.setTabActive(
             session,

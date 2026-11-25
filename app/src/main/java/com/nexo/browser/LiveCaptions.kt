@@ -79,6 +79,8 @@ object LiveCaptions {
         var triedFallback = false
         var retries = 0
         var language = "multi"
+        var appliedTarget = ""
+        var appliedProvider = ""
         val text = CaptionText()
         var state = State.WAITING
         var message: String? = null
@@ -142,7 +144,11 @@ object LiveCaptions {
     }
 
     private const val MAX_SOCKET_QUEUE = 256L * 1024L
+    private const val MAX_DEVICE_PREOPEN_CHUNKS = 30
+    private const val MAX_PAGE_PREOPEN_CHUNKS = 80
     private const val MAX_CUES = 3000
+    private const val GOOGLE_USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
     /** Tiempo que se muestra el aviso de estado cuando aún no hay texto. */
     const val HINT_MS = 6000L
     private const val DOM_SETTLE_MS = 900L
@@ -154,7 +160,9 @@ object LiveCaptions {
                 // Deepgram cierra a los ~10 s sin audio: mantener la conexión en pausas cortas del habla.
                 if (stream.opened && now - stream.lastAudioAt > 3500L) stream.socket?.send(CaptionProtocol.KEEP_ALIVE)
                 // La captura de Android tiene su propio diagnóstico (nivel y Deepgram), al segundo.
-                if (!stream.deviceAudio && stream.startedAt > 0 && now - maxOf(stream.startedAt, stream.lastResultAt) > 15000 && stream.state != State.ERROR) {
+                if (!stream.deviceAudio && !stream.trackMode && !stream.domMode &&
+                    stream.startedAt > 0 && now - maxOf(stream.startedAt, stream.lastResultAt) > 15000 && stream.state != State.ERROR
+                ) {
                     stream.message = if (stream.receivedBytes == 0L) "No llega audio del reproductor. Puede estar pausado o protegido."
                         else "Audio recibido: ${stream.receivedBytes} bytes · ${if (stream.signal) "señal detectada" else "señal no confirmada"}. Deepgram aún no devuelve texto."
                     notifyChanged(stream.session)
@@ -213,15 +221,16 @@ object LiveCaptions {
         if (stream.state == State.ERROR) return CaptionDisplay(stream.message ?: "Error de subtítulos", "", status = true)
         val mode = BrowserPrefs.captionMode(context)
         val translating = BrowserPrefs.captionTranslateTo(context).isNotBlank() && mode != "original"
+        val translateError = stream.message?.takeIf { it.startsWith("No se pudo traducir") }
         if (stream.trackMode) {
             val lines = stream.activeCues.mapNotNull { stream.cues[it] }
             if (lines.isEmpty()) return statusLine(stream)
             val done = lines.filter { !translating || it.translated != null }
             val primary = done.joinToString("\n") { if (translating) it.translated!! else it.text }
-            val pending = if (translating && !BrowserPrefs.captionHideOriginal(context)) lines.filter { it.translated == null }.joinToString("\n") { it.text } else ""
+            val hideOrig = translating && BrowserPrefs.captionHideOriginal(context) && translateError == null
+            val pending = if (translating && !hideOrig) lines.filter { it.translated == null }.joinToString("\n") { it.text } else ""
             val secondary = if (translating && mode == "both") done.joinToString("\n") { it.text } else ""
-            return CaptionDisplay(primary, pending,
-                if (stream.message?.startsWith("No se pudo traducir") == true) stream.message.orEmpty() else secondary)
+            return CaptionDisplay(primary, pending, translateError ?: secondary)
         }
         // Red de seguridad: aunque se pierda el aviso programado, un subtítulo sin voz
         // reciente no se vuelve a dibujar (el texto en vivo nunca se queda colgado).
@@ -230,8 +239,12 @@ object LiveCaptions {
         if (stream.text.isEmpty) return statusLine(stream)
         // Longitud elegida en Ajustes: cuánto texto reciente se conserva en pantalla.
         stream.text.maxChars = maxChars(BrowserPrefs.captionLines(context))
-        return stream.text.view(mode, translating, BrowserPrefs.captionHideOriginal(context)).let { view ->
-            if (stream.message?.startsWith("No se pudo traducir") == true) view.copy(secondary = stream.message.orEmpty()) else view
+        val hideOrig = BrowserPrefs.captionHideOriginal(context) && translateError == null
+        return stream.text.view(mode, translating, hideOrig).let { view ->
+            if (translateError != null) {
+                if (view.isEmpty) stream.text.view("original", translating = false).copy(secondary = translateError)
+                else view.copy(secondary = translateError)
+            } else view
         }.takeIf { !it.isEmpty }
     }
 
@@ -254,6 +267,8 @@ object LiveCaptions {
         val app = context.applicationContext
         val stream = Stream(session).apply {
             language = BrowserPrefs.captionLanguage(app)
+            appliedTarget = BrowserPrefs.captionTranslateTo(app)
+            appliedProvider = effectiveProvider(app)
             batcher = newBatcher(app)
         }
         active[session] = stream
@@ -262,9 +277,9 @@ object LiveCaptions {
         warmUp(app)
         deliver(app, stream)
         notifyChanged(session)
-        // Si la página no respondió, avisar en vez de quedarse en silencio.
+        // Si la página no respondió (y no estamos en captura de Android), avisar en vez de quedarse en silencio.
         main.postAtTime({
-            if (active[session] === stream && !stream.delivered) {
+            if (active[session] === stream && !stream.delivered && !stream.deviceAudio && !stream.deviceRequested) {
                 setState(stream, State.ERROR, "La página aún no está lista para los subtítulos. Recárgala y vuelve a tocar CC.")
                 notifyChanged(session)
             }
@@ -388,6 +403,8 @@ object LiveCaptions {
     fun retarget(context: Context, session: EngineSession?) {
         val stream = session?.let { active[it] } ?: return
         val app = context.applicationContext
+        stream.appliedTarget = BrowserPrefs.captionTranslateTo(app)
+        stream.appliedProvider = effectiveProvider(app)
         synchronized(stream) { stream.translationGeneration++; stream.calls.forEach { it.cancel() }; stream.calls.clear() }
         stream.batcher.clear()
         stream.batcher = newBatcher(app)
@@ -406,7 +423,10 @@ object LiveCaptions {
     fun relisten(context: Context, session: EngineSession?) {
         val stream = session?.let { active[it] } ?: return
         stream.language = BrowserPrefs.captionLanguage(context)
-        if (stream.deviceAudio) { close(stream); connect(context.applicationContext,stream,CaptionProtocol.modelFor(stream.language)) }
+        stream.model = ""
+        stream.triedFallback = false
+        stream.retries = 0
+        if (stream.deviceAudio) { close(stream); connect(context.applicationContext, stream, CaptionProtocol.modelFor(stream.language)) }
         else if (!stream.trackMode && !stream.domMode) ExtensionManager.restartCaptions(stream.session)
     }
 
@@ -472,6 +492,7 @@ object LiveCaptions {
     fun beginDeviceRequest(session: EngineSession, token: Any): Boolean {
         val stream = active[session] ?: return false
         if (stream !== token) return false
+        main.removeCallbacksAndMessages(stream)
         stream.deviceRequested = true
         stream.pageFailure = null
         ExtensionManager.setCaptions(session, false)
@@ -604,7 +625,11 @@ object LiveCaptions {
                 stream.message = "La red no puede enviar el audio. Reiniciando captura…"
                 restartAudio(stream)
             }
-        } else if (stream.queue.size < 40) {
+        } else if (stream.deviceAudio) {
+            // PCM sin contenedor: conservar siempre los últimos ~3 s mientras conecta o reconecta el WebSocket.
+            while (stream.queue.size >= MAX_DEVICE_PREOPEN_CHUNKS) stream.queue.removeFirst()
+            stream.queue.addLast(chunk)
+        } else if (stream.queue.size < MAX_PAGE_PREOPEN_CHUNKS) {
             stream.queue.addLast(chunk)
         } else {
             onPageError(AppContext.get(), session, "buffer", "La conexión tarda demasiado en aceptar audio. Apaga y activa CC para reintentar.")
@@ -720,6 +745,7 @@ object LiveCaptions {
         if (!stream.domMode) return
         val app = context.applicationContext
         main.removeCallbacksAndMessages(stream)
+        if (raw.isNotBlank()) stream.lastResultAt = System.currentTimeMillis()
         applyTranscripts(app, stream, stream.dom.update(raw.take(400)))
         if (raw.isBlank()) {
             // El sitio quitó su subtítulo: el de Nexo también se va, un poco después.
@@ -855,12 +881,16 @@ object LiveCaptions {
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val code = response?.code
                 response?.close()
+                com.nexo.browser.engine.cefrium.EngineDiagnostics.log(
+                    "subtítulos Deepgram fallo: http=${code ?: "red"} (${t.javaClass.simpleName}) modelo=$model lang=${stream.language}"
+                )
                 main.post {
                     if (active[stream.session] !== stream || stream.generation != generation) return@post
                     stream.opened = false
                     stream.socket = null
-                    // Si el modelo no admite el idioma, reintentar una vez con nova-2.
-                    if (code == 400 && model != "nova-2" && !stream.triedFallback) {
+                    // Si el modelo no admite un idioma concreto, reintentar una vez con nova-2
+                    // (nova-2 en streaming no admite language=multi).
+                    if (CaptionProtocol.shouldFallbackToNova2(code, model, stream.language, stream.triedFallback)) {
                         stream.triedFallback = true
                         stream.model = "nova-2"
                         close(stream)
@@ -882,13 +912,33 @@ object LiveCaptions {
                         }, delay)
                         return@post
                     }
-                    onPageError(context, stream.session, "deepgram", CaptionProtocol.errorFor(code) + " Apaga y activa CC para reintentar.")
+                    val detail = if (code == 400 && stream.language == "multi") {
+                        "Deepgram rechazó la detección automática (HTTP 400). Elige un idioma concreto en CC (p. ej. Español o English)."
+                    } else {
+                        CaptionProtocol.errorFor(code) + " Apaga y activa CC para reintentar."
+                    }
+                    onPageError(context, stream.session, "deepgram", detail)
                 }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 main.post {
                     if (active[stream.session] === stream && stream.generation == generation && stream.socket === webSocket) {
+                        stream.opened = false
+                        stream.socket = null
+                        // 1008 (DATA-0000), 1011 (NET-0000) o 1006: reintentar con grabación/cabecera nueva antes de rendirse.
+                        if (code in setOf(1006, 1008, 1011) && stream.retries < 2) {
+                            val delay = 800L * (stream.retries + 1)
+                            stream.retries++
+                            setState(stream, State.CONNECTING, "Reconectando subtítulos con Deepgram…")
+                            notifyChanged(stream.session)
+                            main.postDelayed({
+                                if (active[stream.session] === stream && stream.generation == generation) {
+                                    restartAudio(stream)
+                                }
+                            }, delay)
+                            return@post
+                        }
                         onPageError(context, stream.session, "closed", "Deepgram cerró la conexión ($code). Apaga y activa CC para reintentar.")
                     }
                 }
@@ -925,9 +975,24 @@ object LiveCaptions {
     }
 
     fun reapply(context: Context) {
+        val app = context.applicationContext
+        val nextTarget = BrowserPrefs.captionTranslateTo(app)
+        val nextProvider = effectiveProvider(app)
+        val nextLang = BrowserPrefs.captionLanguage(app)
         active.keys.toList().forEach { session ->
-            if (!BrowserPrefs.captionsEnabled(context)) stop(session)
-            else { retarget(context, session); relisten(context, session); ExtensionManager.restoreCaptions(session) }
+            if (!BrowserPrefs.captionsEnabled(app)) {
+                stop(session)
+                return@forEach
+            }
+            val stream = active[session] ?: return@forEach
+            val targetChanged = nextTarget != stream.appliedTarget || nextProvider != stream.appliedProvider
+            val langChanged = nextLang != stream.language
+            if (targetChanged) retarget(app, session)
+            if (langChanged) relisten(app, session)
+            // No interrumpir ni reiniciar la captura de Android ni el WebSocket en onResume() si nada cambió.
+            if (!pageSuspended(session) && (!stream.delivered || targetChanged || langChanged)) {
+                ExtensionManager.restoreCaptions(session)
+            }
         }
     }
 
@@ -1097,9 +1162,11 @@ object LiveCaptions {
                             cue.translated = translated ?: cue.text
                         }
                     } else {
-                        // Con IA, sin respuesta se conserva el respaldo rápido de Google.
-                        if (translated == null && provider == BrowserPrefs.TRANSLATE_AI) return@forEachIndexed
-                        // Si el traductor falla, se queda el texto original (sin bloquear los siguientes).
+                        // Con IA, si Google ya entregó un respaldo provisional lo conservamos;
+                        // si tampoco hubo respaldo, mostrar el original para evitar pantalla vacía.
+                        if (translated == null && provider == BrowserPrefs.TRANSLATE_AI && stream.text.hasTranslation(item.id)) {
+                            return@forEachIndexed
+                        }
                         stream.text.setTranslation(item.id, translated ?: item.text)
                     }
                 }
@@ -1123,8 +1190,12 @@ object LiveCaptions {
         val form = "application/x-www-form-urlencoded".toMediaType()
         val body = CaptionProtocol.googleBatchBody(lines, target)
         // GET para lo habitual (frases cortas); POST solo si la dirección quedaría demasiado larga.
-        val request = if (body.length < 1800) Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL + "&" + body).build()
-        else Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL).post(body.toRequestBody(form)).build()
+        val builder = if (body.length < 1800) Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL + "&" + body)
+        else Request.Builder().url(CaptionProtocol.GOOGLE_BATCH_URL).post(body.toRequestBody(form))
+        val request = builder
+            .header("User-Agent", GOOGLE_USER_AGENT)
+            .header("Accept", "application/json, text/plain, */*")
+            .build()
         val aligned = withResponse(stream, generation, request) { response ->
             // Error de red o del servicio: no multiplicar peticiones.
             if (!response.isSuccessful) throw java.io.IOException("HTTP ${response.code}")

@@ -56,6 +56,9 @@ object CaptionsUi {
         backdropSource: View? = null,
         smoked: Boolean = false
     ) {
+        val styleKey = "${ThemeManager.themeKey(activity)}|$active|$smoked|${GlassPreferences.intensity.name}|${backdrop != null}"
+        if (button.getTag(R.id.nexo_chip_style_key) == styleKey && button.background != null) return
+        button.setTag(R.id.nexo_chip_style_key, styleKey)
         val p = ThemeManager.palette(activity)
         val insetY = dp(activity, 8f)
         val visual: android.graphics.drawable.Drawable = if (active) {
@@ -640,14 +643,16 @@ object CaptionsUi {
             if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_DEEPL && deeplField.text.isBlank()) {
                 error.text = "Escribe la clave de DeepL o elige Google."; error.visibility = View.VISIBLE; return@button
             }
-            if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_AI && !usesMaster) {
-                val endpoint = aiEndpointField.text.toString().trim()
-                if (aiProvider == "custom" && !CaptionProtocol.isSafeKeyedEndpoint(endpoint)) {
-                    error.text = "La dirección de la API debe ser https:// (o http:// solo hacia este teléfono), sin usuario ni contraseña."
-                    error.visibility = View.VISIBLE; return@button
-                }
-                if (aiProvider != "custom" && aiKeyField.text.isBlank()) {
-                    error.text = "Escribe la clave del modelo de IA."; error.visibility = View.VISIBLE; return@button
+            if (target.isNotBlank() && provider == BrowserPrefs.TRANSLATE_AI) {
+                if (!usesMaster) {
+                    val endpoint = aiEndpointField.text.toString().trim()
+                    if (aiProvider == "custom" && !CaptionProtocol.isSafeKeyedEndpoint(endpoint)) {
+                        error.text = "La dirección de la API debe ser https:// (o http:// solo hacia este teléfono), sin usuario ni contraseña."
+                        error.visibility = View.VISIBLE; return@button
+                    }
+                    if (aiProvider != "custom" && aiKeyField.text.isBlank()) {
+                        error.text = "Escribe la clave del modelo de IA."; error.visibility = View.VISIBLE; return@button
+                    }
                 }
                 if (ai2Enabled) {
                     if (ai2Provider == "custom" && !CaptionProtocol.isSafeKeyedEndpoint(ai2EndpointField.text.toString().trim())) {

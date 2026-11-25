@@ -13,4 +13,8 @@
     <item name="nexo_glass_toast" type="id" />
     <item name="nexo_caption_dragging" type="id" />
     <item name="nexo_caption_area" type="id" />
+    <item name="nexo_chip_style_key" type="id" />
+    <item name="nexo_sel_ask_ai" type="id" />
+    <item name="nexo_sel_translate" type="id" />
+    <item name="nexo_sel_search_tab" type="id" />
 </resources>

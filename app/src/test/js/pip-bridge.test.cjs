@@ -728,3 +728,36 @@ test('paused video emits paused captions status once while waiting and offers on
   h.fire('playing', v);
   assert.equal(h.reports.some(m => m.type === 'captions_offer'), true, 'video is offered as soon as playback starts');
 });
+
+test('empty DOM caption placeholder does not trap captions in silent DOM mode', async () => {
+  const h = harness();
+  h.video();
+  const emptyCaption = new h.Element(h.body);
+  emptyCaption.textContent = '   ';
+  h.document.querySelectorAll = sel => (sel.includes('.plyr__caption') ? [emptyCaption] : []);
+  h.captions(true, false);
+  await flush(); await flush();
+  assert.equal(h.reports.some(m => m.type === 'captions_dom'), false, 'empty placeholder must not claim DOM mode');
+  assert.ok(h.reports.some(m => m.type === 'captions_error' && m.code === 'need_key'), 'falls through to next caption source');
+});
+
+test('YouTube caption activation falls back to cc module when captions module is unavailable', async () => {
+  const h = harness();
+  h.video();
+  const calls = [];
+  const player = new h.Element(h.body);
+  player.id = 'movie_player';
+  player.getOptions = mod => {
+    if (!mod) return ['cc'];
+    if (mod === 'cc') return ['tracklist'];
+    return [];
+  };
+  player.getOption = (mod, opt) => (mod === 'cc' && opt === 'tracklist' ? [{ languageCode: 'en' }] : null);
+  player.setOption = (mod, opt, val) => calls.push([mod, opt, val]);
+  player.loadModule = mod => calls.push(['load', mod]);
+  h.document.getElementById = id => (id === 'movie_player' ? player : null);
+  h.window.location = { hostname: 'm.youtube.com' };
+  h.captions(true, false);
+  await flush(); await flush();
+  assert.ok(calls.some(c => c[0] === 'cc' && c[1] === 'track' && c[2].languageCode === 'en'), 'selects track on cc module');
+});

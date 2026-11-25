@@ -130,14 +130,16 @@ object NexoAiSheet {
     fun show(
         activity: Activity,
         initialTab: Tab = Tab.CHAT,
-        initialExpanded: Boolean = false
+        initialExpanded: Boolean = false,
+        initialScope: String = "page",
+        initialPrompt: String? = null
     ) {
         NexoAiController.initialize(activity)
         val p = ThemeManager.palette(activity)
         val dp = { v: Float -> NexoUi.dp(activity, v) }
 
         var activeTab = initialTab
-        var scope = "page" // "page" | "agent" | "long_agent" | "selection" | "tabs" | "free"
+        var scope = initialScope // "page" | "agent" | "long_agent" | "selection" | "tabs" | "free"
         var reasoningEffort: String? = null
         var isExpanded = initialExpanded
         var lastRenderedKey = ""
@@ -1148,6 +1150,10 @@ object NexoAiSheet {
 
         refreshHeader()
         renderScopeAndReasoning()
+        if (!initialPrompt.isNullOrBlank()) {
+            promptField.setText(initialPrompt)
+            promptField.setSelection(promptField.text.length)
+        }
         renderSetupBanner()
         renderEmptyState()
         if (activeTab == Tab.SETTINGS) refreshSettingsForm()

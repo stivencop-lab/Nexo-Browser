@@ -55,4 +55,12 @@ class CefriumStateTest {
             UserAgents.desktop("Chrome/158.0.8127.18")
         )
     }
+
+    @Test fun proxyErrorsReturnActionableSpanishMessages() {
+        org.junit.Assert.assertTrue(CefriumProfiles.describeProxyError(-130).contains("-130"))
+        org.junit.Assert.assertTrue(CefriumProfiles.describeProxyError(-120).contains("SOCKS"))
+        org.junit.Assert.assertTrue(CefriumProfiles.describeProxyError(-111).contains("túnel"))
+        org.junit.Assert.assertTrue(CefriumProfiles.describeProxyError(-115).contains("autenticación"))
+        org.junit.Assert.assertTrue(CefriumProfiles.describeProxyError(-999).contains("-999"))
+    }
 }

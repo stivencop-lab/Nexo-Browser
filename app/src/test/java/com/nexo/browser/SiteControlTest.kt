@@ -52,4 +52,43 @@ class SiteControlTest {
         assertEquals("example.com", NexoAiConfig.normalizeHost("  WWW.Example.COM. "))
         assertEquals("", NexoAiConfig.normalizeHost("   "))
     }
+
+    @Test
+    fun siteDataMatchingAndStorageSummaryFormat() {
+        assertTrue(SiteControlModel.siteDataMatches("example.com", "https://www.example.com", "example.com"))
+        assertTrue(SiteControlModel.siteDataMatches("www.example.com", "https://example.com", "example.com"))
+        assertTrue(SiteControlModel.siteDataMatches("https://www.example.com", "https://www.example.com", "example.com"))
+        assertFalse(SiteControlModel.siteDataMatches("https://other.example.com", "https://www.example.com", "example.com"))
+        assertFalse(SiteControlModel.siteDataMatches("https://www.example.com:8443", "https://www.example.com", "example.com"))
+
+        assertEquals("0 B", SiteControlModel.formatStorageBytes(0L))
+        assertEquals("512 B", SiteControlModel.formatStorageBytes(512L))
+        assertEquals("4 KB", SiteControlModel.formatStorageBytes(4096L))
+        assertEquals("1.5 MB", SiteControlModel.formatStorageBytes((1.5 * 1024 * 1024).toLong()))
+        assertEquals("2.00 GB", SiteControlModel.formatStorageBytes(2L * 1024 * 1024 * 1024))
+
+        assertEquals("4 cookies · 1.5 MB almacenados", SiteControlModel.formatSiteDataSummary(4L, (1.5 * 1024 * 1024).toLong()))
+        assertEquals("1 cookie guardada", SiteControlModel.formatSiteDataSummary(1L, 0L))
+        assertEquals("Política de cookies según Ajustes", SiteControlModel.formatSiteDataSummary(null, null))
+    }
+
+    @Test
+    fun navigationHistoryBuildsRelativeBackAndForwardOffsets() {
+        val entries = listOf(
+            Triple(false, "https://one.example/", "Page One"),
+            Triple(false, "https://two.example/", "Page Two"),
+            Triple(true, "https://three.example/", "Current"),
+            Triple(false, "https://four.example/", "Page Four"),
+            Triple(false, "https://five.example/", "")
+        )
+        val back = SiteControlModel.buildHistoryItems(entries, backwards = true)
+        assertEquals(listOf(-1, -2), back.map { it.offset })
+        assertEquals(listOf("Page Two", "Page One"), back.map { it.title })
+
+        val fwd = SiteControlModel.buildHistoryItems(entries, backwards = false)
+        assertEquals(listOf(1, 2), fwd.map { it.offset })
+        assertEquals(listOf("https://four.example/", "https://five.example/"), fwd.map { it.url })
+
+        assertTrue(SiteControlModel.buildHistoryItems(emptyList(), backwards = true).isEmpty())
+    }
 }

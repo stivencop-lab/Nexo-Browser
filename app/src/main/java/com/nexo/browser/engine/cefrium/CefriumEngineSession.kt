@@ -7,7 +7,10 @@ import android.os.Handler
 import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.view.ActionMode
 import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
 import android.view.ViewGroup
 import com.cefrium.Cefrium
 import com.cefrium.CefriumBrowser
@@ -30,6 +33,7 @@ import com.cefrium.CefriumUserAgentMetadata
 import com.nexo.browser.BrowserPrefs
 import com.nexo.browser.ExtensionManager
 import com.nexo.browser.PagePrompts
+import com.nexo.browser.R
 import com.nexo.browser.SitePermissions
 import com.nexo.browser.TabManager
 import com.nexo.browser.TabRouting
@@ -111,6 +115,7 @@ class CefriumEngineSession internal constructor(
     private var lastUpgradedHttpUrl: String? = null
     private var mainFrameError = false
     private var sslNoticeFor: String? = null
+    private var unresponsiveNotified = false
     internal var fullScreen = false
         private set
     private var currentUrl: String? = adoptedUrl
@@ -249,6 +254,8 @@ class CefriumEngineSession internal constructor(
         target.setNavigationClient(Navigation())
         target.setChromeClient(Chrome())
         target.setDownloadClient(Downloads())
+        runCatching { target.setPrintHandler { handlePrintRequest(target) } }
+        runCatching { target.setTextSelectionActionModeCallback(createTextSelectionCallback(target)) }
         cookieFiltering = PhantomShield.filtersCookies()
         target.setResourceInterceptor(PhantomShield.interceptor(shield))
         PhantomShield.attach(target, shield)
@@ -368,8 +375,29 @@ class CefriumEngineSession internal constructor(
 
     fun isAudioMuted(): Boolean = runCatching { liveBrowser()?.isAudioMuted == true }.getOrDefault(false)
 
+    /** Audio nativo activo en Chromium (incluye iframes de terceros y Web Audio). */
+    fun isPlayingAudio(): Boolean = runCatching { liveBrowser()?.isPlayingAudio == true }.getOrDefault(false)
+
     fun setAudioMuted(muted: Boolean) {
         onMain { runCatching { liveBrowser()?.setAudioMuted(muted) } }
+    }
+
+    /** Historial atrás/adelante nativo de esta pestaña, del más antiguo al más reciente. */
+    fun navigationEntries(): List<Triple<Boolean, String, String>> = runCatching {
+        liveBrowser()?.navigationEntries?.map { entry ->
+            Triple(entry.current, entry.url.orEmpty(), entry.title.orEmpty())
+        }.orEmpty()
+    }.getOrDefault(emptyList())
+
+    /** Salta [offset] pasos atrás (negativo) o adelante (positivo) en el historial nativo de la pestaña. */
+    fun goBackOrForward(offset: Int): Boolean {
+        if (offset == 0) return false
+        val target = liveBrowser() ?: return false
+        return runCatching {
+            if (!target.canGoBackOrForward(offset)) return false
+            target.goBackOrForward(offset)
+            true
+        }.getOrDefault(false)
     }
 
     fun setSiteContentSetting(origin: String, permission: CefriumPermission, decision: com.nexo.browser.SitePermissionStore.Decision) {
@@ -387,6 +415,126 @@ class CefriumEngineSession internal constructor(
         }
         if (started.isFailure) onDone(null)
     }
+
+    /** Consulta cookies y bytes reales de almacenamiento de [url] mediante `CefriumProfile.listSiteData`. */
+    fun inspectSiteData(url: String, onDone: (cookieCount: Long?, storageBytes: Long?) -> Unit) {
+        val origin = com.nexo.browser.SiteControlModel.originOf(url)
+        val host = com.nexo.browser.SiteControlModel.hostOf(url)
+        if (origin == null || host.isEmpty()) { onDone(null, null); return }
+        val started = runCatching {
+            profile.listSiteData { sites ->
+                var cookies = 0L
+                var bytes = 0L
+                var matched = false
+                sites?.forEach { entry ->
+                    if (com.nexo.browser.SiteControlModel.siteDataMatches(entry.site.orEmpty(), origin, host)) {
+                        matched = true
+                        cookies += entry.cookieCount.coerceAtLeast(0L)
+                        bytes += entry.storageBytes.coerceAtLeast(0L)
+                    }
+                }
+                if (matched && cookies > 0L) {
+                    main.post { onDone(cookies, bytes) }
+                } else {
+                    val fallback = runCatching {
+                        profile.cookieManager.getCookies(url) { list ->
+                            val liveCookies = (list?.size ?: 0).toLong()
+                            main.post { onDone(maxOf(cookies, liveCookies), bytes) }
+                        }
+                    }
+                    if (fallback.isFailure) main.post { onDone(cookies, bytes) }
+                }
+            }
+        }
+        if (started.isFailure) {
+            countSiteCookies(url) { count -> onDone(count?.toLong(), null) }
+        }
+    }
+
+    private fun handlePrintRequest(target: CefriumBrowser): Boolean {
+        val act = CefriumEngine.activity()
+            ?: boundActivity.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
+            ?: return false
+        val title = runCatching { target.title }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: com.nexo.browser.SiteControlModel.hostOf(currentUrl).ifBlank { "Página de Nexo" }
+        return printWithSystemDialog(act, title)
+    }
+
+    /** Acciones nativas de Nexo en la barra flotante de selección de texto de Chromium. */
+    private fun createTextSelectionCallback(target: CefriumBrowser): ActionMode.Callback =
+        object : ActionMode.Callback {
+            override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                if (menu.findItem(R.id.nexo_sel_ask_ai) == null) {
+                    menu.add(Menu.NONE, R.id.nexo_sel_ask_ai, Menu.CATEGORY_SECONDARY, "Preguntar a Nexo AI")
+                }
+                if (menu.findItem(R.id.nexo_sel_translate) == null) {
+                    menu.add(Menu.NONE, R.id.nexo_sel_translate, Menu.CATEGORY_SECONDARY, "Traducir selección")
+                }
+                if (menu.findItem(R.id.nexo_sel_search_tab) == null) {
+                    menu.add(Menu.NONE, R.id.nexo_sel_search_tab, Menu.CATEGORY_SECONDARY, "Buscar en pestaña nueva")
+                }
+                return true
+            }
+
+            override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+                val hasSelection = !closed && !target.isClosed &&
+                    runCatching { target.selectedText }.getOrNull()?.trim()?.isNotEmpty() == true
+                menu.findItem(R.id.nexo_sel_ask_ai)?.isVisible = hasSelection
+                menu.findItem(R.id.nexo_sel_translate)?.isVisible = hasSelection
+                menu.findItem(R.id.nexo_sel_search_tab)?.isVisible = hasSelection
+                return true
+            }
+
+            override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+                val id = item.itemId
+                if (id != R.id.nexo_sel_ask_ai && id != R.id.nexo_sel_translate && id != R.id.nexo_sel_search_tab) {
+                    return false
+                }
+                if (closed || target.isClosed) {
+                    mode.finish()
+                    return true
+                }
+                val selected = runCatching { target.selectedText }.getOrNull()?.trim().orEmpty()
+                mode.finish()
+                if (selected.isEmpty()) return true
+                val act = CefriumEngine.activity()
+                    ?: boundActivity.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
+                when (id) {
+                    R.id.nexo_sel_ask_ai -> {
+                        if (act != null) {
+                            val snippet = selected.take(1200)
+                            com.nexo.browser.ai.NexoAiSheet.show(
+                                act,
+                                initialScope = "selection",
+                                initialPrompt = "Explica o responde sobre este texto seleccionado:\n\n\"$snippet\""
+                            )
+                        }
+                    }
+                    R.id.nexo_sel_translate -> {
+                        val tab = TabManager.allTabs().firstOrNull { it.session === this@CefriumEngineSession }
+                        if (isPrivate || tab?.networkProfile?.let { it.type != "direct" } == true) {
+                            TabManager.notifyMessage("La traducción en la nube está desactivada en pestañas privadas o con proxy.")
+                        } else if (act != null) {
+                            com.nexo.browser.TranslatorManager.showSelectionSheet(act, selected)
+                        }
+                    }
+                    R.id.nexo_sel_search_tab -> {
+                        val tab = TabManager.allTabs().firstOrNull { it.session === this@CefriumEngineSession }
+                        val searchUrl = com.nexo.browser.SearchResolver.searchUrl(appContext, selected.take(300))
+                        TabManager.createTab(
+                            url = searchUrl,
+                            isPrivate = isPrivate,
+                            activate = true,
+                            burnerId = tab?.burnerId,
+                            networkProfile = tab?.networkProfile
+                        )
+                    }
+                }
+                return true
+            }
+
+            override fun onDestroyActionMode(mode: ActionMode) = Unit
+        }
 
     /** Elimina cookies y datos locales (storage, caché de origen) de [url] en el perfil de Cefrium. */
     fun clearSiteDataAndCookies(url: String, onDone: () -> Unit) {
@@ -805,6 +953,7 @@ class CefriumEngineSession internal constructor(
             host?.onDocumentChanged(browser)
             mainFrameError = false
             sslNoticeFor = null
+            unresponsiveNotified = false
             docGen.incrementAndGet()
             loadStartedAtMs = android.os.SystemClock.uptimeMillis()
             EngineDiagnostics.recordDocumentLoad()
@@ -859,6 +1008,24 @@ class CefriumEngineSession internal constructor(
             // Solo el host: la URL completa puede llevar datos personales.
             val host = error.failedUrl?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"
             EngineDiagnostics.log("error de carga ${error.errorCode} (${error.description}) en $host")
+        }
+
+        override fun onRenderProcessUnresponsive(browser: CefriumBrowser) {
+            val host = currentUrl?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"
+            EngineDiagnostics.log("pestaña sin respuesta en $host")
+            main.post {
+                if (closed || this@CefriumEngineSession.browser !== browser) return@post
+                if (!unresponsiveNotified && TabManager.activeSession() === this@CefriumEngineSession) {
+                    unresponsiveNotified = true
+                    TabManager.notifyMessage("La página no responde. Espera un momento o recarga la pestaña.")
+                }
+            }
+        }
+
+        override fun onRenderProcessResponsive(browser: CefriumBrowser) {
+            val host = currentUrl?.let { com.nexo.browser.shield.UrlParts.host(it) } ?: "?"
+            EngineDiagnostics.log("pestaña volvió a responder en $host")
+            main.post { unresponsiveNotified = false }
         }
 
         /**

@@ -27,6 +27,13 @@ object CaptionProtocol {
     fun modelFor(language: String): String =
         if (language == "multi" || language == "en" || language.startsWith("en-")) "nova-3" else "nova-2"
 
+    /**
+     * Reintentar con nova-2 tras un HTTP 400 solo cuando el idioma es concreto:
+     * nova-2 en streaming no admite `language=multi` y devolvería un segundo 400.
+     */
+    fun shouldFallbackToNova2(httpCode: Int?, model: String, language: String, alreadyTried: Boolean): Boolean =
+        httpCode == 400 && model != "nova-2" && !alreadyTried && language != "multi"
+
     fun listenUrl(language: String, model: String = modelFor(language)): String {
         val lang = language.takeIf { it.matches(Regex("[a-z]{2,5}(-[A-Za-z]{2,4})?|multi")) } ?: "multi"
         // Sin smart_format: añade espera a las frases finales; la puntuación basta para subtítulos.
@@ -396,6 +403,10 @@ class CaptionText(var maxChars: Int = 150) {
         segment.tail = ""
     }
 
+    /** true si el segmento [id] ya cuenta con alguna traducción (definitiva o provisional). */
+    fun hasTranslation(id: Long): Boolean =
+        segments.firstOrNull { it.id == id }?.translated?.isNotBlank() == true
+
     private fun normalized(text: String) = text.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
 
     /**
@@ -578,5 +589,39 @@ class DomCaptionTracker {
             val space = a.lastIndexOf(' ', (i - 1).coerceAtLeast(0))
             return if (space < 0) 0 else space
         }
+    }
+}
+
+/**
+ * Limitador por cubo de fichas (token bucket) para fragmentos `captions_audio`.
+ *
+ * Permite ráfagas cortas (p. ej. cabecera EBML + primer clúster WebM emitidos por
+ * Chromium con <10 ms de diferencia, o lecturas Blob resueltas juntas) sin descartar
+ * bytes del contenedor, mientras sigue acotando el ritmo sostenido ante un marco abusivo.
+ * Puro: el reloj lo proporciona quien llama para pruebas deterministas en JVM.
+ */
+class AudioChunkRateLimiter(
+    private val burstCapacity: Int = 12,
+    private val refillIntervalMs: Long = 40L
+) {
+    private var tokens: Double = burstCapacity.toDouble()
+    private var lastRefillMs: Long = Long.MIN_VALUE
+
+    fun tryAcquire(nowMs: Long): Boolean {
+        if (lastRefillMs == Long.MIN_VALUE) {
+            lastRefillMs = nowMs
+        } else if (nowMs > lastRefillMs) {
+            val elapsed = nowMs - lastRefillMs
+            tokens = (tokens + elapsed.toDouble() / refillIntervalMs.toDouble()).coerceAtMost(burstCapacity.toDouble())
+            lastRefillMs = nowMs
+        }
+        if (tokens < 1.0) return false
+        tokens -= 1.0
+        return true
+    }
+
+    fun reset() {
+        tokens = burstCapacity.toDouble()
+        lastRefillMs = Long.MIN_VALUE
     }
 }

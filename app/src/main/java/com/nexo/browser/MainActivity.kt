@@ -117,7 +117,13 @@ class MainActivity :
     private lateinit var topOverlay: LinearLayout
     private lateinit var bottomChrome: LinearLayout
     private var webBackdrop: NexoGlassBackdrop? = null
-    private val glassSettingsChanged: () -> Unit = ::styleChromeGlass
+    private var chromeGlassKey = ""
+    private var chromeIslandKey = ""
+    private var privateBannerKey = ""
+    private val glassSettingsChanged: () -> Unit = {
+        invalidateChromeGlassCache()
+        styleChromeGlass()
+    }
     private lateinit var chromeIsland: View
     private lateinit var chromeCluster: LinearLayout
     private lateinit var miniPill: LinearLayout
@@ -300,9 +306,12 @@ class MainActivity :
         val hideBars = fullScreenActive || isInPictureInPictureMode
         val top = if (hideBars) 0 else safeTop
         val bottomInset = maxOf(safeBottom, imeBottom)
-        statusScrim.layoutParams = statusScrim.layoutParams.apply { height = top }
-        topOverlay.setPadding(0, top, 0, 0)
-        bottomChrome.setPadding(0, 0, 0, if (hideBars) 0 else bottomInset + NexoUi.dp(this, 2f))
+        if (statusScrim.layoutParams.height != top) {
+            statusScrim.layoutParams = statusScrim.layoutParams.apply { height = top }
+        }
+        if (topOverlay.paddingTop != top) topOverlay.setPadding(0, top, 0, 0)
+        val bottomPad = if (hideBars) 0 else bottomInset + NexoUi.dp(this, 2f)
+        if (bottomChrome.paddingBottom != bottomPad) bottomChrome.setPadding(0, 0, 0, bottomPad)
         val startVisible = startPage.visibility == View.VISIBLE
         // Página: bajo la barra de estado; por detrás del cromo Liquid; sobre el teclado (solo para campos web, no al escribir en omnibox/buscar).
         val nativeEditing = (::omnibox.isInitialized && omnibox.hasFocus()) ||
@@ -507,7 +516,8 @@ class MainActivity :
                 true
             }
         }
-        miniPill.setOnClickListener { setChromeCompact(false) }
+        miniPill.setOnClickListener { focusOmniboxForEditing() }
+        omniboxCapsule.setOnClickListener { focusOmniboxForEditing() }
         val suggestionsView = findViewById<View>(R.id.omniboxSuggestions)
         val glassControls = listOf(chromeIsland, tabButton, miniPill, browserDock, findBar, extensionInstallBanner, privateBanner, suggestionsView)
         val allGlassViews = listOf(chromeIsland, tabButton, miniPill, browserDock, findBar, extensionInstallBanner, privateBanner, suggestionsView, captionsButton, miniPlayerButton, nexoAiPill)
@@ -525,8 +535,11 @@ class MainActivity :
             }
         }
         backButton.setOnClickListener { TabManager.goBackOrPrevious() }
+        backButton.setOnLongClickListener { showTabHistorySheet(backwards = true) }
         compactBackButton.setOnClickListener { TabManager.goBackOrPrevious() }
+        compactBackButton.setOnLongClickListener { showTabHistorySheet(backwards = true) }
         forwardButton.setOnClickListener { TabManager.goForward() }
+        forwardButton.setOnLongClickListener { showTabHistorySheet(backwards = false) }
         homeButton.setOnClickListener { viewModel.goHome() }
         newTabButton.apply {
             setOnClickListener { viewModel.newTab(false) }
@@ -636,6 +649,7 @@ class MainActivity :
         clearOmniboxButton.setOnClickListener {
             omnibox.setText("")
             omnibox.requestFocus()
+            showKeyboard(omnibox)
         }
 
         suggestions = OmniboxSuggestions(
@@ -644,6 +658,11 @@ class MainActivity :
             bookmarksProvider = { com.nexo.browser.workspace.BookmarkStore.toCommandCandidates(applicationContext) }
         ) { pick ->
             handleCommandSuggestion(pick)
+        }
+
+        omnibox.setOnClickListener {
+            if (!omnibox.hasFocus()) omnibox.requestFocus()
+            showKeyboard(omnibox)
         }
 
         omnibox.addTextChangedListener(object : TextWatcher {
@@ -669,18 +688,30 @@ class MainActivity :
         omnibox.setOnFocusChangeListener { _, focused ->
             val tab = TabManager.activeTab()
             omnibox.typeface = if (focused) ThemeManager.fontRegular(this) else ThemeManager.fontMono(this)
-            styleChromeGlass()
             if (focused) {
-                TabManager.activeSession()?.setFocused(false)
                 setDockScrollHidden(false)
                 setChromeCompact(false)
-                // Al editar se muestra la URL completa, seleccionada.
-                tab?.takeUnless { BrowserPrefs.isNexoHome(it.url) }?.let { omnibox.setText(it.url) }
+                styleChromeGlass()
+                // Al editar se muestra la URL completa, seleccionada y con teclado en un solo toque.
+                // No invocar CefriumBrowser.setFocus(false) aquí: al transferir el foco de vista a
+                // omnibox, Chromium ya desenfoca su ContentView; un setFocus(false) asíncrono cerraba
+                // el teclado recién abierto por Android.
+                tab?.takeUnless { BrowserPrefs.isNexoHome(it.url) }?.let { current ->
+                    if (omnibox.text?.toString() != current.url) omnibox.setText(current.url)
+                }
                 omnibox.selectAll()
                 setOmniboxIcon(null)
                 clearOmniboxButton.visibility =
                     if (omnibox.text.isNullOrEmpty()) View.GONE else View.VISIBLE
+                showKeyboard(omnibox)
+                omnibox.post {
+                    if (!isFinishing && !isDestroyed && omnibox.hasFocus()) {
+                        if (!omnibox.text.isNullOrEmpty()) omnibox.selectAll()
+                        showKeyboard(omnibox)
+                    }
+                }
             } else {
+                styleChromeGlass()
                 clearOmniboxButton.visibility = View.GONE
                 suggestions.hide()
                 tab?.let { renderOmnibox(it) }
@@ -695,7 +726,7 @@ class MainActivity :
             override fun afterTextChanged(s: Editable?) = findInPage(restart = true)
         })
         findInput.setOnFocusChangeListener { _, focused ->
-            if (focused) TabManager.activeSession()?.setFocused(false)
+            if (focused) showKeyboard(findInput)
             layoutEdgeToEdge()
         }
         findInput.setOnEditorActionListener { _, _, _ ->
@@ -707,6 +738,25 @@ class MainActivity :
         findViewById<ImageButton>(R.id.findClose).setOnClickListener { hideFindBar() }
     }
 
+    /** Expande el cromo si estaba plegado, enfoca la barra de direcciones y abre el teclado en 1 toque. */
+    private fun focusOmniboxForEditing() {
+        setDockScrollHidden(false)
+        setChromeCompact(false)
+        if (!omnibox.hasFocus()) omnibox.requestFocus()
+        showKeyboard(omnibox)
+    }
+
+    /** Muestra el teclado suavemente para [target] con reintento tras el primer ciclo de layout. */
+    private fun showKeyboard(target: EditText) {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        imm.showSoftInput(target, 0)
+        target.postDelayed({
+            if (!isFinishing && !isDestroyed && target.hasFocus() && target.isAttachedToWindow && !imeVisible) {
+                imm.showSoftInput(target, 0)
+            }
+        }, 120L)
+    }
+
     // ---------------------------------------------------------------
     // Buscar en la página
     // ---------------------------------------------------------------
@@ -716,15 +766,13 @@ class MainActivity :
             Toast.makeText(this, "Abre una página para buscar en ella", Toast.LENGTH_SHORT).show()
             return
         }
-        TabManager.activeSession()?.setFocused(false)
         setDockScrollHidden(false)
         setChromeCompact(false)
         findBar.visibility = View.VISIBLE
         findCount.text = ""
         findInput.requestFocus()
         layoutEdgeToEdge()
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(findInput, 0)
+        showKeyboard(findInput)
         if (!findInput.text.isNullOrEmpty()) findInPage(restart = true)
         syncPredictiveBack()
     }
@@ -1532,6 +1580,7 @@ class MainActivity :
             ThemeManager.styleIconButton(this, findViewById(it))
         }
 
+        invalidateChromeGlassCache()
         stylePrivateBanner(TabManager.activeTab())
         extensionBannerText.setTextColor(p.text)
         extensionBannerText.typeface = ThemeManager.fontMedium(this)
@@ -1550,6 +1599,12 @@ class MainActivity :
         themeKey = ThemeManager.themeKey(this)
     }
 
+    private fun invalidateChromeGlassCache() {
+        chromeGlassKey = ""
+        chromeIslandKey = ""
+        privateBannerKey = ""
+    }
+
     /**
      * Cristal Líquido del cromo: píldora de dirección, clúster desacoplado, dock clásico,
      * barra de búsqueda, banners y mini-píldora. Aplica a todos los temas (Sistema, Obsidian,
@@ -1562,51 +1617,61 @@ class MainActivity :
         val focused = omnibox.hasFocus()
         val startVisible = startPage.visibility == View.VISIBLE
         val intensity = GlassPreferences.intensity
+        val paletteKey = ThemeManager.themeKey(this)
         webBackdrop?.intensity = intensity
         fun glass(host: View, radius: Float, smoked: Boolean = private) =
             NexoGlassDrawable(this, p, radius, smoked = smoked).also {
                 if (startVisible) it.setBackdrop(startPage, host)
                 else it.setWebBackdrop(webBackdrop, pageView, host)
             }
-        chromeIsland.background = if (focused) ThemeManager.rounded(this, p.surfaceContainerHigh, NexoTokens.CARD_RADIUS)
-            else glass(chromeIsland, NexoTokens.CARD_RADIUS)
-        omniboxCapsule.background = null
-        chromeCluster.background = null
-        NexoGlass.float(chromeIsland, p)
-        tabButton.background = ThemeManager.ripple(this, glass(tabButton, NexoTokens.CARD_RADIUS), NexoTokens.CARD_RADIUS)
-        NexoGlass.float(tabButton, p)
-        miniPill.background = android.graphics.drawable.InsetDrawable(
-            glass(miniPill, NexoTokens.PILL_RADIUS), 0, NexoUi.dp(this, 8f), 0, NexoUi.dp(this, 8f))
-        NexoGlass.float(miniPill, p, if (p.isDark) 3f else 6f)
-        if (::browserDock.isInitialized) {
-            browserDock.background = glass(browserDock, 28f)
-            NexoGlass.float(browserDock, p)
+
+        val sharedKey = "$paletteKey|$private|$startVisible|${intensity.name}|$liquidChrome"
+        val islandKey = "$sharedKey|$focused"
+        if (islandKey != chromeIslandKey) {
+            chromeIslandKey = islandKey
+            chromeIsland.background = if (focused) ThemeManager.rounded(this, p.surfaceContainerHigh, NexoTokens.CARD_RADIUS)
+                else glass(chromeIsland, NexoTokens.CARD_RADIUS)
+            omniboxCapsule.background = null
+            chromeCluster.background = null
+            NexoGlass.float(chromeIsland, p)
         }
-        if (::findBar.isInitialized) {
-            findBar.background = glass(findBar, NexoUi.Tokens.RADIUS_CARD)
-            NexoGlass.float(findBar, p)
-        }
-        if (::extensionInstallBanner.isInitialized) {
-            extensionInstallBanner.background = glass(extensionInstallBanner, NexoUi.Tokens.RADIUS_CARD)
-            NexoGlass.float(extensionInstallBanner, p)
-        }
-        if (::privateBanner.isInitialized) {
-            privateBanner.background = glass(privateBanner, NexoUi.Tokens.RADIUS_PILL, smoked = true)
-            NexoGlass.float(privateBanner, p)
-        }
-        findViewById<View>(R.id.omniboxSuggestions)?.let { suggestions ->
-            suggestions.background = glass(suggestions, NexoUi.Tokens.RADIUS_CARD)
-            NexoGlass.float(suggestions, p)
+        if (sharedKey != chromeGlassKey) {
+            chromeGlassKey = sharedKey
+            tabButton.background = ThemeManager.ripple(this, glass(tabButton, NexoTokens.CARD_RADIUS), NexoTokens.CARD_RADIUS)
+            NexoGlass.float(tabButton, p)
+            miniPill.background = android.graphics.drawable.InsetDrawable(
+                glass(miniPill, NexoTokens.PILL_RADIUS), 0, NexoUi.dp(this, 8f), 0, NexoUi.dp(this, 8f))
+            NexoGlass.float(miniPill, p, if (p.isDark) 3f else 6f)
+            if (::browserDock.isInitialized) {
+                browserDock.background = glass(browserDock, 28f)
+                NexoGlass.float(browserDock, p)
+            }
+            if (::findBar.isInitialized) {
+                findBar.background = glass(findBar, NexoUi.Tokens.RADIUS_CARD)
+                NexoGlass.float(findBar, p)
+            }
+            if (::extensionInstallBanner.isInitialized) {
+                extensionInstallBanner.background = glass(extensionInstallBanner, NexoUi.Tokens.RADIUS_CARD)
+                NexoGlass.float(extensionInstallBanner, p)
+            }
+            if (::privateBanner.isInitialized) {
+                privateBanner.background = glass(privateBanner, NexoUi.Tokens.RADIUS_PILL, smoked = true)
+                NexoGlass.float(privateBanner, p)
+            }
+            findViewById<View>(R.id.omniboxSuggestions)?.let { suggestions ->
+                suggestions.background = glass(suggestions, NexoUi.Tokens.RADIUS_CARD)
+                NexoGlass.float(suggestions, p)
+            }
+            statusScrim.setBackgroundColor(androidx.core.graphics.ColorUtils.setAlphaComponent(p.background, if (startVisible) 0 else 235))
+            webBackdrop?.markDirty()
         }
         val home = TabManager.activeTab()?.let { BrowserPrefs.isNexoHome(it.url) } != false
         val showCluster = !focused || !liquidChrome
         chromeCluster.visibility = if (showCluster) View.VISIBLE else View.GONE
         tabButton.visibility = if (showCluster) View.VISIBLE else View.GONE
-        webBackdrop?.markDirty()
         // En Inicio el emblema vive dentro de la cápsula unificada de búsqueda y consulta.
         aiButton.visibility = if (home && liquidChrome) View.GONE else View.VISIBLE
         pillReloadButton.visibility = if (liquidChrome && !focused && TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true) View.VISIBLE else View.GONE
-        statusScrim.setBackgroundColor(androidx.core.graphics.ColorUtils.setAlphaComponent(p.background, if (startPage.visibility == View.VISIBLE) 0 else 235))
     }
 
     /** Scroll Compacto: pliega el cromo en una mini-píldora de 34dp con candado y dominio. */
@@ -1641,11 +1706,15 @@ class MainActivity :
         TabManager.activeTab()?.let { scheduleIdlePreview(it, delayMs = 700L) }
     }
 
-    private fun stylePrivateBanner(tab: BrowserTab?) {
+    private fun stylePrivateBanner(@Suppress("UNUSED_PARAMETER") tab: BrowserTab?) {
         // Solo la identidad Burner usa un chip (abre su buzón); el modo privado vive en el cristal ahumado.
+        val startVisible = ::startPage.isInitialized && startPage.visibility == View.VISIBLE
+        val key = "${ThemeManager.themeKey(this)}|$startVisible|${GlassPreferences.intensity.name}"
+        if (key == privateBannerKey) return
+        privateBannerKey = key
         val p = ThemeManager.palette(this)
         val bannerGlass = NexoGlassDrawable(this, p, NexoUi.Tokens.RADIUS_PILL, smoked = true).also {
-            if (::startPage.isInitialized && startPage.visibility == View.VISIBLE) it.setBackdrop(startPage, privateBanner)
+            if (startVisible) it.setBackdrop(startPage, privateBanner)
             else if (::pageView.isInitialized) it.setWebBackdrop(webBackdrop, pageView, privateBanner)
         }
         privateBanner.background = bannerGlass
@@ -1998,6 +2067,10 @@ class MainActivity :
     override fun onMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
+
+    override fun isNativeInputFocused(): Boolean =
+        (::omnibox.isInitialized && omnibox.hasFocus()) ||
+            (::findInput.isInitialized && findInput.hasFocus())
 
     override fun onBrowserMediaStateChanged() {
         if (
@@ -2367,6 +2440,44 @@ class MainActivity :
 
     private val captionHintExpiry = Runnable { refreshCaptionsUi() }
 
+    /** Permite encender o ajustar Subtítulos en vivo directamente desde Nexo Media Engine. */
+    internal fun openCaptionsFromMediaSheet() = toggleCaptions()
+
+    /** Pulsación larga en Atrás/Adelante: hoja con el historial nativo de la pestaña. */
+    private fun showTabHistorySheet(backwards: Boolean): Boolean {
+        val session = attachedSession as? com.nexo.browser.engine.cefrium.CefriumEngineSession ?: return false
+        val items = SiteControlModel.buildHistoryItems(session.navigationEntries(), backwards = backwards)
+        if (items.isEmpty()) return false
+        val p = ThemeManager.palette(this)
+        val dp = { v: Float -> NexoUi.dp(this, v) }
+        lateinit var sheet: android.app.Dialog
+        val body = NexoUi.column(this, horizontalDp = NexoUi.Tokens.SHEET_PADDING)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ThemeManager.rounded(this@MainActivity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_CARD)
+            clipToOutline = true
+            NexoGlass.paperShadow(this, p)
+        }
+        items.forEachIndexed { index, item ->
+            if (index > 0) {
+                card.addView(NexoUi.insetDivider(this).apply {
+                    (layoutParams as LinearLayout.LayoutParams).marginStart = dp(52f)
+                })
+            }
+            val title = item.title.ifBlank { displayUrl(item.url) }
+            val subtitle = displayUrl(item.url)
+            val icon = if (backwards) R.drawable.ic_nav_back else R.drawable.ic_nav_forward
+            card.addView(NexoUi.actionRow(this, icon, title, subtitle.takeIf { it != title }) {
+                sheet.dismiss()
+                session.goBackOrForward(item.offset)
+            })
+        }
+        body.addView(card)
+        val heading = if (backwards) "Historial atrás" else "Historial adelante"
+        sheet = NexoSheets.show(this, NexoSheets.column(this, NexoSheets.header(this, heading), body))
+        return true
+    }
+
     private fun toggleCaptions() {
         val session = attachedSession ?: return
         // Activos: la hoja rápida permite elegir idioma, captura universal y modo, o apagarlos.
@@ -2402,8 +2513,9 @@ class MainActivity :
         val tab = TabManager.activeTab()
         val session = attachedSession
         val active = LiveCaptions.isActive(session)
-        // Mostrar CC solo cuando hay video/audio en la página o subtítulos activos (evita saturar artículos de texto).
-        val hasMediaHere = tab != null && (hasMiniVideo(tab) || BrowserMediaController.isPlaybackActive(tab.id))
+        // Mostrar CC cuando hay video/audio (DOM, MediaController o audio nativo de Chromium incluyendo iframes/WebAudio).
+        val nativeAudio = (session as? com.nexo.browser.engine.cefrium.CefriumEngineSession)?.isPlayingAudio() == true
+        val hasMediaHere = tab != null && (hasMiniVideo(tab) || BrowserMediaController.isPlaybackActive(tab.id) || nativeAudio)
         val available = tab != null && (active || (BrowserPrefs.captionsEnabled(this) && !BrowserPrefs.isNexoHome(tab.url) && hasMediaHere))
         captionsButton.visibility = if (available && !immersive && !isInPictureInPictureMode) View.VISIBLE else View.GONE
         CaptionsUi.styleChip(
