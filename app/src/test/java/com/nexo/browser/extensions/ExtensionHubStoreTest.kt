@@ -133,7 +133,7 @@ class ExtensionHubStoreTest {
         val omaha = ExtensionStoreClient.cwsOmahaUrl("eimadpbcbfnmbkopoojfekhnkhdbieeh")
         assertTrue(omaha.contains("prod=chromecrx"))
         assertTrue(omaha.contains("acceptformat=crx2,crx3"))
-        assertTrue(omaha.contains("prodversion=156.0.0.0"))
+        assertTrue(omaha.contains("prodversion=158.0.0.0"))
         assertTrue(ExtensionStoreClient.cwsDirectRedirectUrl("eimadpbcbfnmbkopoojfekhnkhdbieeh").contains("response=redirect"))
         assertTrue(ExtensionStoreResolver.isAllowedCwsDownloadHost("edgedl.me.gvt1.com"))
         assertTrue(ExtensionStoreResolver.isAllowedCwsDownloadHost("r2.sn-test.gvt2.com"))

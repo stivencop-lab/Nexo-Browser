@@ -13,7 +13,7 @@ android {
     }
     defaultConfig {
         applicationId = if (project.hasProperty("nexoTransition")) "com.ejemplo.navegador" else "com.nexo.browser"
-        // Cefrium 0.21.0 (Chromium 156) exige Android 10.
+        // Cefrium 0.22.0 (Chromium 158) exige Android 10.
         minSdk = 29
         targetSdk = 35
         versionCode = 79
@@ -97,11 +97,12 @@ kotlin {
 
 dependencies {
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
-    // Motor web: Chromium 156 embebido (Cefrium, LGPL-3.0). Hashes verificados
-    // en gradle/cefrium-0.21.0.sha256. Un módulo nativo por ABI publicada.
-    implementation("com.cefrium:cefrium-sdk-core:0.21.0")
-    implementation("com.cefrium:cefrium-native-codecs-arm64-v8a:0.21.0")
-    implementation("com.cefrium:cefrium-native-codecs-armeabi-v7a:0.21.0")
+    // Motor web: Chromium 158 embebido (Cefrium, LGPL-3.0). Hashes verificados
+    // en gradle/cefrium-0.22.0.sha256. Un módulo nativo por ABI publicada.
+    // Desde 0.22.0, cefrium-sdk-core no arrastra Google Play services, Firebase ni ML Kit.
+    implementation("com.cefrium:cefrium-sdk-core:0.22.0")
+    implementation("com.cefrium:cefrium-native-codecs-arm64-v8a:0.22.0")
+    implementation("com.cefrium:cefrium-native-codecs-armeabi-v7a:0.22.0")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.datastore:datastore-preferences:1.1.7")

@@ -198,7 +198,7 @@ object NxrPackageInstaller {
             reasons += "Paquete sin firma criptográfica CRX verificable."
         }
         if (capabilities.level == ExtensionCompatibility.Level.UNSUPPORTED) {
-            reasons += "No contiene content scripts ejecutables compatibles con Cefrium 0.21.0."
+            reasons += "No contiene content scripts ejecutables compatibles con Cefrium 0.22.0."
         }
         if (capabilities.unsupportedApis.isNotEmpty()) {
             reasons += "Solicita APIs sin soporte en Cefrium (${capabilities.unsupportedApis.take(4).joinToString(", ")})."

@@ -43,7 +43,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Cefrium 0.21.0 (Chromium 156) exige JDK 25, compileSdk 37 y AGP 9.4+.
+  # Cefrium 0.22.0 (Chromium 158) exige JDK 25, compileSdk 37 y AGP 9.4+.
   ANDROID_PLATFORM: "37.2"
   BUILD_TOOLS: "37.0.0"
   GRADLE_VERSION: "9.8.2"

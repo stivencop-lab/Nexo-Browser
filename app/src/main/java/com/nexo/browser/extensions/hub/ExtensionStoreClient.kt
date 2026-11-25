@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 object ExtensionStoreClient {
     const val MAX_DOWNLOAD_BYTES = 256L * 1024L * 1024L
     private const val MAX_REDIRECTS = 5
-    private const val CHROME_PROD_VERSION = "156.0.0.0"
+    private const val CHROME_PROD_VERSION = "158.0.0.0"
     private const val STORE_USER_AGENT =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$CHROME_PROD_VERSION Safari/537.36"
 

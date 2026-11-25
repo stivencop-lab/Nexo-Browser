@@ -14,13 +14,13 @@ import java.io.File
  * - Nunca autoriza esquemas internos (`about:`, `chrome:`, `file:`, `data:`, `javascript:`).
  * - En pestañas privadas requiere autorización explícita (`allowInPrivate = true`).
  * - Distingue entre permisos concedidos en instalación, sitios bloqueados por el usuario
- *   y APIs no soportadas bajo las APIs públicas de Cefrium 0.21.0.
+ *   y APIs no soportadas bajo las APIs públicas de Cefrium 0.22.0.
  * Puro sobre [File]: probado en la JVM.
  */
 object NxrPermissions {
     private const val PERMS_FILE = "permissions.json"
 
-    /** APIs cuya ejecución no existe para terceros en la API pública de Cefrium 0.21.0. */
+    /** APIs cuya ejecución no existe para terceros en la API pública de Cefrium 0.22.0. */
     val ENGINE_UNSUPPORTED_APIS: Set<String> = ExtensionCompatibility.UNSUPPORTED_PERMS
 
     data class Policy(
@@ -113,7 +113,7 @@ object NxrPermissions {
         }
     }
 
-    /** Evalúa de forma honesta qué partes del manifiesto puede ejecutar NXR sobre Cefrium 0.21.0. */
+    /** Evalúa de forma honesta qué partes del manifiesto puede ejecutar NXR sobre Cefrium 0.22.0. */
     fun summarizeCapabilities(manifest: ExtensionManifest): CapabilitySummary {
         val report = ExtensionCompatibility.evaluate(manifest)
         val hasSw = manifest.background?.serviceWorker != null

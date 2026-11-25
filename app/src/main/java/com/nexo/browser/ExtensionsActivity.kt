@@ -39,7 +39,7 @@ import java.util.concurrent.Executors
  * - Enlaces HTTPS directos de desarrolladores
  *
  * Muestra de forma honesta el ciclo de vida de 4 estados (Descargada / Instalada /
- * Habilitada / Funcionando) y la matriz real de 20 APIs sobre Cefrium 0.21.0.
+ * Habilitada / Funcionando) y la matriz real de 20 APIs sobre Cefrium 0.22.0.
  */
 class ExtensionsActivity : Activity() {
     private enum class Filter(val label: String) {

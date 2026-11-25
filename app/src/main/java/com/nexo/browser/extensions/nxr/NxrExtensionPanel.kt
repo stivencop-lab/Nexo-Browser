@@ -40,7 +40,7 @@ import java.io.File
 
 /**
  * Visor aislado Nexo UI 5.0 para abrir la interfaz HTML real (`action.default_popup` u `options_page`)
- * de cualquier extensión instalada en NXR sobre las APIs públicas de Cefrium 0.21.0
+ * de cualquier extensión instalada en NXR sobre las APIs públicas de Cefrium 0.22.0
  * (`CefriumProfile.registerContentServer` + `CefriumBrowser.createWithSurface`).
  *
  * Seguridad:
