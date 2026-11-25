@@ -142,6 +142,7 @@ internal object ShieldAiHost {
         val current = browser ?: return@onMain
         EngineDiagnostics.log("IA de PhantomShield: anfitrión cerrado ($reason)")
         browser = null
+        channel?.dispose()
         channel = null
         ready = false
         queue.clear()
@@ -200,14 +201,26 @@ internal object ShieldAiHost {
             override fun onQuery(queryId: Long, request: String, origin: String, isMainFrame: Boolean, callback: CefriumBrowser.QueryCallback): Boolean {
                 if (web !== browser || !isMainFrame) return false
                 val parsed = pageChannel.parse(request) ?: return false
+                val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+                val deliver: (String) -> Unit = { response ->
+                    if (answered.compareAndSet(false, true)) runCatching { callback.success(response) }
+                }
+                if (parsed.message == null) {
+                    if (parsed.wait) pageChannel.awaitEvents(parsed.since, parsed.waiterKey, deliver)
+                    else deliver(pageChannel.envelope(null, parsed.since))
+                    return true
+                }
                 val before = pageChannel.currentSeq()
-                val reply = parsed.message?.let { onMessage(it, web, pageChannel) }
-                callback.success(pageChannel.envelope(reply, parsed.since, before))
+                val sync = java.util.concurrent.atomic.AtomicBoolean(true)
+                onMessage(parsed.message, web, pageChannel) { reply ->
+                    if (sync.get()) deliver(pageChannel.envelope(reply, parsed.since, before))
+                    else deliver(pageChannel.replyEnvelope(reply))
+                }
+                sync.set(false)
                 return true
             }
         }
         web.setQueryHandler(CefriumBrowser.QueryOriginPolicy.exactly(PhantomShield.PANEL_ORIGIN), handler)
-        pageChannel.wake = { main.post { if (!web.isClosed) runCatching { web.evaluateJavaScript("window.__nexoWake&&window.__nexoWake()") } } }
         // Mantener el anfitrión activo aunque su vista no esté adjunta: evita que Chromium pause los temporizadores.
         runCatching { web.onResume(); web.setPageVisible(true) }
         EngineDiagnostics.log("IA de PhantomShield: anfitrión iniciado (${if (hostOffscreen) "fuera de pantalla" else "superficie"})")
@@ -222,18 +235,18 @@ internal object ShieldAiHost {
         return json.toString()
     }
 
-    private fun onMessage(text: String, web: CefriumBrowser, pageChannel: PageChannel): String? {
-        val json = runCatching { JSONObject(text) }.getOrNull() ?: return null
+    private fun onMessage(text: String, web: CefriumBrowser, pageChannel: PageChannel, done: (String?) -> Unit) {
+        val json = runCatching { JSONObject(text) }.getOrNull() ?: return done(null)
         val id = json.optInt("id")
         val payload = json.opt("payload")
-        return when (json.optString("kind")) {
+        when (json.optString("kind")) {
             "ready" -> {
                 ready = true
                 main.removeCallbacks(startTimeout)
                 EngineDiagnostics.log("IA de PhantomShield: anfitrión listo")
                 queue.forEach { pageChannel.push(it) }
                 queue.clear()
-                answer(id, null)
+                done(answer(id, null))
             }
             "reply" -> {
                 val reply = payload as? JSONObject
@@ -243,28 +256,27 @@ internal object ShieldAiHost {
                     timeouts.remove(rid)?.let { main.removeCallbacks(it) }
                     pending.remove(rid)?.invoke(if (result == JSONObject.NULL) null else result)
                 }
-                answer(id, null)
+                done(answer(id, null))
             }
-            "get" -> answer(id, PhantomShield.hostGet(payload))
+            "get" -> done(answer(id, PhantomShield.hostGet(payload)))
             "set" -> {
-                val values = payload as? JSONObject ?: return answer(id, null, "Valores no válidos")
+                val values = payload as? JSONObject ?: return done(answer(id, null, "Valores no válidos"))
                 val allowed = JSONObject()
                 values.keys().forEach { key -> if (key in WRITABLE) allowed.put(key, values.get(key)) }
                 PhantomShield.hostSet(allowed)
-                answer(id, null)
+                done(answer(id, null))
             }
             "remove" -> {
                 PhantomShield.hostRemove(PhantomShield.keysOf(payload).orEmpty().filter { it in WRITABLE })
-                answer(id, null)
+                done(answer(id, null))
             }
             "fetch" -> {
-                val request = payload as? JSONObject ?: return answer(id, null, "Petición no válida")
+                val request = payload as? JSONObject ?: return done(answer(id, null, "Petición no válida"))
                 fetch(request) { result, error ->
-                    if (web === browser) pageChannel.push(answer(id, result, error))
+                    if (web === browser) done(answer(id, result, error))
                 }
-                null
             }
-            else -> answer(id, null, "No disponible")
+            else -> done(answer(id, null, "No disponible"))
         }
     }
 

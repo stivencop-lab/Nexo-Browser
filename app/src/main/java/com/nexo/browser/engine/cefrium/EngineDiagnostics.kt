@@ -39,6 +39,8 @@ object EngineDiagnostics {
     private val rendererCrashes = java.util.concurrent.atomic.AtomicLong(0)
     private val rendererKills = java.util.concurrent.atomic.AtomicLong(0)
     private val surfaceRebinds = java.util.concurrent.atomic.AtomicLong(0)
+    private val surfaceRecoveries = java.util.concurrent.atomic.AtomicLong(0)
+    private val watchdogRecreations = java.util.concurrent.atomic.AtomicLong(0)
     private val bridgeMessages = java.util.concurrent.atomic.AtomicLong(0)
     private val bridgeRejected = java.util.concurrent.atomic.AtomicLong(0)
     private val totalLoadMs = java.util.concurrent.atomic.AtomicLong(0)
@@ -61,6 +63,8 @@ object EngineDiagnostics {
         if (isKill) rendererKills.incrementAndGet() else rendererCrashes.incrementAndGet()
     }
     internal fun recordSurfaceRebind() { surfaceRebinds.incrementAndGet() }
+    internal fun recordSurfaceRecovery() { surfaceRecoveries.incrementAndGet() }
+    internal fun recordWatchdogRecreation() { watchdogRecreations.incrementAndGet() }
     internal fun recordBridgeMessage(accepted: Boolean) {
         if (accepted) bridgeMessages.incrementAndGet() else bridgeRejected.incrementAndGet()
     }
@@ -69,6 +73,7 @@ object EngineDiagnostics {
         val avg = averageLoadMs()
         val timing = if (lastLoadMs >= 0L) " · última=${lastLoadMs}ms (media=${avg}ms)" else ""
         return "cargas=${documentLoads.get()}$timing · rebinds=${surfaceRebinds.get()} · " +
+            "recoveries=${surfaceRecoveries.get()} (watchdog=${watchdogRecreations.get()}) · " +
             "kills=${rendererKills.get()} · crashes=${rendererCrashes.get()} · " +
             "bridge=${bridgeMessages.get()} (rechazados=${bridgeRejected.get()})"
     }
@@ -183,6 +188,11 @@ object EngineDiagnostics {
             appendLine("Traductor: ${TranslatorManager.diagnosticsSummary()}")
             appendLine("NXR Extensiones: ${NxrRuntime.diagnosticsSummary()}")
             appendLine("PhantomShield: ${PhantomShield.diagnostics()}")
+            val sdkDiag = runCatching { Cefrium.diagnostics(context) }.getOrNull()?.trim()
+            if (!sdkDiag.isNullOrEmpty()) {
+                appendLine()
+                appendLine(sdkDiag)
+            }
             appendLine()
             appendLine("Últimos eventos:")
             val lines = synchronized(events) { events.toList() }

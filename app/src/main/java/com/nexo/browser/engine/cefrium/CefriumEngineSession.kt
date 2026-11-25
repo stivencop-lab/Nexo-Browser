@@ -26,6 +26,7 @@ import com.cefrium.CefriumPermissionRequest
 import com.cefrium.CefriumProfile
 import com.cefrium.CefriumRendererTerminationStatus
 import com.cefrium.CefriumSslError
+import com.cefrium.CefriumUserAgentMetadata
 import com.nexo.browser.BrowserPrefs
 import com.nexo.browser.ExtensionManager
 import com.nexo.browser.PagePrompts
@@ -126,7 +127,7 @@ class CefriumEngineSession internal constructor(
     private var mediaPlaying = false
     private var mediaTitle: String? = null
 
-    /** Devuelve el navegador solo si sigue vivo (Cefrium 0.21 lanza IllegalStateException tras close()). */
+    /** Devuelve el navegador solo si sigue vivo (Cefrium lanza IllegalStateException tras close()). */
     private fun liveBrowser(): CefriumBrowser? = browser?.takeIf { !closed && !it.isClosed }
 
     private fun onMain(block: () -> Unit) {
@@ -413,7 +414,11 @@ class CefriumEngineSession internal constructor(
     private fun applyUserAgent(target: CefriumBrowser, destination: String? = currentUrl) {
         val desktop = desktopMode || (!storeDesktopOptOut && ExtensionStoreResolver.usesStoreDesktopProfile(destination))
         if (!target.isClosed && appliedDesktop != desktop) {
-            target.setUserAgentOverride(if (desktop) UserAgents.desktop() else null)
+            if (desktop) {
+                target.setUserAgentOverride(UserAgents.desktop(), UserAgents.desktopMetadata())
+            } else {
+                target.setUserAgentOverride(null)
+            }
             appliedDesktop = desktop
         }
     }
@@ -466,6 +471,17 @@ class CefriumEngineSession internal constructor(
                 else -> target.setPageVisible(false)
             }
         }
+    }
+
+    /**
+     * Reenvía `Activity.onPause()` a Cefrium 0.22.0 durante Picture-in-Picture:
+     * el SDK mantiene la página visible y reproduciendo en PiP, pausa al cerrar la
+     * ventana mini (`onStop`) y recupera la superficie al encender pantalla en Android 10.
+     */
+    internal fun onHostPauseInPip() {
+        if (closed) return
+        val target = liveBrowser()?.takeIf { !it.isClosed } ?: return
+        runCatching { target.onPause() }
     }
 
     /** Oculta la superficie sin pausar ni invocar onResume() mientras la Activity pasa a segundo plano. */
@@ -1000,7 +1016,7 @@ class CefriumEngineSession internal constructor(
 /** Identificación del navegador ante los sitios. */
 internal object UserAgents {
     private fun chromeVersion(): String =
-        runCatching { Cefrium.getChromiumVersion() }.getOrNull()?.takeIf { it.isNotBlank() } ?: "156.0.0.0"
+        runCatching { Cefrium.getChromiumVersion() }.getOrNull()?.takeIf { it.isNotBlank() } ?: "158.0.0.0"
 
     /** La de Chrome para Android (la propia de Chromium, sin cambios). */
     fun mobile(): String =
@@ -1008,12 +1024,35 @@ internal object UserAgents {
 
     fun desktop(): String = desktop("Chrome/" + chromeVersion())
 
+    /**
+     * Client Hints coherentes con modo escritorio (`Sec-CH-UA-Mobile: ?0`,
+     * `Sec-CH-UA-Platform: "Linux"`), para que sitios y tiendas que leen
+     * `navigator.userAgentData` no reciban hints vacíos ni de móvil.
+     */
+    fun desktopMetadata(): CefriumUserAgentMetadata {
+        val full = chromeVersion()
+        val major = full.substringBefore('.').ifBlank { "158" }
+        return CefriumUserAgentMetadata.Builder()
+            .addBrand("Chromium", major)
+            .addBrand("Google Chrome", major)
+            .addBrand("Not_A Brand", "24")
+            .setFullVersion(full)
+            .setPlatform("Linux")
+            .setPlatformVersion("")
+            .setArchitecture("x86")
+            .setModel("")
+            .setMobile(false)
+            .setBitness("64")
+            .addFormFactor("Desktop")
+            .build()
+    }
+
     /** Quita las marcas de WebView ("; wv" y "Version/4.0") de una identificación heredada. */
     fun mobile(base: String): String =
         base.replace("; wv)", ")").replace(Regex("""Version/\d+(\.\d+)* """), "")
 
     fun desktop(base: String): String {
-        val chrome = Regex("""Chrome/([\d.]+)""").find(base)?.groupValues?.get(1) ?: "156.0.0.0"
+        val chrome = Regex("""Chrome/([\d.]+)""").find(base)?.groupValues?.get(1) ?: "158.0.0.0"
         return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chrome Safari/537.36"
     }
 }

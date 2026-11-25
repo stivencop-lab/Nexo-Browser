@@ -1,15 +1,19 @@
 /*
  * Nexo (Chromium/Cefrium): el puerto `__nexoShield` que esperan
  * `media-reporter.js`, `bridge-shim.js` (puente de Nexo) y `phantom-shim.js`,
- * sobre `window.cefriumQuery`.
+ * sobre `window.cefriumQuery` con respuestas asíncronas.
  *
- * Cada mensaje viaja como `{m, s}` y cada respuesta trae la contestación y
- * los eventos que Nexo publicó desde `s` (ver PageChannel.kt). El puerto se
- * define como propiedad configurable para que el shim lo retire de `window`
- * en cuanto lo captura. Nexo decide qué puede pedir cada origen: este código
- * no concede nada por sí mismo.
+ * - Llamadas RPC (`{m, s}`): Nexo responde al instante o conserva el callback
+ *   de `cefriumQuery` y resuelve cuando termina el trabajo asíncrono.
+ * - Eventos push (`{m: null, s, w: true, k}`): una sola consulta aparcada por
+ *   marco que Nexo resuelve en cuanto publica un evento nuevo (sin `setInterval`
+ *   ni sondeos periódicos, también en iframes y en el anfitrión oculto de IA).
+ *
+ * El puerto se define como propiedad configurable para que el shim lo retire de
+ * `window` en cuanto lo captura. Nexo decide qué puede pedir cada origen: este
+ * código no concede nada por sí mismo.
  */
-function nexoCefriumPort(isTop, options) {
+function nexoCefriumPort(isTop, _options) {
   'use strict';
   const query = globalThis.cefriumQuery;
   if (typeof query !== 'function') return false;
@@ -24,15 +28,26 @@ function nexoCefriumPort(isTop, options) {
       configurable: false
     });
   } catch (_) {}
-  const alwaysPoll = Boolean(options && options.alwaysPoll);
-  const pollMs = options && typeof options.pollMs === 'number' && options.pollMs > 0
-    ? options.pollMs
-    : (isTop ? 2000 : 1500);
+
+  function randomKey() {
+    try {
+      if (typeof crypto !== 'undefined' && crypto && typeof crypto.getRandomValues === 'function') {
+        const values = new Uint32Array(3);
+        crypto.getRandomValues(values);
+        return Array.from(values, function(n) { return n.toString(36); }).join('').slice(0, 24);
+      }
+    } catch (_) {}
+    return (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 20) || 'frame';
+  }
+
+  const waiterKey = (isTop ? 't_' : 'f_') + randomKey();
   const listeners = [];
   const seen = createNullObj(null);
   const seenOrder = [];
   let seq = -1;
-  let polling = false;
+  let listening = false;
+  let stopped = false;
+  let failures = 0;
 
   function markSeen(n) {
     if (seen[n]) return false;
@@ -83,10 +98,52 @@ function nexoCefriumPort(isTop, options) {
     }
   }
 
-  function poll() {
-    if (polling) return;
-    polling = true;
-    if (!ask(null, function() { polling = false; })) polling = false;
+  function scheduleListen() {
+    if (stopped || listening) return;
+    if (typeof Promise === 'function') {
+      Promise.resolve().then(listen);
+    } else if (typeof setTimeout === 'function') {
+      setTimeout(listen, 0);
+    }
+  }
+
+  function listen() {
+    if (stopped || listening) return;
+    listening = true;
+    try {
+      const req = createNullObj(null);
+      req.m = null;
+      req.s = seq;
+      req.w = true;
+      req.k = waiterKey;
+      const opts = createNullObj(null);
+      opts.request = jsonStringify(req);
+      opts.onSuccess = function(response) {
+        listening = false;
+        failures = 0;
+        handle(response);
+        scheduleListen();
+      };
+      opts.onFailure = function(code) {
+        listening = false;
+        // -403 = QUERY_ERROR_ORIGIN_DENIED: no reintentar si el origen está denegado.
+        if (code === -403) {
+          stopped = true;
+          return;
+        }
+        failures++;
+        if (failures > 8 || typeof setTimeout !== 'function') {
+          stopped = true;
+          return;
+        }
+        const delay = Math.min(250 * (1 << (failures - 1)), 4000);
+        setTimeout(listen, delay);
+      };
+      query(opts);
+    } catch (_) {
+      listening = false;
+      stopped = true;
+    }
   }
 
   const port = Object.freeze({
@@ -96,17 +153,9 @@ function nexoCefriumPort(isTop, options) {
     addEventListener: function(type, fn) {
       if (type === 'message' && typeof fn === 'function' && !listeners.includes(fn)) listeners.push(fn);
     },
-    wake: poll
+    wake: function() { if (!stopped) listen(); }
   });
   Object.defineProperty(globalThis, '__nexoShield', { value: port, configurable: true, writable: true });
-  if (isTop) {
-    try { Object.defineProperty(globalThis, '__nexoWake', { value: poll, configurable: true }); } catch (_) {}
-  }
-  // Respaldo: Nexo despierta al principal (__nexoWake); el anfitrión oculto
-  // consulta incluso en segundo plano (alwaysPoll) y los iframes cada 1,5 s.
-  setInterval(function() {
-    if (alwaysPoll || (typeof document !== 'undefined' && document.visibilityState !== 'hidden')) poll();
-  }, pollMs);
-  poll();
+  listen();
   return true;
 }

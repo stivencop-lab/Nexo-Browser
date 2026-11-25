@@ -13,7 +13,14 @@ import android.view.View
 import android.widget.ImageView
 import com.cefrium.CefriumBrowser
 
-/** Coordinates the activity, the Android surface and Cefrium's windowed compositor. */
+/**
+ * Red de seguridad temporal para recuperación de superficie tras segundo plano.
+ *
+ * Desde Cefrium 0.22.0 el foco entre `EditText` nativos y el navegador lo
+ * gestiona `CefriumSurfaceContainer`, y PiP gestiona `onPause()` nativamente.
+ * Si el watchdog nunca se dispara en hardware real con 0.22.0 (ver
+ * `EngineDiagnostics` → `watchdog=0`), esta clase podrá retirarse por completo.
+ */
 internal class CefResumeBridge(
     private val overlay: ImageView,
     private val invalidateContainer: () -> Unit,
@@ -21,7 +28,6 @@ internal class CefResumeBridge(
     private val resolveSurface: () -> SurfaceView?,
     private val isMediaActive: () -> Boolean,
     private val onRecoveryChanged: (Boolean) -> Unit,
-    private val shouldFocusBrowser: () -> Boolean = { true },
     private val recreateBrowser: (CefriumBrowser) -> Boolean
 ) : SurfaceHolder.Callback {
     private val main = Handler(Looper.getMainLooper())
@@ -29,7 +35,6 @@ internal class CefResumeBridge(
     private var surface: SurfaceView? = null
     private var tabId: String? = null
     private var resumed = false
-    private var focused = false
     private var pip = false
     private var stopped = false
     private var recovering = false
@@ -51,15 +56,22 @@ internal class CefResumeBridge(
             return@Runnable
         }
         val target = browser ?: run { revealNow(); return@Runnable }
+        val elapsed = SystemClock.uptimeMillis() - wakeTime
+        val media = isMediaActive()
         val action = CefResumePolicy.watchdogAction(
             rebuilt = rebuilt,
-            mediaActive = isMediaActive(),
+            mediaActive = media,
             copyEverSucceeded = copyEverSucceeded
         )
         when (action) {
             CefResumePolicy.WatchdogAction.RECREATE_BROWSER -> {
                 rebuilt = true
-                Log.w(TAG, "No usable surface buffer after ${SystemClock.uptimeMillis() - wakeTime} ms. Recreating Cefrium browser.")
+                EngineDiagnostics.recordWatchdogRecreation()
+                EngineDiagnostics.log(
+                    "CefResumeBridge watchdog disparado tras ${elapsed}ms " +
+                        "(media=$media, copyOk=$copyEverSucceeded, doc=$documentAvailable); recreando navegador"
+                )
+                Log.w(TAG, "No usable surface buffer after $elapsed ms. Recreating Cefrium browser.")
                 cancelProbe()
                 if (!recreateBrowser(target)) {
                     Log.w(TAG, "Cefrium browser recreation failed; revealing live surface.")
@@ -67,7 +79,11 @@ internal class CefResumeBridge(
                 }
             }
             CefResumePolicy.WatchdogAction.REVEAL -> {
-                Log.w(TAG, "Watchdog revealing live surface (rebuilt=$rebuilt, media=${isMediaActive()}, copyOk=$copyEverSucceeded).")
+                EngineDiagnostics.log(
+                    "CefResumeBridge watchdog reveló superficie tras ${elapsed}ms " +
+                        "(rebuilt=$rebuilt, media=$media, copyOk=$copyEverSucceeded)"
+                )
+                Log.w(TAG, "Watchdog revealing live surface (rebuilt=$rebuilt, media=$media, copyOk=$copyEverSucceeded).")
                 revealNow()
             }
         }
@@ -105,10 +121,9 @@ internal class CefResumeBridge(
         if (browser != null) cover()
     }
 
-    fun onResume(hasWindowFocus: Boolean) {
+    fun onResume() {
         stopped = false
         resumed = true
-        focused = hasWindowFocus
         if (!pip) {
             // Reasegurar visibilidad del compositor aunque no hubiera cubierta pendiente (p. ej. tras cerrar PiP).
             ensureBrowserVisible()
@@ -117,13 +132,8 @@ internal class CefResumeBridge(
     }
 
     fun onWindowFocusChanged(hasFocus: Boolean) {
-        focused = hasFocus
-        if (hasFocus) {
-            if (CefResumePolicy.shouldFocusBrowser(hasFocus, !shouldFocusBrowser())) {
-                runCatching { browser?.takeUnless { it.isClosed }?.setFocus(true) }
-            }
-            wakeIfReady()
-        }
+        // Cefrium 0.22.0 gestiona el foco de ventana en CefriumSurfaceContainer sin robarlo a EditText.
+        if (hasFocus) wakeIfReady()
     }
 
     fun onPictureInPictureChanged(enabled: Boolean) {
@@ -215,11 +225,9 @@ internal class CefResumeBridge(
         val target = browser?.takeUnless { it.isClosed } ?: return
         val view = currentSurface()
         if (view == null || !surfaceReady(view)) return
-        val allowFocus = CefResumePolicy.shouldFocusBrowser(focused, !shouldFocusBrowser())
         runCatching {
             target.onResume()
             target.setPageVisible(true)
-            if (allowFocus) target.setFocus(true)
             target.invalidate()
             invalidateContainer()
         }.onFailure { Log.w(TAG, "Cefrium visibility restore failed", it) }
@@ -263,11 +271,9 @@ internal class CefResumeBridge(
     private fun wakeIfReady() {
         if (armed || !canProbe()) return
         val target = browser?.takeUnless { it.isClosed } ?: return
-        val allowFocus = CefResumePolicy.shouldFocusBrowser(focused, !shouldFocusBrowser())
         runCatching {
             target.onResume()
             target.setPageVisible(true)
-            if (allowFocus) target.setFocus(true)
             target.invalidate()
             invalidateContainer()
         }.onFailure { Log.w(TAG, "Cefrium wakeup failed", it) }
@@ -298,6 +304,7 @@ internal class CefResumeBridge(
                 elapsedMs = elapsed
             )
             if (accepted) {
+                EngineDiagnostics.recordSurfaceRecovery()
                 Log.d(TAG, "Surface buffer available in $elapsed ms (black=$black, media=${isMediaActive()})")
                 revealNow()
             } else {

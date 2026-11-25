@@ -37,9 +37,6 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
     }
     internal var onBackdropInvalidated: (() -> Unit)? = null
     internal var onRecoveryStateChanged: ((Boolean) -> Unit)? = null
-    internal var isNativeInputFocused: () -> Boolean = { false }
-    private fun hasNativeTextInputFocus(): Boolean =
-        isNativeInputFocused() || (context as? Activity)?.currentFocus is android.widget.EditText
 
     private val resumeBridge = CefResumeBridge(
         overlay = snapshotOverlay,
@@ -51,7 +48,6 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
             activeTab != null && BrowserMediaController.shouldKeepAlive(activeTab.id, 10_000L)
         },
         onRecoveryChanged = { recovering -> onRecoveryStateChanged?.invoke(recovering) },
-        shouldFocusBrowser = { !hasNativeTextInputFocus() },
         recreateBrowser = { browser -> current?.recreateSurface(browser) == true }
     )
 
@@ -62,7 +58,7 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
     internal fun selectTab(id: String) = resumeBridge.selectTab(id)
     internal fun onHostPause() = resumeBridge.onPause()
     internal fun onHostStop() = resumeBridge.onStop()
-    internal fun onHostResume() = resumeBridge.onResume(hasWindowFocus())
+    internal fun onHostResume() = resumeBridge.onResume()
     internal fun onRendererTerminated(browser: CefriumBrowser) = resumeBridge.onRendererTerminated(browser)
     internal fun onDocumentChanged(browser: CefriumBrowser) = resumeBridge.onDocumentChanged(browser)
     internal fun onDocumentAvailable(browser: CefriumBrowser) = resumeBridge.onDocumentAvailable(browser)
@@ -100,9 +96,10 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
         renderingSurface = findSurface(container)
         resumeBridge.bind(browser, renderingSurface)
         // Garantiza que una pestaña recién activada o tomada del SpareRendererPool sea visible inmediatamente.
+        // En Cefrium 0.22.0, onResume() no roba el foco a EditText nativos.
         if (session.isActiveSession() && !browser.isClosed) {
             runCatching {
-                if (!hasNativeTextInputFocus()) browser.onResume()
+                browser.onResume()
                 browser.setPageVisible(true)
                 browser.invalidate()
             }

@@ -232,6 +232,7 @@ object PhantomShield {
         /** Libera temporizadores, respuestas pendientes y referencias al cerrar la pestaña. */
         internal fun dispose() {
             answers.clear()
+            channel.dispose()
             session = null
             synchronized(logLock) { logRing.clear() }
             tabs.removeAll { it.get() == null || it.get() === this }
@@ -731,6 +732,13 @@ object PhantomShield {
 
     // --- Scripts y puente ---
 
+    private fun singleShot(callback: CefriumBrowser.QueryCallback): (String) -> Unit {
+        val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        return { response ->
+            if (answered.compareAndSet(false, true)) runCatching { callback.success(response) }
+        }
+    }
+
     /**
      * Scripts de contenido y puente en un navegador nuevo, antes de su primera
      * navegación. El puente admite todos los orígenes y marcos: igual que con
@@ -747,13 +755,10 @@ object PhantomShield {
                 onQuery(queryId, request, origin, true, callback)
 
             override fun onQuery(queryId: Long, request: String, origin: String, isMainFrame: Boolean, callback: CefriumBrowser.QueryCallback): Boolean {
-                callback.success(onPageQuery(tab, request, origin, isMainFrame))
+                onPageQuery(tab, request, origin, isMainFrame, singleShot(callback))
                 return true
             }
         })
-        tab.channel.wake = {
-            main.post { if (!browser.isClosed) runCatching { browser.evaluateJavaScript("window.__nexoWake&&window.__nexoWake()") } }
-        }
     }
 
     /** Panel: el puente con todos los permisos, solo para su propio origen. */
@@ -768,16 +773,28 @@ object PhantomShield {
             override fun onQuery(queryId: Long, request: String, origin: String, isMainFrame: Boolean, callback: CefriumBrowser.QueryCallback): Boolean {
                 if (!isMainFrame) return false
                 val parsed = channel.parse(request) ?: return false
+                val deliver = singleShot(callback)
+                if (parsed.message == null) {
+                    if (parsed.wait) channel.awaitEvents(parsed.since, parsed.waiterKey, deliver)
+                    else deliver(channel.envelope(null, parsed.since))
+                    return true
+                }
                 val before = channel.currentSeq()
-                val reply = parsed.message?.let { onPanelMessage(it, channel, onClose) }
-                callback.success(channel.envelope(reply, parsed.since, before))
+                val sync = java.util.concurrent.atomic.AtomicBoolean(true)
+                onPanelMessage(parsed.message, channel, onClose) { reply ->
+                    if (sync.get()) deliver(channel.envelope(reply, parsed.since, before))
+                    else deliver(channel.replyEnvelope(reply))
+                }
+                sync.set(false)
                 return true
             }
         })
-        channel.wake = { main.post { if (!browser.isClosed) runCatching { browser.evaluateJavaScript("window.__nexoWake&&window.__nexoWake()") } } }
     }
 
-    internal fun detachPanel() { panelChannel = null }
+    internal fun detachPanel() {
+        panelChannel?.dispose()
+        panelChannel = null
+    }
 
     /** Script de inicio del anfitrión de IA ([ShieldAiHost]). */
     internal fun aiHostScript(): String = scripts.aiHost
@@ -810,17 +827,38 @@ object PhantomShield {
         return json.toString()
     }
 
-    /** Consulta de un marco de [tab] (hilo principal): la respuesta inmediata y los eventos pendientes. */
-    internal fun onPageQuery(tab: ShieldTab, request: String, origin: String, isMainFrame: Boolean): String {
-        val parsed = tab.channel.parse(request) ?: return tab.channel.envelope(null, -1)
+    /** Consulta de un marco de [tab] (hilo principal): responde al instante o conserva [deliver] hasta tener respuesta/eventos. */
+    internal fun onPageQuery(
+        tab: ShieldTab,
+        request: String,
+        origin: String,
+        isMainFrame: Boolean,
+        deliver: (String) -> Unit
+    ) {
+        val parsed = tab.channel.parse(request) ?: return deliver(tab.channel.envelope(null, -1))
+        if (parsed.message == null) {
+            if (parsed.wait) tab.channel.awaitEvents(parsed.since, parsed.waiterKey, deliver)
+            else deliver(tab.channel.envelope(null, parsed.since))
+            return
+        }
         val before = tab.channel.currentSeq()
-        val reply = parsed.message?.let { onPageMessage(tab, it, origin, isMainFrame) }
-        return tab.channel.envelope(reply, parsed.since, before)
+        val sync = java.util.concurrent.atomic.AtomicBoolean(true)
+        onPageMessage(tab, parsed.message, origin, isMainFrame) { reply ->
+            if (sync.get()) deliver(tab.channel.envelope(reply, parsed.since, before))
+            else deliver(tab.channel.replyEnvelope(reply))
+        }
+        sync.set(false)
     }
 
     /** Mensajes de las páginas: solo estado de bloqueo y selectores; ni estadísticas ni ajustes. */
-    private fun onPageMessage(tab: ShieldTab, message: String, origin: String, isMainFrame: Boolean): String? {
-        val call = parse(message) ?: return null
+    private fun onPageMessage(
+        tab: ShieldTab,
+        message: String,
+        origin: String,
+        isMainFrame: Boolean,
+        done: (String?) -> Unit
+    ) {
+        val call = parse(message) ?: return done(null)
         if (isMainFrame && tab.topHost == null && (origin.startsWith("http://") || origin.startsWith("https://"))) {
             tab.onLocation(origin)
         }
@@ -830,23 +868,21 @@ object PhantomShield {
         if (call.kind == "bridge") {
             val payload = call.payload as? JSONObject
             if (session != null && payload != null) PageBridge.onMessage(session, frame, isMainFrame, payload)
-            return null
+            done(null)
+            return
         }
         if (call.kind == "bridge_call") {
             val payload = call.payload as? JSONObject
-            if (session == null || payload == null) return answer(call.id, null)
-            // Respuesta inmediata, o más tarde por el canal (la página la espera por su id).
-            var sync = true
-            var early: Any? = PageBridge.LATER
+            if (session == null || payload == null) return done(answer(call.id, null))
+            // Respuesta inmediata, o diferida directamente sobre el QueryCallback de cefriumQuery.
             val result = PageBridge.onCall(session, isMainFrame, payload) { value ->
-                if (sync) early = value else tab.channel.push(answer(call.id, value))
+                done(answer(call.id, value))
             }
-            sync = false
-            if (result !== PageBridge.LATER) return answer(call.id, result)
-            return if (early !== PageBridge.LATER) answer(call.id, early) else null
+            if (result !== PageBridge.LATER) done(answer(call.id, result))
+            return
         }
         if (call.kind == "nxr_storage" || call.kind == "nxr_message" || call.kind == "nxr_error") {
-            if (session == null) return answer(call.id, null, "Sesión no disponible.")
+            if (session == null) return done(answer(call.id, null, "Sesión no disponible."))
             val reply = com.nexo.browser.extensions.nxr.NxrRuntime.onPageMessage(
                 sessionKey = session.sessionUid.toInt(),
                 docGen = session.documentGeneration(),
@@ -856,9 +892,10 @@ object PhantomShield {
                 kind = call.kind,
                 payload = call.payload as? JSONObject
             )
-            return answer(call.id, reply.result, reply.error)
+            done(answer(call.id, reply.result, reply.error))
+            return
         }
-        return when (call.kind) {
+        when (call.kind) {
             "get" -> {
                 val all = store.get(JSONObject().apply { PAGE_READABLE.forEach { put(it, defaultSetting(it)) } })
                 // Reflejar también las preferencias globales de privacidad/GPC de Ajustes de Nexo.
@@ -869,22 +906,17 @@ object PhantomShield {
                 all.keys().forEach { key -> if (requested == null || key in requested) result.put(key, all.get(key)) }
                 val defaults = call.payload as? JSONObject
                 defaults?.keys()?.forEach { key -> if (!result.has(key)) result.put(key, defaults.get(key)) }
-                answer(call.id, result)
+                done(answer(call.id, result))
             }
             "message" -> {
-                val payload = call.payload as? JSONObject ?: return answer(call.id, null)
+                val payload = call.payload as? JSONObject ?: return done(answer(call.id, null))
                 if (payload.optString("type") == "AI_CLASSIFY") {
-                    // Respuesta inmediata (p. ej. IA apagada) o más tarde por el canal de la pestaña.
-                    var immediate: String? = null
-                    var sync = true
                     classify(tab, payload, origin, isMainFrame) { result ->
-                        val text = answer(call.id, result)
-                        if (sync) immediate = text else tab.channel.push(text)
+                        done(answer(call.id, result))
                     }
-                    sync = false
-                    return immediate
+                    return
                 }
-                answer(call.id, pageMessage(tab, payload, origin, isMainFrame))
+                done(answer(call.id, pageMessage(tab, payload, origin, isMainFrame)))
             }
             "reply" -> {
                 // Respuesta de la página a una petición del panel (solo las que Nexo espera de esta pestaña).
@@ -894,9 +926,9 @@ object PhantomShield {
                     tab.replyTimeouts.remove(rid)?.let { main.removeCallbacks(it) }
                     tab.replies.remove(rid)?.invoke(reply.opt("result").takeIf { it != JSONObject.NULL })
                 }
-                answer(call.id, null)
+                done(answer(call.id, null))
             }
-            else -> answer(call.id, null, "No disponible")
+            else -> done(answer(call.id, null, "No disponible"))
         }
     }
 
@@ -1121,10 +1153,15 @@ object PhantomShield {
     private fun strings(array: JSONArray?): List<String> =
         if (array == null) emptyList() else (0 until minOf(array.length(), 2000)).mapNotNull { array.opt(it) as? String }
 
-    /** Mensajes del panel: respuesta inmediata, o `null` si llegará después por [channel]. */
-    private fun onPanelMessage(message: String, channel: PageChannel, onClose: () -> Unit): String? {
-        val call = parse(message) ?: return null
-        return when (call.kind) {
+    /** Mensajes del panel: responde al instante o conserva [done] hasta terminar el trabajo asíncrono. */
+    private fun onPanelMessage(
+        message: String,
+        @Suppress("UNUSED_PARAMETER") channel: PageChannel,
+        onClose: () -> Unit,
+        done: (String?) -> Unit
+    ) {
+        val call = parse(message) ?: return done(null)
+        when (call.kind) {
             "get" -> {
                 val keys = call.payload
                 val result = store.get(if (keys == null || keys == JSONObject.NULL) null else keys)
@@ -1136,18 +1173,18 @@ object PhantomShield {
                 if (!result.has("protectionLevel") && (keys == null || keys == JSONObject.NULL || requestedKeys(keys)?.contains("protectionLevel") == true)) {
                     result.put("protectionLevel", effectiveProtectionLevel())
                 }
-                answer(call.id, com.nexo.browser.ai.AiHub.overlayShieldRead(com.nexo.browser.AppContext.getOrNull(), result))
+                done(answer(call.id, com.nexo.browser.ai.AiHub.overlayShieldRead(com.nexo.browser.AppContext.getOrNull(), result)))
             }
             "set" -> {
-                val values = call.payload as? JSONObject ?: return answer(call.id, null, "Valores no válidos")
+                val values = call.payload as? JSONObject ?: return done(answer(call.id, null, "Valores no válidos"))
                 val allowed = JSONObject()
                 values.keys().forEach { key -> if (key in PANEL_WRITABLE) allowed.put(key, values.get(key)) }
                 store.set(com.nexo.browser.ai.AiHub.stripShieldWrite(com.nexo.browser.AppContext.getOrNull(), allowed))
-                answer(call.id, null)
+                done(answer(call.id, null))
             }
             "remove" -> {
                 store.remove(requestedKeys(call.payload).orEmpty().filter { it in PANEL_WRITABLE })
-                answer(call.id, null)
+                done(answer(call.id, null))
             }
             "tabs.query" -> {
                 val session = TabManager.activeSession() as? CefriumEngineSession
@@ -1155,41 +1192,35 @@ object PhantomShield {
                 val url = TabManager.activeTab()?.url.orEmpty()
                 val list = JSONArray()
                 if (tab != null) list.put(JSONObject().put("id", tab.id).put("url", url).put("active", true).put("incognito", tab.isPrivate))
-                answer(call.id, list)
+                done(answer(call.id, list))
             }
             "tabs.reload" -> {
                 TabManager.activeSession()?.reload(false)
-                answer(call.id, null)
+                done(answer(call.id, null))
             }
             "tabs.sendMessage" -> {
-                val request = call.payload as? JSONObject ?: return answer(call.id, null, "Petición no válida")
+                val request = call.payload as? JSONObject ?: return done(answer(call.id, null, "Petición no válida"))
                 val msg = request.optJSONObject("message")
                 val tab = tabs.mapNotNull { it.get() }.firstOrNull { it.id == request.optInt("tabId", -1) }
                 val type = msg?.optString("type")
-                if (tab == null || (type != "AI_SCAN" && type != "START_ZAPPER")) return answer(call.id, null, "No disponible")
+                if (tab == null || (type != "AI_SCAN" && type != "START_ZAPPER")) return done(answer(call.id, null, "No disponible"))
                 if (type == "START_ZAPPER") {
                     tab.channel.push(JSONObject().put("event", "message").put("message", JSONObject().put("type", "START_ZAPPER")).toString())
                     main.post(onClose)
-                    return answer(call.id, JSONObject().put("ok", true))
+                    return done(answer(call.id, JSONObject().put("ok", true)))
                 }
-                askTab(tab, msg) { result -> channel.push(answer(call.id, result)) }
-                null
+                askTab(tab, msg) { result -> done(answer(call.id, result)) }
             }
-            "openOptions" -> if (com.nexo.browser.PhantomShieldPanel.openOptions()) answer(call.id, null)
-                else answer(call.id, null, "No se pudieron abrir los ajustes de IA.")
+            "openOptions" -> if (com.nexo.browser.PhantomShieldPanel.openOptions()) done(answer(call.id, null))
+                else done(answer(call.id, null, "No se pudieron abrir los ajustes de IA."))
             "message" -> {
-                val payload = call.payload as? JSONObject ?: return answer(call.id, null)
-                var immediate: String? = null
-                var sync = true
+                val payload = call.payload as? JSONObject ?: return done(answer(call.id, null))
                 panelMessage(payload, onClose) { result ->
-                    val text = answer(call.id, result)
-                    if (sync) immediate = text else channel.push(text)
+                    done(answer(call.id, result))
                 }
-                sync = false
-                immediate
             }
-            "close" -> { main.post(onClose); answer(call.id, null) }
-            else -> answer(call.id, null, "No disponible")
+            "close" -> { main.post(onClose); done(answer(call.id, null)) }
+            else -> done(answer(call.id, null, "No disponible"))
         }
     }
 
@@ -1416,7 +1447,7 @@ object PhantomShield {
         val aiHost: String = buildString {
             append("if (location.pathname === '/host/ai-host.html') {\n")
             append(port).append('\n')
-            append("nexoCefriumPort(true, { alwaysPoll: true, pollMs: 1000 });\n")
+            append("nexoCefriumPort(true);\n")
             append(hostShim).append('\n')
             append("globalThis.browser = nexoAiHostShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n}\n")
         }

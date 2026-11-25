@@ -75,9 +75,6 @@ function nexoBridgeShim(port, isTop) {
     postMessage: function(message) {
       if (!message || typeof message !== 'object') return;
       send('bridge', message);
-      if (!isTop && message.type === 'captions_offer' && typeof port.wake === 'function' && typeof setTimeout === 'function') {
-        setTimeout(function() { try { port.wake(); } catch (_) {} }, 250);
-      }
     },
     disconnect: function() {},
     onMessage: event(messageListeners),
