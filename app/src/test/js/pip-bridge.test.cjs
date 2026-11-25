@@ -258,7 +258,7 @@ test('live captions record compressed audio only while the video plays', async (
   h.captions(true); await flush(); await flush();
   assert.equal(audio.sources.length, 1, 'audio taken from the video element');
   const recorder = audio.recorders[0];
-  assert.equal(recorder.state, 'recording'); assert.equal(recorder.slice, 250);
+  assert.equal(recorder.state, 'recording'); assert.equal(recorder.slice, 125);
   assert.equal(recorder.options.audioBitsPerSecond, 24000);
   assert.ok(h.reports.some(x => x.type === 'captions_start'));
   recorder.ondataavailable({ data: { size: 3, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } });

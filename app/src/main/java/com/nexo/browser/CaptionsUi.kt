@@ -134,12 +134,12 @@ object CaptionsUi {
         }
         val background = if (hint) "hint" else BrowserPrefs.captionBackground(activity)
         val color = if (BrowserPrefs.captionColor(activity) == "yellow" && !hint) 0xFFFFE45C.toInt() else Color.WHITE
-        val lines = BrowserPrefs.captionLines(activity)
-        val maxLines = when {
-            pip -> minOf(lines, 2)
-            display.secondary.isNotBlank() -> lines + 1
-            else -> lines
-        }
+        val lines = BrowserPrefs.captionLines(activity).let { if (pip) minOf(it, 2) else it }
+        val pending = lastLines(display.pending, if (pip) 1 else lines)
+        val pendingLines = if (pending.isBlank()) 0 else 1 + pending.count { it == '\n' }
+        val primary = lastLines(display.primary, lines - pendingLines)
+        val secondary = if (pip) "" else lastLines(display.secondary, 1)
+        val maxLines = lines + if (secondary.isNotBlank()) 1 else 0
         val padH = dp(activity, when { pip -> 7f; compactInline -> 9f; else -> 10f })
         val padV = dp(activity, when { pip -> 3f; compactInline -> 4f; else -> 5f })
         val radiusDp = when { pip -> 6f; compactInline -> 7.5f; else -> 8.5f }
@@ -171,20 +171,20 @@ object CaptionsUi {
             view.maxLines = maxLines
         }
         val text = SpannableStringBuilder()
-        if (display.primary.isNotBlank()) text.append(display.primary)
-        if (display.pending.isNotBlank()) {
-            if (text.isNotEmpty()) text.append(' ')
+        if (primary.isNotBlank()) text.append(primary)
+        if (pending.isNotBlank()) {
+            if (text.isNotEmpty()) text.append(if (pip) ' ' else '\n')
             val start = text.length
-            text.append(display.pending)
+            text.append(pending)
             // Lo que aún se está transcribiendo o traduciendo, algo más tenue.
-            text.setSpan(ForegroundColorSpan(0xC8E5E7EB.toInt()), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            text.setSpan(ForegroundColorSpan(0xFFE5E7EB.toInt()), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        if (display.secondary.isNotBlank() && !pip) {
+        if (secondary.isNotBlank()) {
             // Modo "ambos": el original debajo, más pequeño.
-            text.append('\n')
+            if (text.isNotEmpty()) text.append('\n')
             val start = text.length
-            text.append(display.secondary)
-            text.setSpan(ForegroundColorSpan(0xB3CBD5E1.toInt()), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            text.append(secondary)
+            text.setSpan(ForegroundColorSpan(0xFFD2DAE5.toInt()), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             text.setSpan(android.text.style.RelativeSizeSpan(0.8f), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         view.text = text
@@ -214,6 +214,17 @@ object CaptionsUi {
         }
         view.setTag(R.id.nexo_caption_area, intArrayOf(area.top, area.bottom))
         view.visibility = View.VISIBLE
+    }
+
+    /** Prioriza las líneas más recientes para que "1 línea" no oculte el texto en curso. */
+    private fun lastLines(text: String, limit: Int): String {
+        if (limit <= 0) return ""
+        var start = text.length
+        repeat(limit) {
+            start = text.lastIndexOf('\n', start - 1)
+            if (start < 0) return text
+        }
+        return text.substring(start + 1)
     }
 
     /**
@@ -304,7 +315,8 @@ object CaptionsUi {
         LiveCaptions.isTrackMode(session) -> "Subtítulos del propio video · sin consumo de Deepgram"
         LiveCaptions.isDomMode(session) -> "Subtítulos del reproductor · sin consumo de Deepgram"
         LiveCaptions.state(session) == LiveCaptions.State.LISTENING -> "Escuchando · " + LiveCaptions.usageText(activity)
-        LiveCaptions.state(session) == LiveCaptions.State.CONNECTING -> "Conectando con Deepgram…"
+        LiveCaptions.state(session) == LiveCaptions.State.CONNECTING ->
+            LiveCaptions.message(session) ?: "Conectando con Deepgram…"
         LiveCaptions.state(session) == LiveCaptions.State.ERROR -> LiveCaptions.message(session) ?: "Error"
         else -> "En espera: empieza al reproducir el video"
     }
@@ -375,6 +387,15 @@ object CaptionsUi {
                 )
             }
             addView(topRow)
+            addView(TextView(activity).apply {
+                text = stateText(activity, session)
+                textSize = 14f
+                setTextColor(if (LiveCaptions.state(session) == LiveCaptions.State.ERROR) p.danger else p.text)
+                setPadding(0, dp(activity, 6f), 0, 0)
+            })
+            if (LiveCaptions.speakerDetectionUnavailable(session)) {
+                addView(NexoUi.note(activity, "Deepgram rechazó la detección de hablantes. Los subtítulos siguen activos."))
+            }
 
             if (LiveCaptions.usingDeviceAudio(session)) {
                 val meterBg = android.widget.ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -402,6 +423,13 @@ object CaptionsUi {
             }
         }
         body.addView(statusCard)
+        if (activity is MainActivity && LiveCaptions.canRetry(session)) {
+            body.addView(NexoUi.button(activity, "Reintentar", primary = true) {
+                sheet.dismiss()
+                LiveCaptions.retry(activity, session) { PlaybackAudioCapture.request(activity) }
+                onChange()
+            }, NexoUi.buttonParams(activity, 10f))
+        }
 
         // Acción destacada en un toque para capturar TODO el audio con Android (videos, iframes, streams, podcasts).
         if (activity is MainActivity && android.os.Build.VERSION.SDK_INT >= 29 && !LiveCaptions.usingDeviceAudio(session)) {
@@ -575,6 +603,12 @@ object CaptionsUi {
             "Si el video no trae subtítulos de texto, enviar su audio a Deepgram directamente. Apagado: Nexo pregunta antes.", audioAuto) {
             audioAuto = it
         })
+        val previousSpeakerDetection = BrowserPrefs.captionSpeakerDetection(activity)
+        var separateSpeakers = previousSpeakerDetection
+        body.addView(NexoUi.switchRow(activity, "Detectar cambios de hablante",
+            "Marca los cambios de voz en el audio transcrito. Deepgram puede cobrar un suplemento.", separateSpeakers) {
+            separateSpeakers = it
+        })
         var preferDeviceAudio = BrowserPrefs.captionPreferDeviceAudio(activity)
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             body.addView(NexoUi.switchRow(activity, "Priorizar captura universal de Android",
@@ -679,6 +713,7 @@ object CaptionsUi {
             BrowserPrefs.setCaptionHideOriginal(activity, hideOriginal)
             BrowserPrefs.setCaptionDailyLimit(activity, limit)
             BrowserPrefs.setCaptionAudioAuto(activity, audioAuto)
+            BrowserPrefs.setCaptionSpeakerDetection(activity, separateSpeakers)
             BrowserPrefs.setCaptionPreferDeviceAudio(activity, preferDeviceAudio)
             if (friendlyAudio != BrowserPrefs.captureFriendlyAudio(activity)) {
                 BrowserPrefs.setCaptureFriendlyAudio(activity, friendlyAudio)
@@ -693,6 +728,7 @@ object CaptionsUi {
             BrowserPrefs.setAiTranslate2Model(activity, ai2ModelField.text.toString())
             BrowserPrefs.setAiTranslate2Endpoint(activity, if (ai2Provider == "custom") ai2EndpointField.text.toString() else "")
             BrowserPrefs.setAiTranslate2Key(activity, ai2KeyField.text.toString())
+            if (separateSpeakers != previousSpeakerDetection) LiveCaptions.reapply(activity)
             sheet.dismiss()
             onSaved()
         }, NexoUi.buttonParams(activity, 14f))

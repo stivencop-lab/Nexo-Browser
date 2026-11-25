@@ -193,6 +193,100 @@ class CaptionProtocolTest {
         assertTrue("reset restores burst capacity", limiter.tryAcquire(2000L))
     }
 
+    @Test fun silenceDoesNotRenewReconnectBudget() {
+        val budget = CaptionReconnectBudget()
+        repeat(3) { attempt ->
+            assertEquals(attempt, budget.next(3))
+            budget.onTranscript("  ")
+        }
+        assertNull(budget.next(3))
+        budget.onTranscript("Hola")
+        assertEquals(0, budget.next(3))
+    }
+
+    @Test fun speakerDetectionIsAnOptInForBothAudioSources() {
+        assertFalse(CaptionProtocol.listenUrl("es").contains("diarize_model"))
+        assertTrue(CaptionProtocol.listenUrl("multi", separateSpeakers = true).contains("&diarize_model=latest"))
+        val pcm = PlaybackPcm.listenUrl("es", "nova-2", separateSpeakers = true)
+        assertTrue(pcm.contains("&diarize_model=latest&encoding=linear16"))
+    }
+
+    @Test fun confirmedWordsSeparateSpeakersWithoutSendingMarkersToTheTranslator() {
+        val transcript = CaptionProtocol.parseResult("""
+            {"type":"Results","start":0,"duration":2,"is_final":true,"speech_final":true,
+             "channel":{"alternatives":[{"transcript":"Hola. ¿Qué tal?","words":[
+               {"word":"hola","punctuated_word":"Hola.","start":0.05,"end":0.5,"speaker":0},
+               {"word":"qué","punctuated_word":"¿Qué","start":0.55,"end":0.8,"speaker":1},
+               {"word":"tal","punctuated_word":"tal?","start":0.8,"end":1.1,"speaker":1}
+             ]}]}}
+        """.trimIndent())!!
+        val text = CaptionText()
+        text.onSpeechTranscript(transcript.copy(isFinal = false))
+        assertEquals("Hola. ¿Qué tal?", text.view("original", translating = false).pending)
+        assertEquals(listOf(0, 1, 1), transcript.words.map { it.speaker })
+        val (a, b) = text.onSpeechTranscript(transcript)
+        assertEquals("Hola.", a.original)
+        assertEquals("¿Qué tal?", b.original)
+        assertEquals("Hola.\n— ¿Qué tal?", text.view("original", translating = false).primary)
+        text.setTranslation(a.id, "Hello.")
+        text.setTranslation(b.id, "How are you?")
+        assertEquals(CaptionDisplay("Hello.\n— How are you?", "", "Hola.\n— ¿Qué tal?"),
+            text.view("both", translating = true))
+    }
+
+    @Test fun aShortEndpointDoesNotBreakTheLineButALongGapInsideAResultDoes() {
+        val text = CaptionText()
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Hola", true, true, listOf(
+            CaptionProtocol.Word("Hola", 0.0, 0.2, 0)
+        ), 0.45))
+        text.onSpeechTranscript(CaptionProtocol.Transcript("amiga. Bienvenida.", true, false, listOf(
+            CaptionProtocol.Word("amiga.", 0.5, 0.8, 0),
+            CaptionProtocol.Word("Bienvenida.", 1.5, 1.8, 0)
+        ), 1.9))
+        assertEquals("Hola amiga.\nBienvenida.", text.view("original", translating = false).primary)
+    }
+
+    @Test fun recognizesAnUtteranceEndOnlyForTheLatestFinishedWords() {
+        val text = CaptionText()
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Uno.", true, false, listOf(
+            CaptionProtocol.Word("Uno.", 0.4, 0.9, null)
+        ), 0.9))
+        text.onUtteranceEnd(0.2)
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Dos.", true, false, listOf(
+            CaptionProtocol.Word("Dos.", 1.1, 1.3, null)
+        ), 1.3))
+        assertEquals("Uno. Dos.", text.view("original", translating = false).primary)
+        text.onUtteranceEnd(1.3)
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Tres.", true, false))
+        assertEquals("Uno. Dos.\nTres.", text.view("original", translating = false).primary)
+        assertNull(CaptionProtocol.parseMessage("""{"type":"UtteranceEnd","last_word_end":-1}"""))
+    }
+
+    @Test fun thePartOfAnInterimAfterTheFinalResultRemainsVisible() {
+        val text = CaptionText()
+        val first = CaptionProtocol.Word("Hola", 0.1, 0.4, null)
+        val second = CaptionProtocol.Word("mundo", 0.9, 1.2, null)
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Hola mundo", false, false, listOf(first, second), 1.3))
+        text.onSpeechTranscript(CaptionProtocol.Transcript("", false, false, end = 1.35))
+        assertEquals("Hola mundo", text.interimText)
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Hola", true, true, listOf(first), 0.7))
+        assertEquals(CaptionDisplay("Hola", "mundo"), text.view("original", translating = false))
+        text.onSpeechTranscript(CaptionProtocol.Transcript("mundo", true, true, listOf(second), 1.3))
+        assertEquals(CaptionDisplay("Hola\nmundo", ""), text.view("original", translating = false))
+    }
+
+    @Test fun resetOfTheStreamClockDoesNotCompareSpeakerIdsAcrossConnections() {
+        val text = CaptionText()
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Antes.", true, false, listOf(
+            CaptionProtocol.Word("Antes.", 40.0, 41.0, 2)
+        ), 41.0))
+        text.resetSpeechClock()
+        text.onSpeechTranscript(CaptionProtocol.Transcript("Después.", true, false, listOf(
+            CaptionProtocol.Word("Después.", 0.0, 0.6, 0)
+        ), 0.6))
+        assertEquals("Antes.\nDespués.", text.view("original", translating = false).primary)
+    }
+
     @Test fun captionTextHasTranslationTracksProvisionalAndFinal() {
         val text = CaptionText()
         val seg = text.onTranscript(CaptionProtocol.Transcript("Hello world", isFinal = true, speechFinal = true))!!

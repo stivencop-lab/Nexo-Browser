@@ -593,6 +593,7 @@ object ThemeManager {
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(if (p.isMonochrome) p.background else Color.WHITE, p.muted)
         )
+        toggle.trackTintMode = android.graphics.PorterDuff.Mode.SRC_IN
         toggle.trackTintList = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(track, p.surfaceContainerHighest)

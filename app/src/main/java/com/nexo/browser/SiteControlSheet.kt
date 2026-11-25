@@ -49,6 +49,10 @@ object SiteControlSheet {
         val body = NexoUi.column(activity, horizontalDp = NexoUi.Tokens.SHEET_PADDING)
         fun gap(view: View, top: Float = 10f) = body.addView(view, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(top) })
+        fun section(title: String, card: LinearLayout) {
+            gap(NexoUi.section(activity, title))
+            gap(card, 4f)
+        }
         fun group(): LinearLayout = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             background = ThemeManager.rounded(activity, NexoSheets.groupFill(p), NexoUi.Tokens.RADIUS_CARD)
@@ -108,7 +112,7 @@ object SiteControlSheet {
             typeface = NexoUi.regular(activity)
             setTextColor(p.muted)
             gravity = Gravity.CENTER_VERTICAL
-            minHeight = dp(44f)
+            minHeight = dp(48f)
             compoundDrawablePadding = dp(8f)
             setCompoundDrawablesRelative(android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
@@ -120,6 +124,7 @@ object SiteControlSheet {
             setOnClickListener {
                 val open = details.visibility != View.VISIBLE
                 details.visibility = if (open) View.VISIBLE else View.GONE
+                androidx.core.view.ViewCompat.setStateDescription(this, if (open) "Expandido" else "Contraído")
                 NexoMotion.pulse(this, 0.98f)
             }
         }
@@ -163,13 +168,13 @@ object SiteControlSheet {
             })
         }
 
-        // ===== Interruptores inmediatos: PhantomShield y Tema oscuro =====
+        val privacy = group()
+        val page = group()
         val shieldGlobalOn = PhantomShield.isEnabled()
         val siteDisabled = isWeb && PhantomShield.isSiteDisabled(host)
         val blockedHere = session?.let { PhantomShield.tabBlockedCount(it.shield) } ?: 0
         if (isWeb && host.isNotBlank()) {
-            val toggles = group()
-            groupAdd(toggles, NexoUi.switchRow(
+            groupAdd(privacy, NexoUi.switchRow(
                 activity,
                 "PhantomShield",
                 when {
@@ -186,23 +191,20 @@ object SiteControlSheet {
                 Toastish.show(activity, if (on) "PhantomShield activado en $host" else "PhantomShield pausado en $host")
             })
             val excluded = BrowserPrefs.isNightException(activity, host)
-            groupAdd(toggles, NexoUi.switchRow(activity, "Tema oscuro", if (excluded) "Colores originales" else DarkEngine.summary(activity), !excluded) { on ->
+            groupAdd(page, NexoUi.switchRow(activity, "Tema oscuro", if (excluded) "Colores originales" else DarkEngine.summary(activity), !excluded) { on ->
                 NightMode.toggleSite(activity, host, excluded = !on)
             })
             if (session != null) {
                 val mutedNow = session.isAudioMuted()
-                groupAdd(toggles, NexoUi.switchRow(activity, "Silenciar pestaña", null, mutedNow) { mute ->
+                groupAdd(page, NexoUi.switchRow(activity, "Silenciar pestaña", null, mutedNow) { mute ->
                     session.setAudioMuted(mute)
                     Toastish.show(activity, if (mute) "Pestaña silenciada" else "Sonido activado")
                 })
             }
-            gap(toggles, 2f)
         }
 
-        // ===== Filas limpias con iconos desnudos =====
-        val rows = group()
         if (isWeb && host.isNotBlank()) {
-            groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_menu_translate,
+            groupAdd(page, NexoUi.actionRow(activity, R.drawable.ic_menu_translate,
                 if (TranslatorManager.isTranslated(tab.session)) "Restaurar idioma original"
                 else "Traducir a ${BrowserPrefs.translatorTarget(activity).uppercase()}") {
                 sheet.dismiss()
@@ -210,15 +212,21 @@ object SiteControlSheet {
                     activity.runOnUiThread { Toast.makeText(activity, message, Toast.LENGTH_LONG).show() }
                 }
             })
-            groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_menu_reader, "Modo lectura") {
+            groupAdd(page, NexoUi.actionRow(activity, R.drawable.ic_menu_reader, "Modo lectura") {
                 sheet.dismiss()
                 com.nexo.browser.reader.NexoReader.openActiveTab(activity)
+            })
+        }
+        if (isWeb && origin != null && session != null) {
+            groupAdd(privacy, NexoUi.actionRow(activity, R.drawable.ic_tab_tools, "Permisos del sitio", SitePermissionStore.summary(activity, origin)) {
+                sheet.dismiss()
+                showPermissions(activity, tab, session, url, host, origin)
             })
         }
         // Escáner de páginas: análisis con IA bajo demanda y «no es fraude» (sitio de confianza).
         val scanOrigin = com.nexo.browser.shield.MalwareScan.originOf(url)
         if (isWeb && scanOrigin.isNotEmpty() && !tab.isPrivate && BrowserPrefs.malwareScan(activity)) {
-            groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_menu_shield, "Analizar la página con IA",
+            groupAdd(privacy, NexoUi.actionRow(activity, R.drawable.ic_menu_shield, "Analizar la página con IA",
                 if (com.nexo.browser.ai.AiHub.master(activity) == null) "Necesita una conexión en Nexo AI" else "Phishing, estafas y malware") {
                 sheet.dismiss()
                 Toastish.show(activity, "Analizando $host…")
@@ -235,7 +243,7 @@ object SiteControlSheet {
             val trusted = com.nexo.browser.shield.MalwareScan.isTrusted(activity, scanOrigin)
             val flagged = scan != null && scan.decision.level != com.nexo.browser.shield.MalwareSignals.Level.CLEAN
             if (trusted || flagged) {
-                groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_quick_shield,
+                groupAdd(privacy, NexoUi.actionRow(activity, R.drawable.ic_quick_shield,
                     if (trusted) "Volver a analizar este sitio" else "Confiar en este sitio",
                     if (trusted) "Ahora no se analiza" else "No es fraude: dejar de avisar") {
                     sheet.dismiss()
@@ -250,23 +258,18 @@ object SiteControlSheet {
                 })
             }
         }
-        groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Media Engine y Subtítulos") {
+        groupAdd(page, NexoUi.actionRow(activity, R.drawable.ic_menu_play, "Media Engine y Subtítulos") {
             sheet.dismiss()
             NexoMediaEngine.showSheet(activity)
         })
-        if (isWeb && origin != null && session != null) {
-            groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_tab_tools, "Permisos del sitio", SitePermissionStore.summary(activity, origin)) {
-                sheet.dismiss()
-                showPermissions(activity, tab, session, url, host, origin)
-            })
-        }
-        groupAdd(rows, NexoUi.actionRow(activity, R.drawable.ic_menu_shield, "Panel completo PhantomShield") {
+        groupAdd(privacy, NexoUi.actionRow(activity, R.drawable.ic_menu_shield, "Panel completo PhantomShield") {
             sheet.dismiss()
             ExtensionManager.runActionFor(ExtensionManager.PHANTOMSHIELD_ID) { ok, message ->
                 if (!ok) activity.runOnUiThread { Toast.makeText(activity, message, Toast.LENGTH_LONG).show() }
             }
         })
-        gap(rows)
+        section("Privacidad y permisos", privacy)
+        section("Vista y contenido", page)
 
         // ===== Zoom por sitio (75 %–200 %): control segmentado tabular =====
         if (isWeb && host.isNotBlank() && session != null) {
@@ -354,7 +357,7 @@ object SiteControlSheet {
             sheet.dismiss()
             NexoAiSheet.show(activity)
         })
-        gap(more)
+        section("Herramientas del sitio", more)
 
         sheet = NexoSheets.show(activity, NexoSheets.column(activity, header, body))
     }

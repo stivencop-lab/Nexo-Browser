@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Trace
 import android.view.Choreographer
 import android.view.PixelCopy
 import android.view.SurfaceView
@@ -50,7 +51,11 @@ internal class NexoGlassBackdrop(
     fun setPaused(pause: Boolean) {
         if (paused == pause) return
         paused = pause
-        if (!pause && running) markDirty()
+        if (pause) {
+            choreographer.removeFrameCallback(frameCallback)
+            scheduled = false
+            generation++
+        } else if (running) markDirty()
     }
 
     fun reset() {
@@ -67,8 +72,10 @@ internal class NexoGlassBackdrop(
     fun markDirty() {
         dirty = true
         if (running && !paused && !scheduled && !copying) {
+            val delay = if (bitmap == null) 0L else
+                (lastCaptureMs + MIN_INTERVAL_MS - android.os.SystemClock.uptimeMillis()).coerceAtLeast(0L)
             scheduled = true
-            choreographer.postFrameCallback(frameCallback)
+            choreographer.postFrameCallbackDelayed(frameCallback, delay)
         }
     }
 
@@ -77,13 +84,13 @@ internal class NexoGlassBackdrop(
         if (!running || paused || !dirty) return
         val now = android.os.SystemClock.uptimeMillis()
         if (bitmap != null && now - lastCaptureMs < MIN_INTERVAL_MS) {
-            dirty = false
+            markDirty()
             return
         }
-        lastCaptureMs = now
         dirty = false
         val view = surface() ?: return
         if (!view.holder.surface.isValid || view.width <= 0 || view.height <= 0) return
+        lastCaptureMs = now
         val width = (view.width * SCALE).roundToInt().coerceAtLeast(1)
         val height = (view.height * SCALE).roundToInt().coerceAtLeast(1)
         val target = spare?.takeIf { it.width == width && it.height == height }
@@ -92,13 +99,19 @@ internal class NexoGlassBackdrop(
         val expected = generation
         val radius = (intensity.radiusDp * owner.resources.displayMetrics.density * SCALE).roundToInt().coerceAtMost(80)
         copying = true
+        val traceId = System.identityHashCode(this)
+        Trace.beginAsyncSection("NexoGlass PixelCopy", traceId)
         try {
             PixelCopy.request(view, target, { code ->
                 val success = code == PixelCopy.SUCCESS
-                if (success) stackBlur?.apply(target, radius)
+                try {
+                    if (success) stackBlur?.apply(target, radius)
+                } finally {
+                    Trace.endAsyncSection("NexoGlass PixelCopy", traceId)
+                }
                 owner.post {
                     copying = false
-                    if (running && expected == generation && view === surface()) {
+                    if (running && !paused && expected == generation && view === surface()) {
                         if (success) {
                             spare = bitmap
                             bitmap = target
@@ -112,6 +125,7 @@ internal class NexoGlassBackdrop(
                 }
             }, worker)
         } catch (_: IllegalArgumentException) {
+            Trace.endAsyncSection("NexoGlass PixelCopy", traceId)
             copying = false
             spare = target
         }

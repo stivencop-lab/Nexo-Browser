@@ -3,6 +3,7 @@ package com.nexo.browser
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.cefrium.CefriumEngineSession
 import okhttp3.Authenticator
@@ -373,7 +374,7 @@ object TranslatorManager {
                 if (res != null) return res
             }
         }
-        if (provider == BrowserPrefs.TRANSLATE_AI) {
+        if (!job.isCancelled && provider == BrowserPrefs.TRANSLATE_AI) {
             // «Una API para todo»: la conexión de Nexo AI si está configurada; si no, la propia.
             val conn = com.nexo.browser.ai.AiHub.translation(context)
             if (conn != null) {
@@ -381,7 +382,7 @@ object TranslatorManager {
                 if (res != null) return res
             }
         }
-        return translateWithGoogle(lines, target, job)
+        return if (job.isCancelled) null else translateWithGoogle(lines, target, job)
     }
 
     private const val GOOGLE_UA =
@@ -391,26 +392,23 @@ object TranslatorManager {
      * Traduce un fragmento seleccionado por el usuario usando el proveedor e idioma destino
      * configurados en Nexo. Devuelve `(textoTraducido, mensajeError)` en el hilo principal.
      */
-    fun translateSnippet(
+    private fun translateSnippet(
         context: Context,
         text: String,
+        target: String,
         onResult: (translated: String?, error: String?) -> Unit
-    ) {
-        val cleaned = text.trim().take(2000)
-        if (cleaned.isEmpty()) {
-            main.post { onResult(null, "No hay texto seleccionado para traducir.") }
-            return
-        }
+    ): ActiveTranslation {
         val appContext = context.applicationContext
-        val target = resolveTargetLanguage(appContext)
-        val paragraphs = cleaned.split(Regex("""\n+"""))
+        val paragraphs = text.split(Regex("""\n+"""))
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .ifEmpty { listOf(cleaned) }
+            .ifEmpty { listOf(text) }
         val job = ActiveTranslation(docGen = 0L, targetLang = target)
         io.execute {
+            if (job.isCancelled) return@execute
             val translated = translateBatch(appContext, paragraphs, target, job)
             main.post {
+                if (job.isCancelled) return@post
                 if (translated != null && translated.isNotEmpty()) {
                     onResult(translated.joinToString("\n\n"), null)
                 } else {
@@ -418,6 +416,7 @@ object TranslatorManager {
                 }
             }
         }
+        return job
     }
 
     /** Hoja rápida Nexo UI 7.0 para traducir texto seleccionado directamente desde Chromium. */
@@ -482,19 +481,33 @@ object TranslatorManager {
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(12f) })
 
-        sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Traducción ($targetLabel)"), body))
-        translateSnippet(activity, clean) { translated, error ->
-            if (activity.isFinishing || activity.isDestroyed || !sheet.isShowing) return@translateSnippet
-            if (translated != null) {
-                translatedResult = translated
-                resultView.text = translated
-                copyBtn.isEnabled = true
-                copyBtn.alpha = 1f
-            } else {
-                resultView.text = error ?: "No se pudo traducir la selección."
-                resultView.setTextColor(p.danger)
+        var pending: ActiveTranslation? = null
+        lateinit var retryButton: View
+        fun requestTranslation() {
+            pending?.cancel()
+            retryButton.visibility = View.GONE
+            resultView.text = "Traduciendo a $targetLabel…"
+            resultView.setTextColor(p.text)
+            pending = translateSnippet(activity, clean, target) { translated, error ->
+                if (activity.isFinishing || activity.isDestroyed || !sheet.isShowing) return@translateSnippet
+                pending = null
+                if (translated != null) {
+                    translatedResult = translated
+                    resultView.text = translated
+                    copyBtn.isEnabled = true
+                    copyBtn.alpha = 1f
+                } else {
+                    resultView.text = error ?: "No se pudo traducir la selección."
+                    resultView.setTextColor(p.danger)
+                    retryButton.visibility = View.VISIBLE
+                }
             }
         }
+        retryButton = NexoUi.button(activity, "Reintentar", primary = true) { requestTranslation() }
+        body.addView(retryButton, NexoUi.buttonParams(activity, 10f))
+        sheet = NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Traducción ($targetLabel)"), body))
+        sheet.setOnDismissListener { pending?.cancel() }
+        requestTranslation()
     }
 
     private fun translateWithGoogle(lines: List<String>, target: String, job: ActiveTranslation): List<String>? = runCatching {

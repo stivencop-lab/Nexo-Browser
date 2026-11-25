@@ -62,6 +62,7 @@ object LiveCaptions {
         // Motivo del último fallo de la captura en la página y si ya se ofreció la de Android.
         var pageFailure: String? = null
         var offeredDevice = false
+        var retryDeviceAudio = false
         // El audio del video solo sale hacia Deepgram si el usuario lo eligió (o lo dejó automático en Ajustes).
         var audioAllowed = false
         var offeredChoice = false
@@ -69,6 +70,8 @@ object LiveCaptions {
         var opened = false
         val queue = ArrayDeque<ByteString>()
         var lastAudioAt = 0L
+        var firstAudioAt = -1L
+        var measuredFirstResult = false
         var receivedBytes = 0L
         var startedAt = 0L
         var lastResultAt = 0L
@@ -77,10 +80,12 @@ object LiveCaptions {
         var headerChecked = false
         var unsavedMs = 0L
         var triedFallback = false
-        var retries = 0
+        val reconnectBudget = CaptionReconnectBudget()
         var language = "multi"
         var appliedTarget = ""
         var appliedProvider = ""
+        var separateSpeakers = false
+        var speakerDetectionRejected = false
         val text = CaptionText()
         var state = State.WAITING
         var message: String? = null
@@ -186,6 +191,9 @@ object LiveCaptions {
     /** Subtítulos leídos del reproductor de la página (sin Deepgram). */
     fun isDomMode(session: EngineSession?): Boolean = session?.let { active[it]?.domMode } == true
 
+    fun speakerDetectionUnavailable(session: EngineSession): Boolean =
+        active[session]?.speakerDetectionRejected == true
+
     /**
      * Línea de estado cuando aún no hay texto. Los diagnósticos concretos
      * (mensaje del flujo, errores) se mantienen; el aviso genérico solo dura
@@ -235,7 +243,7 @@ object LiveCaptions {
         // Red de seguridad: aunque se pierda el aviso programado, un subtítulo sin voz
         // reciente no se vuelve a dibujar (el texto en vivo nunca se queda colgado).
         if (!stream.domMode && !stream.text.isEmpty &&
-            CaptionText.expired(stream.lastResultAt, System.currentTimeMillis(), clearDelay(context) + 400L)) stream.text.clear()
+            CaptionText.expired(stream.lastResultAt, System.currentTimeMillis(), clearDelay(context) + 400L)) stream.text.clearVisible()
         if (stream.text.isEmpty) return statusLine(stream)
         // Longitud elegida en Ajustes: cuánto texto reciente se conserva en pantalla.
         stream.text.maxChars = maxChars(BrowserPrefs.captionLines(context))
@@ -269,6 +277,7 @@ object LiveCaptions {
             language = BrowserPrefs.captionLanguage(app)
             appliedTarget = BrowserPrefs.captionTranslateTo(app)
             appliedProvider = effectiveProvider(app)
+            separateSpeakers = BrowserPrefs.captionSpeakerDetection(app)
             batcher = newBatcher(app)
         }
         active[session] = stream
@@ -425,9 +434,12 @@ object LiveCaptions {
         stream.language = BrowserPrefs.captionLanguage(context)
         stream.model = ""
         stream.triedFallback = false
-        stream.retries = 0
-        if (stream.deviceAudio) { close(stream); connect(context.applicationContext, stream, CaptionProtocol.modelFor(stream.language)) }
-        else if (!stream.trackMode && !stream.domMode) ExtensionManager.restartCaptions(stream.session)
+        stream.separateSpeakers = BrowserPrefs.captionSpeakerDetection(context)
+        stream.speakerDetectionRejected = false
+        stream.reconnectBudget.reset()
+        if (stream.deviceAudio || (!stream.deviceRequested && stream.startedAt > 0L && !stream.trackMode && !stream.domMode)) {
+            restartAudio(stream)
+        }
     }
 
     // --- Mensajes del puente de la página --------------------------------
@@ -612,19 +624,14 @@ object LiveCaptions {
     private fun acceptAudio(session: EngineSession, stream: Stream, bytes: ByteArray) {
         if (stream.state == State.ERROR || stream.startedAt == 0L || bytes.isEmpty() || bytes.size > 256*1024) return
         stream.receivedBytes += bytes.size
+        if (stream.firstAudioAt < 0L) stream.firstAudioAt = SystemClock.elapsedRealtime()
         val now = System.currentTimeMillis()
         if (stream.lastAudioAt > 0) stream.unsavedMs += (now - stream.lastAudioAt).coerceIn(0L, 1000L)
         stream.lastAudioAt = now
         val chunk = bytes.toByteString()
         val socket = stream.socket
         if (stream.opened && socket != null) {
-            // Control de flujo: con la red atascada se descarta audio en vez de acumularlo.
-            if (socket.queueSize() < MAX_SOCKET_QUEUE) socket.send(chunk)
-            else {
-                close(stream)
-                stream.message = "La red no puede enviar el audio. Reiniciando captura…"
-                restartAudio(stream)
-            }
+            if (socket.queueSize() >= MAX_SOCKET_QUEUE || !socket.send(chunk)) recoverAudioBackpressure(stream)
         } else if (stream.deviceAudio) {
             // PCM sin contenedor: conservar siempre los últimos ~3 s mientras conecta o reconecta el WebSocket.
             while (stream.queue.size >= MAX_DEVICE_PREOPEN_CHUNKS) stream.queue.removeFirst()
@@ -632,14 +639,14 @@ object LiveCaptions {
         } else if (stream.queue.size < MAX_PAGE_PREOPEN_CHUNKS) {
             stream.queue.addLast(chunk)
         } else {
-            onPageError(AppContext.get(), session, "buffer", "La conexión tarda demasiado en aceptar audio. Apaga y activa CC para reintentar.")
+            onPageError(AppContext.get(), session, "buffer", "La conexión tarda demasiado en aceptar audio.")
         }
     }
 
     fun onRecordingStopped(session: EngineSession) {
         val stream = active[session] ?: return
         // La captura de Android no depende de la página: que un marco se desconecte no la corta.
-        if (stream.deviceAudio || stream.deviceRequested) return
+        if (stream.deviceAudio || stream.deviceRequested || stream.state == State.ERROR) return
         close(stream)
         invalidateTranslations(stream)
         stream.trackMode = false
@@ -694,6 +701,26 @@ object LiveCaptions {
         return true
     }
 
+    private val RETRYABLE_ERRORS = setOf("android_capture", "deepgram", "closed", "buffer", "header", "mime", "capture", "silent", "no_audio")
+
+    fun canRetry(session: EngineSession): Boolean =
+        active[session]?.let { it.state == State.ERROR && it.pageFailure in RETRYABLE_ERRORS } == true
+
+    fun retry(context: Context, session: EngineSession, requestDeviceAudio: () -> Unit) {
+        val stream = active[session] ?: return
+        if (!canRetry(session)) return
+        val device = stream.retryDeviceAudio
+        stream.reconnectBudget.reset()
+        stream.triedFallback = false
+        stream.model = CaptionProtocol.modelFor(stream.language)
+        stream.pageFailure = null
+        stream.retryDeviceAudio = false
+        stream.startedAt = 0L
+        setState(stream, State.WAITING, "Buscando subtítulos del video…")
+        if (device) requestDeviceAudio() else deliver(context.applicationContext, stream)
+        notifyChanged(session)
+    }
+
     /** Errores que vienen de la captura de Android o de Deepgram (no de la página). */
     private val NATIVE_ERRORS = setOf("android_capture", "deepgram", "closed", "limit", "buffer", "need_deepgram", "header", "mime")
 
@@ -701,6 +728,7 @@ object LiveCaptions {
         val stream = active[session] ?: return
         // Con Android capturando o pidiendo permiso, un error de la página no cancela nada.
         if ((stream.deviceAudio || stream.deviceRequested) && code !in NATIVE_ERRORS) return
+        stream.retryDeviceAudio = stream.deviceAudio || stream.deviceRequested
         stream.deviceRequested = false
         stream.delivered = true
         stream.pageFailure = code
@@ -765,20 +793,17 @@ object LiveCaptions {
         notifyChanged(session)
     }
 
-    @Volatile private var lastTranscriptLatencyMs: Long = -1L
+    @Volatile private var lastFirstTranscriptMs: Long = -1L
 
     fun diagnosticsSummary(): String {
         val count = active.size
-        val latency = lastTranscriptLatencyMs.let { if (it >= 0L) "${it} ms" else "sin muestras" }
+        val latency = lastFirstTranscriptMs.let { if (it >= 0L) "${it} ms" else "sin muestras" }
         val modes = active.values.map { if (it.trackMode) "pista" else if (it.deviceAudio) "audio-disp" else "audio-pag" }.distinct()
         val modeLabel = if (modes.isEmpty()) "inactivo" else modes.joinToString("/")
-        return "flujos=$count · modo=$modeLabel · última latencia transcripción=$latency"
+        return "flujos=$count · modo=$modeLabel · primer audio a primer texto=$latency"
     }
 
     private fun applyTranscripts(context: Context, stream: Stream, updates: List<CaptionProtocol.Transcript>) {
-        if (updates.isNotEmpty() && stream.lastAudioAt > 0L) {
-            lastTranscriptLatencyMs = (System.currentTimeMillis() - stream.lastAudioAt).coerceIn(0L, 60_000L)
-        }
         for (transcript in updates) {
             val segment = stream.text.onTranscript(transcript)
             if (segment != null) enqueueLive(context, stream, segment)
@@ -834,8 +859,11 @@ object LiveCaptions {
         setState(stream, State.CONNECTING)
         notifyChanged(stream.session)
         val generation = ++stream.generation
+        val separateSpeakers = stream.separateSpeakers && !stream.speakerDetectionRejected
+        val url = if (stream.deviceAudio) PlaybackPcm.listenUrl(stream.language, model, separateSpeakers)
+            else CaptionProtocol.listenUrl(stream.language, model, separateSpeakers)
         val request = Request.Builder()
-            .url((if(stream.deviceAudio) PlaybackPcm.listenUrl(stream.language,model) else CaptionProtocol.listenUrl(stream.language, model)).replaceFirst("wss://", "https://"))
+            .url(url.replaceFirst("wss://", "https://"))
             .header("Authorization", "Token $key")
             .build()
         stream.socket = client.newWebSocket(request, object : WebSocketListener() {
@@ -847,34 +875,27 @@ object LiveCaptions {
                     stream.opened = true
                     stream.socketOpenedAt = System.currentTimeMillis()
                     setState(stream, State.LISTENING)
-                    while (stream.queue.isNotEmpty()) webSocket.send(stream.queue.removeFirst())
+                    while (stream.queue.isNotEmpty()) {
+                        if (!webSocket.send(stream.queue.first())) {
+                            recoverAudioBackpressure(stream)
+                            return@post
+                        }
+                        stream.queue.removeFirst()
+                    }
                     notifyChanged(stream.session)
                 }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                val message = CaptionProtocol.parseMessage(text) ?: return
                 main.post {
                     if (active[stream.session] !== stream || stream.generation != generation) return@post
-                    // Fin de frase: el borrado ya está programado desde el último texto con voz.
-                    if (CaptionProtocol.isUtteranceEnd(text)) return@post
-                    CaptionProtocol.parseError(text)?.let {
-                        onPageError(context, stream.session, "deepgram", "Deepgram: $it")
-                        return@post
+                    when (message) {
+                        is CaptionProtocol.StreamMessage.UtteranceEnd -> stream.text.onUtteranceEnd(message.lastWordEnd)
+                        is CaptionProtocol.StreamMessage.Error ->
+                            onPageError(context, stream.session, "deepgram", "Deepgram: ${message.description}")
+                        is CaptionProtocol.StreamMessage.Result -> onSpeechResult(context, stream, message.transcript)
                     }
-                    val transcript = CaptionProtocol.parseResult(text) ?: return@post
-                    if (transcript.text.isNotBlank()) {
-                        stream.lastResultAt = System.currentTimeMillis()
-                        stream.message = null
-                    }
-                    stream.retries = 0
-                    val segment = stream.text.onTranscript(transcript)
-                    if (segment != null) enqueueLive(context, stream, segment)
-                    else if (!transcript.isFinal) speculate(context, stream)
-                    // Solo la voz reprograma el borrado. Antes cualquier mensaje (Deepgram manda
-                    // resultados vacíos durante el silencio) lo cancelaba y el último subtítulo
-                    // se quedaba en pantalla minutos después de que dejaran de hablar.
-                    if (transcript.text.isNotBlank()) scheduleClear(stream, clearDelay(context))
-                    notifyChanged(stream.session)
                 }
             }
 
@@ -888,6 +909,12 @@ object LiveCaptions {
                     if (active[stream.session] !== stream || stream.generation != generation) return@post
                     stream.opened = false
                     stream.socket = null
+                    if (code == 400 && separateSpeakers) {
+                        stream.speakerDetectionRejected = true
+                        stream.model = model
+                        restartAudio(stream)
+                        return@post
+                    }
                     // Si el modelo no admite un idioma concreto, reintentar una vez con nova-2
                     // (nova-2 en streaming no admite language=multi).
                     if (CaptionProtocol.shouldFallbackToNova2(code, model, stream.language, stream.triedFallback)) {
@@ -900,22 +927,16 @@ object LiveCaptions {
                     // Corte de red: hasta 3 reintentos con espera creciente; cada uno empieza
                     // una grabación nueva (el audio necesita su cabecera).
                     val transient = code == null || code == 429 || code >= 500
-                    if (transient && stream.retries < 3) {
-                        val delay = 1000L * (1 shl stream.retries) + (0..400).random()
-                        stream.retries++
-                        setState(stream, State.CONNECTING, null)
-                        notifyChanged(stream.session)
-                        main.postDelayed({
-                            if (active[stream.session] === stream && stream.generation == generation) {
-                                restartAudio(stream)
-                            }
-                        }, delay)
+                    val attempt = if (transient) stream.reconnectBudget.next(3) else null
+                    if (attempt != null) {
+                        val delay = (1_000L shl attempt) + (0..400).random()
+                        scheduleAudioReconnect(stream, delay)
                         return@post
                     }
                     val detail = if (code == 400 && stream.language == "multi") {
                         "Deepgram rechazó la detección automática (HTTP 400). Elige un idioma concreto en CC (p. ej. Español o English)."
                     } else {
-                        CaptionProtocol.errorFor(code) + " Apaga y activa CC para reintentar."
+                        CaptionProtocol.errorFor(code)
                     }
                     onPageError(context, stream.session, "deepgram", detail)
                 }
@@ -927,23 +948,33 @@ object LiveCaptions {
                         stream.opened = false
                         stream.socket = null
                         // 1008 (DATA-0000), 1011 (NET-0000) o 1006: reintentar con grabación/cabecera nueva antes de rendirse.
-                        if (code in setOf(1006, 1008, 1011) && stream.retries < 2) {
-                            val delay = 800L * (stream.retries + 1)
-                            stream.retries++
-                            setState(stream, State.CONNECTING, "Reconectando subtítulos con Deepgram…")
-                            notifyChanged(stream.session)
-                            main.postDelayed({
-                                if (active[stream.session] === stream && stream.generation == generation) {
-                                    restartAudio(stream)
-                                }
-                            }, delay)
+                        val attempt = if (code in setOf(1006, 1008, 1011)) stream.reconnectBudget.next(2) else null
+                        if (attempt != null) {
+                            val delay = 800L * (attempt + 1)
+                            scheduleAudioReconnect(stream, delay)
                             return@post
                         }
-                        onPageError(context, stream.session, "closed", "Deepgram cerró la conexión ($code). Apaga y activa CC para reintentar.")
+                        onPageError(context, stream.session, "closed", "Deepgram cerró la conexión ($code).")
                     }
                 }
             }
         })
+    }
+
+    private fun onSpeechResult(context: Context, stream: Stream, transcript: CaptionProtocol.Transcript) {
+        val segments = stream.text.onSpeechTranscript(transcript)
+        if (transcript.text.isBlank()) return
+        if (!stream.measuredFirstResult && stream.firstAudioAt >= 0L) {
+            lastFirstTranscriptMs = SystemClock.elapsedRealtime() - stream.firstAudioAt
+            stream.measuredFirstResult = true
+        }
+        stream.lastResultAt = System.currentTimeMillis()
+        stream.message = null
+        stream.reconnectBudget.onTranscript(transcript.text)
+        segments.forEach { enqueueLive(context, stream, it) }
+        if (stream.text.interimText.isNotBlank()) speculate(context, stream)
+        scheduleClear(stream, clearDelay(context))
+        notifyChanged(stream.session)
     }
 
     fun onStatus(session: EngineSession, code: String) {
@@ -979,6 +1010,7 @@ object LiveCaptions {
         val nextTarget = BrowserPrefs.captionTranslateTo(app)
         val nextProvider = effectiveProvider(app)
         val nextLang = BrowserPrefs.captionLanguage(app)
+        val nextSeparateSpeakers = BrowserPrefs.captionSpeakerDetection(app)
         active.keys.toList().forEach { session ->
             if (!BrowserPrefs.captionsEnabled(app)) {
                 stop(session)
@@ -987,8 +1019,9 @@ object LiveCaptions {
             val stream = active[session] ?: return@forEach
             val targetChanged = nextTarget != stream.appliedTarget || nextProvider != stream.appliedProvider
             val langChanged = nextLang != stream.language
+            val speakersChanged = nextSeparateSpeakers != stream.separateSpeakers
             if (targetChanged) retarget(app, session)
-            if (langChanged) relisten(app, session)
+            if (langChanged || speakersChanged) relisten(app, session)
             // No interrumpir ni reiniciar la captura de Android ni el WebSocket en onResume() si nada cambió.
             if (!pageSuspended(session) && (!stream.delivered || targetChanged || langChanged)) {
                 ExtensionManager.restoreCaptions(session)
@@ -996,18 +1029,52 @@ object LiveCaptions {
         }
     }
 
-    private fun restartAudio(stream: Stream) {
-        if (stream.deviceAudio) { close(stream); connect(AppContext.get(),stream,stream.model.ifBlank { CaptionProtocol.modelFor(stream.language) }) }
-        else ExtensionManager.restartCaptions(stream.session)
+    private fun recoverAudioBackpressure(stream: Stream) {
+        val context = AppContext.get()
+        close(stream, discardPending = true)
+        val attempt = stream.reconnectBudget.next(3)
+        if (attempt == null) {
+            onPageError(context, stream.session, "buffer", "La red no puede enviar el audio.")
+            return
+        }
+        scheduleAudioReconnect(stream, 1_000L shl attempt)
     }
 
-    private fun close(stream: Stream) {
+    private fun scheduleAudioReconnect(stream: Stream, delay: Long) {
+        val generation = stream.generation
+        if (!stream.deviceAudio) stream.startedAt = 0L
+        setState(stream, State.CONNECTING, "Reconectando audio con Deepgram…")
+        notifyChanged(stream.session)
+        main.postDelayed({
+            if (active[stream.session] === stream && stream.generation == generation) restartAudio(stream)
+        }, delay)
+    }
+
+    private fun restartAudio(stream: Stream) {
+        close(stream)
+        val context = AppContext.get()
+        if (stream.deviceAudio) {
+            connect(context, stream, stream.model.ifBlank { CaptionProtocol.modelFor(stream.language) })
+        } else {
+            stream.startedAt = 0L
+            stream.headerChecked = false
+            if (!ExtensionManager.restartCaptions(stream.session)) {
+                deliver(context, stream)
+            }
+        }
+    }
+
+    private fun close(stream: Stream, discardPending: Boolean = false) {
         ++stream.generation
         val socket = stream.socket
         stream.socket = null
         stream.opened = false
         stream.queue.clear()
-        if (socket != null) {
+        stream.firstAudioAt = -1L
+        stream.measuredFirstResult = false
+        stream.text.resetSpeechClock()
+        if (discardPending) socket?.cancel()
+        else if (socket != null) {
             runCatching { socket.send(CaptionProtocol.CLOSE_STREAM) }
             runCatching { socket.close(1000, null) }
         }
@@ -1020,7 +1087,7 @@ object LiveCaptions {
     private fun scheduleClear(stream: Stream, delayMs: Long = 3500L) {
         main.removeCallbacksAndMessages(stream)
         main.postAtTime({
-            stream.text.clear()
+            stream.text.clearVisible()
             notifyChanged(stream.session)
         }, stream, SystemClock.uptimeMillis() + delayMs)
     }
