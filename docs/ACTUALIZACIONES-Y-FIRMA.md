@@ -4,7 +4,7 @@ El paquete Android actual es `com.nexo.browser`. Android actualiza en el sitio u
 
 ## Actualizar en el teléfono
 
-1. Abre [GitHub Releases](https://github.com/stivencop414-bot/Nexo-Browser/releases/latest) y descarga el APK firmado para tu ABI.
+1. Abre GitHub Releases y descarga el APK firmado para tu arquitectura. [Última publicación](https://github.com/stivencop-lab/Nexo-Browser/releases/latest)
 2. Compara el hash del archivo con `SHA256SUMS.txt` de esa misma release.
 3. Abre el APK para actualizar. Si Android indica que el paquete entra en conflicto con una app existente, comprueba el paquete y el certificado del APK instalado antes de desinstalar. Las compilaciones debug se firman con otra clave.
 
@@ -14,13 +14,14 @@ En Linux puedes verificar el archivo desde la carpeta de descargas.
 sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
-En macOS, calcula el hash con `shasum -a 256 Nexo-v0.39.2-arm64-v8a.apk`. En PowerShell, usa `Get-FileHash -Algorithm SHA256 .\Nexo-v0.39.2-arm64-v8a.apk`. Compara el resultado con la línea de ese archivo en `SHA256SUMS.txt`.
+En macOS, calcula el hash con `shasum -a 256 Nexo-v0.40.0-arm64-v8a.apk`. En PowerShell, usa `Get-FileHash -Algorithm SHA256 .\Nexo-v0.40.0-arm64-v8a.apk`. Sustituye el nombre del ejemplo por el de tu descarga y compara el resultado con su línea en `SHA256SUMS.txt`.
 
 ## Publicar una versión
 
 1. Integra los cambios de la app en `main`. Comprueba que `versionName` y `versionCode` en `app/build.gradle.kts` coinciden con la versión y superan la última distribución.
-2. Ejecuta **Nexo Secure CI and Release › Run workflow** sobre `main`, con `mode=release` y el campo tag vacío para usar `v<versionName>`. También puedes publicar un tag `v<versionName>` que apunte al commit integrado. Usa uno de los dos disparadores por versión.
-3. Comprueba que GitHub Releases muestra los APK `arm64-v8a` y `armeabi-v7a`, además de `SHA256SUMS.txt`. Contrasta el paquete, versión y huella con el APK firmado antes de actualizar los enlaces del README. [Workflow de publicación](../.github/workflows/main.yml)
+2. Verifica los avisos que acompañarán a los APK, la disponibilidad del código fuente correspondiente de los componentes que lo requieran y las condiciones para redistribuir Cefrium. [Licencias y avisos](LICENCIAS.md)
+3. Ejecuta **Nexo Secure CI and Release › Run workflow** sobre `main`, con `mode=release` y el campo tag vacío para usar `v<versionName>`. También puedes publicar un tag `v<versionName>` que apunte al commit integrado. Usa uno de los dos disparadores por versión.
+4. Comprueba que GitHub Releases muestra los APK `arm64-v8a` y `armeabi-v7a`, además de `SHA256SUMS.txt`. Contrasta el paquete, versión y huella con el APK firmado antes de actualizar los enlaces del README. [Workflow de publicación](../.github/workflows/main.yml)
 
 El flujo de publicación valida constructores de arranque tras R8, identidad del paquete y certificado de firma. La compilación se ejecuta antes de acceder al keystore. La release conserva sus APK y sumas, por lo que una corrección requiere otra versión y otro tag.
 
@@ -41,7 +42,7 @@ La huella pública en [`config/android-signing-certificate.sha256`](../config/an
 python3 tools/verify_apk_signature.py \
   --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner" \
   --certificate config/android-signing-certificate.sha256 \
-  /ruta/descargas/Nexo-v0.39.2-arm64-v8a.apk
+  /ruta/descargas/Nexo-v0.40.0-arm64-v8a.apk
 ```
 
 <details>

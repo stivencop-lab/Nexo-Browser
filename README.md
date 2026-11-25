@@ -34,7 +34,8 @@
   <a href="#novedades-en-v0400">Novedades</a> ·
   <a href="#primeros-pasos">Primeros pasos</a> ·
   <a href="#compatibilidad-de-extensiones">Extensiones</a> ·
-  <a href="#desarrollo">Desarrollo</a>
+  <a href="#desarrollo">Desarrollo</a> ·
+  <a href="#licencias">Licencias</a>
 </p>
 
 </div>
@@ -48,6 +49,8 @@
 ## Descargar
 
 **Nexo Browser v0.40.0** · `versionCode 80` · Paquete `com.nexo.browser`
+
+Los APK de esta sección corresponden al tag `v0.40.0`. La rama `main` incluye cambios posteriores que llegarán con una próxima publicación firmada.
 
 | Dispositivo | Tamaño | APK firmado |
 | --- | ---: | --- |
@@ -101,6 +104,10 @@ El informe técnico documenta cada cambio respecto al issue `#84`, las pruebas e
 </p>
 <p align="center"><sub>Temas OLED y Paper · vistas nativas renderizadas con Robolectric en API 35.</sub></p>
 
+### Cambios posteriores a v0.40.0
+
+La rama `main` incorpora mejoras posteriores en la barra de direcciones, Control del sitio y subtítulos. La captura web solicita fragmentos cada 125 ms, el texto parcial se conserva mientras llega el definitivo y la detección de hablantes se puede habilitar desde los ajustes de subtítulos. [PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87) · [Guía de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md)
+
 ## Primeros pasos
 
 | Quiero… | Ejemplo |
@@ -109,6 +116,7 @@ El informe técnico documenta cada cambio respecto al issue `#84`, las pruebas e
 | **Saltar a una pestaña abierta** | Escribe `@tabs android` en la barra de direcciones para buscar «android» entre tus pestañas y grupos. Las búsquedas con prefijo son 100 % locales. |
 | **Leer sin conexión** | Abre un artículo, escribe `@actions lectura`, activa el modo lectura y pulsa **Guardar sin conexión**. Vuelve con `@actions sin conexion`. |
 | **Ajustar permisos de un sitio** | Toca el icono junto al dominio para abrir **Control del sitio** (zoom, modo oscuro, escudo y permisos por sitio). |
+| **Activar subtítulos** | Reproduce un video y toca **CC**. Nexo intenta mostrar la pista o el texto del reproductor. La transcripción de audio requiere una clave de Deepgram. [Subtítulos y diagnóstico](docs/DIAGNOSTICO-SUBTITULOS.md) |
 | **Instalar una extensión con criterio** | Abre **Extensiones**, busca **uBlock Origin Lite** en Chrome Web Store y pulsa **Instalar en Nexo**. Revisa permisos, firma CRX3 y el veredicto del Hub antes de habilitarla. |
 
 Nexo Command admite también `@history`, `@settings` y `@bookmarks`. Prueba `@settings tema` para abrir apariencia directo desde la barra de direcciones.
@@ -138,13 +146,13 @@ Consulta la matriz completa de 20 APIs y el ejemplo de ruleset: [Nexo Extension 
 
 ## Desarrollo
 
-**Requisitos:** JDK 25, Node.js 20+, Android SDK `platforms;android-37.2` y `build-tools;37.0.0`. El wrapper usa Gradle `9.8.2` con AGP `9.5.1` (`compileSdk 37.2`, `minSdk 29`, `targetSdk 35`). Cefrium se distribuye bajo `LGPL-3.0-or-later` con huellas fijadas en [`gradle/cefrium-0.22.0.sha256`](gradle/cefrium-0.22.0.sha256). [Configuración del CI](docs/CEFrium-CI-SETUP.md)
+Necesitas JDK 25, Node.js 20+ y la plataforma Android SDK `37.2`. Usa el wrapper de Gradle `9.8.2` del repositorio. La guía de compilación indica cómo instalar los paquetes del SDK y comprobar los APK. [Entorno local y CI](docs/CEFrium-CI-SETUP.md)
 
 ```bash
-# Regresiones JavaScript (269 pruebas)
+# Regresiones JavaScript
 node --test app/src/test/js/*.test.cjs
 
-# Pruebas JVM (351 pruebas), APK de depuración y lint
+# Pruebas JVM, APK de depuración y lint
 ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 
 # Regresiones de temas y accesibilidad (Robolectric)
@@ -169,6 +177,10 @@ Nexo consume exclusivamente la API pública `com.cefrium.*` (el CI bloquea `org.
 
 </details>
 
+## Licencias
+
+El código propio de Nexo Browser se distribuye bajo **Apache License 2.0**. Cefrium, Dark Reader, las fuentes y las demás dependencias conservan sus licencias y avisos. [Apache License 2.0](LICENSE) · [Licencias y avisos de terceros](docs/LICENCIAS.md)
+
 ## Documentación
 
 | Tema | Guías |
@@ -177,7 +189,7 @@ Nexo consume exclusivamente la API pública `com.cefrium.*` (el CI bloquea `org.
 | **Interfaz y organización** | [Nexo UI 7.0 (referencia histórica)](docs/NEXO-UI-7.0-LIQUID-CRAFT.md), [Grupos, rutas y Burner](docs/PESTANAS-RED-BURNER.md) |
 | **Navegación y multimedia** | [PhantomShield](docs/PHANTOMSHIELD.md), [Traducción en página](docs/TRADUCCION-EN-LINEA.md), [Audio y estabilidad](docs/ESTABILIDAD-Y-AUDIO-ANDROID.md), [Diagnóstico de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md) |
 | **IA y datos** | [Nexo AI 5.1](docs/NEXO-AI-5.1.md), [Memoria IA local](docs/IA-MEMORIA.md), [Transferencia de perfil](docs/TRANSFERENCIA-PERFIL.md) |
-| **Desarrollo y distribución** | [Configuración del CI](docs/CEFrium-CI-SETUP.md), [Identidad Android](docs/IDENTIDAD-NEXO.md), [Actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md) |
+| **Desarrollo y distribución** | [Entorno local y CI](docs/CEFrium-CI-SETUP.md), [Identidad Android](docs/IDENTIDAD-NEXO.md), [Actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md), [Licencias y avisos](docs/LICENCIAS.md) |
 
 <details>
 <summary>Historial de diseño y auditorías</summary>

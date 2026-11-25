@@ -1,4 +1,4 @@
-# Configuración del CI para Cefrium
+# Compilar y probar Nexo con Cefrium
 
 Nexo Browser usa **Cefrium 0.22.0** (Chromium `158.0.8127.18`) como único motor tanto en `:app` como en el proyecto de referencia `cefrium-prototype/`.
 
@@ -7,10 +7,41 @@ Nexo Browser usa **Cefrium 0.22.0** (Chromium `158.0.8127.18`) como único motor
 Definidos en [`.github/workflows/main.yml`](../.github/workflows/main.yml):
 
 - **JDK 25** (`temurin` 25): el bytecode de `com.cefrium:cefrium-sdk-core:0.22.0` es Java 25 y el plugin `com.cefrium` comprueba la versión del compilador en cada tarea `JavaCompile`.
-- **Android SDK**: `platforms;android-37.2`, `build-tools;37.0.0` y `platform-tools` (`compileSdk = 37.2`, `minSdk = 29`, `targetSdk = 35`).
+- **Android SDK**: `platforms;android-37.2` para compilar, `build-tools;36.0.0` que selecciona AGP, `build-tools;37.0.0` para los verificadores del proyecto y `platform-tools` para ADB. La aplicación apunta a API 35 y requiere Android 10 o posterior (API 29).
 - **Gradle**: wrapper `9.8.2` (`gradle/wrapper/gradle-wrapper.properties`) con AGP `9.5.1` y Kotlin `2.4.10`.
 - **Node.js 20+**: ejecuta las regresiones JavaScript (`node --test app/src/test/js/*.test.cjs`) sin dependencias externas.
 - **Python 3**: valida reflexión en APKs R8 y la identidad del paquete.
+
+## Entorno local
+
+Configura `JAVA_HOME` con el JDK 25 y `ANDROID_HOME` con el directorio del SDK. Añade `$JAVA_HOME/bin` y las herramientas de línea de comandos de Android al `PATH`. Desde la raíz del repositorio, comprueba las versiones e instala los paquetes.
+
+```bash
+java -version
+node --version
+sdkmanager --sdk_root="$ANDROID_HOME" --licenses
+sdkmanager --sdk_root="$ANDROID_HOME" \
+  'platforms;android-37.2' 'build-tools;36.0.0' 'build-tools;37.0.0' 'platform-tools'
+./gradlew --version
+```
+
+```bash
+node --test app/src/test/js/*.test.cjs
+./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+python3 tools/check_apk_identity.py \
+  --build-tools "$ANDROID_HOME/build-tools/37.0.0" \
+  --package com.nexo.browser app/build/outputs/apk/debug/*.apk
+```
+
+Los APK de depuración se generan en `app/build/outputs/apk/debug/` para `arm64-v8a` y `armeabi-v7a`. Para comprobar el motor en ejecución, elige el APK que corresponda a tu dispositivo Android ARM.
+
+```bash
+adb shell getprop ro.product.cpu.abilist
+adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+adb shell am start -W -n com.nexo.browser/.MainActivity
+```
+
+El ejemplo instala el APK ARM64. La firma de depuración es distinta a la de los APK publicados. [Actualizaciones y firma](ACTUALIZACIONES-Y-FIRMA.md)
 
 ## Jobs activos en GitHub Actions
 
@@ -34,3 +65,5 @@ Definidos en [`.github/workflows/main.yml`](../.github/workflows/main.yml):
 ## Hashes verificados del SDK
 
 Las huellas SHA-256 de todos los artefactos `com.cefrium:*:0.22.0` (verificadas contra Maven `.sha256` y `SHA256SUMS-0.22.0.asc` firmado con GPG) están fijadas en [`gradle/cefrium-0.22.0.sha256`](../gradle/cefrium-0.22.0.sha256).
+
+La publicación del SDK ofrece el código fuente y los avisos correspondientes a esa versión. [Licencias y avisos de terceros](LICENCIAS.md)
