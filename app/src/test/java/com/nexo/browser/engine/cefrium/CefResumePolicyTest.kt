@@ -102,12 +102,8 @@ class CefResumePolicyTest {
     }
 
     @Test
-    fun browserNeverStealsFocusWhenNativeInputIsFocusedOrOnNormalSurfaceResize() {
-        assertTrue(CefResumePolicy.shouldFocusBrowser(windowFocused = true, nativeInputFocused = false))
-        assertFalse(CefResumePolicy.shouldFocusBrowser(windowFocused = true, nativeInputFocused = true))
-        assertFalse(CefResumePolicy.shouldFocusBrowser(windowFocused = false, nativeInputFocused = false))
-
-        // Un redimensionado normal (p. ej. al abrir el teclado en el omnibox) sin recuperación pendiente no debe invocar onResume/setFocus.
+    fun normalSurfaceResizeDoesNotTriggerResumeWithoutPendingRecovery() {
+        // Un redimensionado normal (p. ej. al abrir el teclado en el omnibox) sin recuperación pendiente no debe invocar onResume.
         assertFalse(CefResumePolicy.shouldResumeOnSurfaceChanged(resumed = true, recovering = false, pip = false))
         assertTrue(CefResumePolicy.shouldResumeOnSurfaceChanged(resumed = true, recovering = true, pip = false))
         assertFalse(CefResumePolicy.shouldResumeOnSurfaceChanged(resumed = true, recovering = true, pip = true))

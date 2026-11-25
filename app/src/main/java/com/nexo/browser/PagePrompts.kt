@@ -6,7 +6,6 @@ import android.os.SystemClock
 import android.text.InputType
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.webkit.MimeTypeMap
 import android.widget.EditText
 import android.widget.LinearLayout
 import com.cefrium.CefriumBrowser
@@ -171,33 +170,24 @@ object PagePrompts {
         runCatching { dialog.show() }.onFailure { if (!answered) { answered = true; handler.cancel() } }
     }
 
-    /** Subir archivos: el selector del sistema; tipos `.ext` pasan a su MIME. */
+    /**
+     * Subir archivos: solo la pestaña visible puede abrir el selector.
+     * Desde Cefrium 0.22.0, devolver `false` delega al selector nativo del motor
+     * (respeta `accept`, `capture`, cámara vía `CefriumFileProvider`, selección
+     * múltiple y carpetas).
+     */
     fun chooseFiles(
         session: EngineSession,
         callback: CefriumFileChooserCallback,
-        params: CefriumFileChooserParams
+        @Suppress("UNUSED_PARAMETER") params: CefriumFileChooserParams
     ): Boolean {
         val host = BrowserHosts.current()
-        // Carpetas: el selector de Chromium (Nexo solo elige archivos).
-        if (params.mode == CefriumFileChooserParams.Mode.OPEN_FOLDER) return false
         if (host == null || TabManager.activeSession() !== session) {
             callback.cancel()
             return true
         }
-        val types = params.acceptTypes.orEmpty()
-            .flatMap { it.split(',') }
-            .map { it.trim().lowercase() }
-            .filter { it.isNotEmpty() }
-            .mapNotNull { type ->
-                if (type.startsWith(".")) MimeTypeMap.getSingleton().getMimeTypeFromExtension(type.removePrefix(".")) else type
-            }
-        var delivered = false
-        host.pickFiles(types, params.mode == CefriumFileChooserParams.Mode.OPEN_MULTIPLE) { uris ->
-            if (delivered) return@pickFiles
-            delivered = true
-            if (uris.isEmpty()) callback.cancel() else callback.select(uris.map(Uri::toString).toTypedArray())
-        }
-        return true
+        host.suppressNextAutoPip()
+        return false
     }
 
     private fun field(activity: android.app.Activity, value: String?, hint: String, password: Boolean = false): EditText =

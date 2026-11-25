@@ -13,26 +13,22 @@ import kotlin.system.exitProcess
 
 class NexoApplication : Application() {
     /*
-     * Los ContentProvider de las librerías (ML Kit, AndroidX Startup, Cefrium)
+     * Los ContentProvider de las librerías (AndroidX, CefriumInitProvider)
      * se crean ANTES de onCreate. Instalar aquí el registro de cierres hace
      * que un fallo en ese arranque también quede guardado y se muestre.
+     *
+     * Desde Cefrium 0.22.0 el SDK registra `CefriumAppComponentFactory` en el
+     * manifiesto y da a los procesos aislados del motor (`:sandboxed_process*`
+     * y `:privileged_process*`) una `Application` vacía, así que `NexoApplication`
+     * solo se instancia en el proceso principal de Nexo.
      */
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
-        if (isMainProcess()) CrashLog.install(this)
+        CrashLog.install(this)
     }
-
-    /**
-     * Chromium dibuja las páginas en procesos aislados (renderizadores) y usa
-     * otros para GPU y red; Android crea esta Application también en ellos.
-     * Un proceso aislado no puede leer los archivos de la app: Nexo solo se
-     * inicia en su proceso principal y deja los demás a Chromium.
-     */
-    private fun isMainProcess(): Boolean = Application.getProcessName() == packageName
 
     override fun onCreate() {
         super.onCreate()
-        if (!isMainProcess()) return
         // Permitir AudioPlaybackCapture solo desde el proceso principal de la app (Android 10+).
         if (Build.VERSION.SDK_INT >= 29) {
             runCatching {
@@ -69,7 +65,6 @@ class NexoApplication : Application() {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (!isMainProcess()) return
         if (level >= 10) com.nexo.browser.engine.cefrium.SpareRendererPool.clear()
         TabManager.onTrimMemory(level)
         SiteIconStore.trimMemory(level)

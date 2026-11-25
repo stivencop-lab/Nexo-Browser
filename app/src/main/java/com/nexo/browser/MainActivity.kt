@@ -162,8 +162,7 @@ class MainActivity :
     private var pendingPipEntry: Runnable? = null
     private var wasBackgrounded = false
 
-    // Selector de archivos y permisos pedidos por páginas web.
-    private var filePickerCallback: ((List<Uri>) -> Unit)? = null
+    // Permisos pedidos por páginas web.
     private val permissionCallbacks = mutableMapOf<Int, (Boolean) -> Unit>()
     private var nextPermissionRequest = REQUEST_SITE_PERMISSIONS
 
@@ -515,7 +514,6 @@ class MainActivity :
         glassControls.forEach { NexoGlass.follow(it, startPage) }
         val cefPage = engineView as? com.nexo.browser.engine.cefrium.CefriumPageView
         if (cefPage != null) {
-            cefPage.isNativeInputFocused = { omnibox.hasFocus() || findInput.hasFocus() }
             webBackdrop = NexoGlassBackdrop(pageView, {
                 cefPage.renderingSurface?.takeIf { !immersive && startPage.visibility != View.VISIBLE }
             }) { allGlassViews.forEach { if (it.visibility == View.VISIBLE) it.invalidate() } }
@@ -2164,8 +2162,8 @@ class MainActivity :
         activityStopped = false
         val tab = TabManager.activeTab()
         if (tab != null && tab.session == null) TabManager.switchTo(tab.id)
-        else {
-            TabManager.resumeActive(focusBrowser = !omnibox.hasFocus() && !findInput.hasFocus())
+        else if (!isInPictureInPictureMode) {
+            TabManager.resumeActive()
             // La superficie de video se recrea al volver: el puente repara el reproductor si quedó congelado.
             val session = tab?.session
             if (session != null && wasBackgrounded) pageView.postDelayed({ ExtensionManager.sendLifecycle(session, true) }, 250L)
@@ -2230,6 +2228,19 @@ class MainActivity :
         if (!MigrationMode.enabled(this)) {
             captureCurrentTabPreview(force = true)
             (engineView as? com.nexo.browser.engine.cefrium.CefriumPageView)?.onHostPause()
+            // En PiP sin audio de fondo persistente, reenviar onPause() a Cefrium 0.22.0:
+            // mantiene el video visible en la ventana mini, lo recupera al encender pantalla
+            // en Android 10 y pausa automáticamente al cerrar PiP. Fuera de PiP la pausa real
+            // sigue ocurriendo en onStop() para no ocultar páginas bajo diálogos o pantalla dividida.
+            if (isInPictureInPictureMode) {
+                val tab = TabManager.activeTab()
+                val keepAudioOnClose = tab != null &&
+                    BrowserPrefs.backgroundMedia(this) &&
+                    BrowserMediaController.isPlaybackActive(tab.id)
+                if (!keepAudioOnClose) {
+                    (tab?.session as? com.nexo.browser.engine.cefrium.CefriumEngineSession)?.onHostPauseInPip()
+                }
+            }
             webBackdrop?.setRunning(false)
             com.nexo.browser.engine.cefrium.SpareRendererPool.stop(this)
         }
@@ -2838,32 +2849,13 @@ class MainActivity :
         requestPermissions(permissions, code)
     }
 
-    override fun pickFiles(mimeTypes: List<String>, multiple: Boolean, onResult: (List<Uri>) -> Unit) {
-        // Un selector anterior sin respuesta se da por cancelado.
-        filePickerCallback?.invoke(emptyList())
-        filePickerCallback = onResult
-
-        val types = mimeTypes.map { it.trim().lowercase() }.filter { '/' in it }.distinct()
-        val picker = Intent(Intent.ACTION_GET_CONTENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = types.singleOrNull() ?: "*/*"
-            if (types.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, types.toTypedArray())
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
-        }
-        runCatching {
-            suppressAutoPipOnce = true
-            @Suppress("DEPRECATION")
-            startActivityForResult(Intent.createChooser(picker, "Elegir archivo"), REQUEST_FILE_PICKER)
-        }.onFailure {
-            filePickerCallback = null
-            onResult(emptyList())
-            Toast.makeText(this, "No hay una app para elegir archivos", Toast.LENGTH_LONG).show()
-        }
-    }
-
     override fun launch(intent: Intent) {
         suppressAutoPipOnce = true
         startActivity(intent)
+    }
+
+    override fun suppressNextAutoPip() {
+        suppressAutoPipOnce = true
     }
 
     @Deprecated("Deprecated in Java")
@@ -2871,22 +2863,8 @@ class MainActivity :
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == PlaybackAudioCapture.REQUEST) { PlaybackAudioCapture.result(this,resultCode,data); return }
-        if (requestCode != REQUEST_FILE_PICKER) {
-            // Intents que abrió Chromium (cámara, documentos): MainActivity no es una ComponentActivity.
-            com.nexo.browser.engine.Engines.current.onActivityResult(requestCode, resultCode, data)
-            return
-        }
-        val callback = filePickerCallback ?: return
-        filePickerCallback = null
-
-        val uris = mutableListOf<Uri>()
-        if (resultCode == RESULT_OK && data != null) {
-            data.clipData?.let { clip ->
-                for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { uris += it }
-            }
-            if (uris.isEmpty()) data.data?.let { uris += it }
-        }
-        callback(uris.distinct())
+        // Intents que abrió Chromium (cámara, documentos, selector nativo de archivos): MainActivity no es una ComponentActivity.
+        com.nexo.browser.engine.Engines.current.onActivityResult(requestCode, resultCode, data)
     }
 
     /** Aplica un cambio de tema en vivo (desde el agente de Nexo AI o el cambio de modo del sistema). */
@@ -2953,8 +2931,6 @@ class MainActivity :
         if (isFinishing && !isChangingConfigurations) LiveCaptions.stopAll()
         ExtensionManager.detachPromptActivity(this)
         BrowserHosts.detach(this)
-        filePickerCallback?.invoke(emptyList())
-        filePickerCallback = null
         permissionCallbacks.values.forEach { it(false) }
         permissionCallbacks.clear()
         pageView.removeCallbacks(idlePreview)
@@ -3040,7 +3016,6 @@ class MainActivity :
         private const val EXTRA_CONSUMED = "nexo.intent_consumed"
         private const val REQUEST_MEDIA_NOTIFICATIONS = 912
         private const val REQUEST_PIP_CONTROL = 913
-        private const val REQUEST_FILE_PICKER = 920
         private const val REQUEST_SITE_PERMISSIONS = 2000
 
         /** Acciones del menú que solo tienen sentido con una página abierta. */

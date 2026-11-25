@@ -4,53 +4,120 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Canal entre Nexo y los marcos de una pestaña (o del panel) sobre
- * `window.cefriumQuery`, que solo admite respuestas inmediatas.
+ * Canal bidireccional entre Nexo y los marcos de una pestaña (o del panel /
+ * anfitrión de IA) sobre `window.cefriumQuery`, aprovechando respuestas
+ * asíncronas de `QueryCallback` sin sondeos periódicos (`setInterval`).
  *
- * Cada consulta de una página llega envuelta como `{"m": mensaje, "s": n}`:
- * `m` es el mensaje del puerto (`{id, kind, payload}`, el formato de
- * `phantom-shim.js`), `s` el último evento que ese marco ya recibió (-1 si
- * acaba de empezar). La respuesta lleva la contestación a `m` y los eventos
- * que Nexo publicó después de `s` (cambios de ajustes, órdenes de video,
- * respuestas tardías). Los marcos sin nada que preguntar consultan de vez en
- * cuando con solo `s`; [wake] les avisa de que hay eventos nuevos.
+ * Protocolo por consulta:
+ * - Llamada RPC (`{"m": mensaje, "s": n}`): Nexo responde inmediatamente si el
+ *   resultado es síncrono, o conserva el `QueryCallback` y responde después
+ *   cuando termina el trabajo asíncrono (Dark Reader, IA, actualización de
+ *   listas, `fetch` del anfitrión).
+ * - Espera de eventos (`{"m": null, "s": n, "w": true, "k": clave}`): si ya
+ *   hay eventos posteriores a `n` (o `n < 0` en el saludo inicial), responde al
+ *   instante; si no, conserva el `QueryCallback` y lo resuelve inmediatamente
+ *   en cuanto [push] publica un evento nuevo (alcanza también a iframes y al
+ *   anfitrión oculto sin `evaluateJavaScript` ni temporizadores).
+ *
+ * Como Cefrium 0.22.0 no expone `onQueryCanceled` en `QueryHandler`, el mapa
+ * de esperas se acota a [MAX_WAITERS] por clave de marco y se limpia en
+ * [reset] y [dispose].
  *
  * Sin Android: se prueba en la JVM.
  */
 class PageChannel {
+    private class Waiter(val since: Long, val deliver: (String) -> Unit)
+
     private val lock = Any()
     private val events = ArrayDeque<Pair<Long, String>>()
+    private val waiters = LinkedHashMap<String, Waiter>()
     private var seq = 0L
+    private var nextAnonWaiter = 0L
 
-    /** Avisa a la página de que hay eventos (hilo principal); lo fija el motor. */
+    /** Gancho opcional al publicar un evento (p. ej. pruebas). */
     @Volatile var wake: () -> Unit = {}
 
     /** Algún marco preguntó desde el último [reset]: hay scripts de Nexo en la página. */
     @Volatile var connected = false
         private set
 
+    /** Número de esperas `cefriumQuery` aparcadas ahora mismo (diagnóstico y pruebas). */
+    fun pendingWaiterCount(): Int = synchronized(lock) { waiters.size }
+
     /** Mensaje a todos los marcos (en orden, una sola vez cada uno). */
     fun push(text: String) {
+        val ready: List<Pair<Waiter, String>>
         synchronized(lock) {
             seq++
             events.addLast(seq to text)
             while (events.size > MAX_EVENTS) events.removeFirst()
+            ready = if (waiters.isEmpty()) {
+                emptyList()
+            } else {
+                val list = waiters.values.map { waiter -> waiter to buildEnvelopeLocked(null, waiter.since, Long.MAX_VALUE) }
+                waiters.clear()
+                list
+            }
+        }
+        for ((waiter, payload) in ready) {
+            runCatching { waiter.deliver(payload) }
         }
         runCatching { wake() }
     }
 
-    /** Petición de un marco: el mensaje que trae (o `null` si solo consulta) y desde qué evento. */
-    class Request(val message: String?, val since: Long)
+    /**
+     * Petición de un marco: [message] (o `null` si espera eventos), [since] último
+     * evento recibido, [wait] si puede quedarse aparcada hasta el próximo [push] y
+     * [waiterKey] identificador por marco para reemplazar su propia espera.
+     */
+    class Request(
+        val message: String?,
+        val since: Long,
+        val wait: Boolean = false,
+        val waiterKey: String? = null
+    )
 
     fun parse(raw: String): Request? = runCatching {
         if (raw.length > MAX_REQUEST) return null
         val json = JSONObject(raw)
         val message = if (json.has("m") && !json.isNull("m")) json.getString("m") else null
-        Request(message, json.optLong("s", -1L))
+        val wait = json.optBoolean("w", false)
+        val key = json.optString("k").takeIf { it.length in 1..64 && it.all { c -> c.isLetterOrDigit() || c == '_' || c == '-' } }
+        Request(message, json.optLong("s", -1L), wait, key)
     }.getOrNull()
 
     /** Secuencia actual del canal (para no perder eventos publicados durante la misma consulta). */
     fun currentSeq(): Long = synchronized(lock) { seq }
+
+    /**
+     * Atiende una espera larga de eventos (`w = true`):
+     * - Si `since < 0` (saludo inicial), responde al instante con `{seq}` sin repetir eventos antiguos.
+     * - Si ya existen eventos con `n > since`, los entrega de inmediato.
+     * - En caso contrario, aparca [deliver] hasta el siguiente [push].
+     */
+    fun awaitEvents(since: Long, waiterKey: String?, deliver: (String) -> Unit) {
+        connected = true
+        val immediate: String? = synchronized(lock) {
+            when {
+                since < 0L -> JSONObject().put("seq", seq).toString()
+                since < seq -> buildEnvelopeLocked(null, since, Long.MAX_VALUE)
+                else -> {
+                    val key = waiterKey ?: "anon:${++nextAnonWaiter}"
+                    waiters.remove(key)
+                    while (waiters.size >= MAX_WAITERS) {
+                        val oldest = waiters.entries.iterator()
+                        if (oldest.hasNext()) {
+                            oldest.next()
+                            oldest.remove()
+                        } else break
+                    }
+                    waiters[key] = Waiter(since, deliver)
+                    null
+                }
+            }
+        }
+        if (immediate != null) runCatching { deliver(immediate) }
+    }
 
     /**
      * Respuesta a un marco: [reply] para su mensaje y los eventos nuevos desde [since].
@@ -59,27 +126,51 @@ class PageChannel {
      */
     fun envelope(reply: String?, since: Long, generatedAfter: Long = Long.MAX_VALUE): String {
         connected = true
+        return synchronized(lock) { buildEnvelopeLocked(reply, since, generatedAfter) }
+    }
+
+    /**
+     * Respuesta directa para una llamada RPC asíncrona resuelta después: no
+     * modifica `seq` ni duplica eventos, que viajan por la espera dedicada.
+     */
+    fun replyEnvelope(reply: String?): String {
+        connected = true
         val json = JSONObject()
         if (reply != null) json.put("reply", reply)
-        synchronized(lock) {
-            json.put("seq", seq)
-            val cutoff = if (since >= 0) since else generatedAfter
-            if (cutoff < seq) {
-                val list = JSONArray()
-                events.forEach { (n, text) -> if (n > cutoff) list.put(text) }
-                if (list.length() > 0) json.put("events", list)
-            }
+        return json.toString()
+    }
+
+    private fun buildEnvelopeLocked(reply: String?, since: Long, generatedAfter: Long): String {
+        val json = JSONObject()
+        if (reply != null) json.put("reply", reply)
+        json.put("seq", seq)
+        val cutoff = if (since >= 0) since else generatedAfter
+        if (cutoff < seq) {
+            val list = JSONArray()
+            events.forEach { (n, text) -> if (n > cutoff) list.put(text) }
+            if (list.length() > 0) json.put("events", list)
         }
         return json.toString()
     }
 
-    /** Documento nuevo en la página principal: hasta que pregunte, no hay scripts de Nexo. */
+    /** Documento nuevo en la página principal: libera esperas obsoletas hasta que el nuevo marco pregunte. */
     fun reset() {
         connected = false
+        synchronized(lock) { waiters.clear() }
+    }
+
+    /** Cierre definitivo de la pestaña, panel o anfitrión: libera todas las referencias de callbacks. */
+    fun dispose() {
+        connected = false
+        synchronized(lock) {
+            waiters.clear()
+            events.clear()
+        }
     }
 
     companion object {
         const val MAX_EVENTS = 64
+        const val MAX_WAITERS = 32
         const val MAX_REQUEST = 512 * 1024
     }
 }

@@ -955,8 +955,8 @@ object NxrRuntime {
         }.trim()
         body.addView(NexoUi.note(activity, provenance))
 
-        // Permisos y alcance real (matriz de compatibilidad sobre Cefrium 0.21.0)
-        body.addView(NexoUi.section(activity, "Permisos y compatibilidad (Cefrium 0.21.0)"))
+        // Permisos y alcance real (matriz de compatibilidad sobre Cefrium 0.22.0)
+        body.addView(NexoUi.section(activity, "Permisos y compatibilidad (Cefrium 0.22.0)"))
         val info = buildString {
             if (ext.hostPermissions.isNotEmpty()) {
                 appendLine("Sitios solicitados: ${ext.hostPermissions.take(6).joinToString(", ")}")

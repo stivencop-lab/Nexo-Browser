@@ -46,6 +46,15 @@ def manifest_classes(aapt2, apk):
                 r"\s*A: http://schemas.android.com/apk/res/android:nativeService\([^)]*\)=true", line):
             native_services.add(component)
             continue
+        # AppComponentFactory (Cefrium 0.22+ usa CefriumAppComponentFactory para aislar
+        # Application de los procesos del motor): Android la instancia por reflexión.
+        if element == "application":
+            factory = re.match(
+                r'\s*A: http://schemas.android.com/apk/res/android:appComponentFactory\([^)]*\)="([^"]+)"', line)
+            if factory:
+                val = factory.group(1)
+                classes.add(package + val if val.startswith(".") else val)
+                continue
         name = re.match(r'\s*A: http://schemas.android.com/apk/res/android:name\([^)]*\)="([^"]+)"', line)
         if not name or element is None:
             continue

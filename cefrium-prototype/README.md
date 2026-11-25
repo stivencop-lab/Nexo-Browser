@@ -1,6 +1,6 @@
 # Cefrium prototype
 
-Standalone arm64 smoke project for Cefrium 0.21.0 (Chromium 156.0.8078.96). It is intentionally separate from the main build: Cefrium requires JDK 25, Gradle 9.7.1+, AGP 9.4+ and minSdk 29.
+Standalone arm64 smoke project for Cefrium 0.22.0 (Chromium 158.0.8127.18). It is intentionally separate from the main build: Cefrium requires JDK 25, Gradle 9.7.1+, AGP 9.4+ and minSdk 29.
 
 ## Build
 
@@ -10,7 +10,7 @@ JDK 25 and an Android SDK with platform 37 and build-tools 37.0.0 are required. 
     export ANDROID_HOME=/path/to/android-sdk
     ./gradlew :app:assembleDebug --no-daemon      # Windows: gradlew.bat from CMD or Git Bash, not PowerShell
 
-Output: `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (~207 MB, arm64-v8a only, debug-signed).
+Output: `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (arm64-v8a only, debug-signed; since 0.22.0 `cefrium-sdk-core` omits Google Play services / Firebase / ML Kit).
 
 ## Smoke test on a device (Android 10+, arm64)
 
@@ -42,6 +42,6 @@ fullscreen on any HTML5 video, downloads from any file link, camera/microphone a
 | `CefriumPermissionHandler` | `onPermissionRequest`; `grant()`/`deny()` answer the whole permission set |
 | `CefriumWindowHandler` | `onCreateWindow(opener, popup, url, userGesture)`: the popup is a `CefriumBrowser` |
 | `CefriumFullscreenHandler` | `onFullscreenChanged` |
-| `CefriumMediaController` | `onMediaAccessChanged`, `isPlayingAudio`, `setAudioMuted`, `stopMediaSession` (no playback-metadata callback in 0.21.0) |
+| `CefriumMediaController` | `onMediaAccessChanged`, `isPlayingAudio`, `setAudioMuted`, `stopMediaSession` (still no playback-metadata callback in 0.22.0) |
 | `CefriumDownloadManager` | `CefriumDownloadClient` (per browser) + `CefriumProfile.DownloadObserver` (per profile) |
 | `CefriumCookieStore` | `CefriumCookieManager`: Set-Cookie strings, `getCookie` returns the Cookie header |

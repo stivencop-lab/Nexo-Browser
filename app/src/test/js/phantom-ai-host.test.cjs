@@ -176,7 +176,16 @@ test('queued AI requests flushed during ready are delivered over the real cefriu
   const portSource = fs.readFileSync(path.join(nexo, 'cefrium-port.js'), 'utf8');
   const events = [];
   let seq = 0;
-  const push = data => { events.push([++seq, JSON.stringify(data)]); };
+  const waiters = new Map();
+  const push = data => {
+    events.push([++seq, JSON.stringify(data)]);
+    const readyWaiters = [...waiters.values()];
+    waiters.clear();
+    for (const w of readyWaiters) {
+      const list = events.filter(([n]) => n > w.s).map(([, text]) => text);
+      Promise.resolve().then(() => w.onSuccess(JSON.stringify({ seq, events: list })));
+    }
+  };
   const queued = [];
   const replies = new Map();
   let rid = 0;
@@ -193,7 +202,18 @@ test('queued AI requests flushed during ready are delivered over the real cefriu
   const pending = request({ type: 'AI_MEMORY_LIST' }, { panel: true });
 
   const nativeQuery = ({ request: raw, onSuccess }) => {
-    const { m, s } = JSON.parse(raw);
+    const { m, s, w, k } = JSON.parse(raw);
+    if (m === null && w) {
+      if (s < 0) {
+        Promise.resolve().then(() => onSuccess(JSON.stringify({ seq })));
+      } else if (s < seq) {
+        const list = events.filter(([n]) => n > s).map(([, text]) => text);
+        Promise.resolve().then(() => onSuccess(JSON.stringify({ seq, events: list })));
+      } else {
+        waiters.set(k || 'w', { s, onSuccess });
+      }
+      return;
+    }
     const before = seq;
     let reply;
     if (m !== null) {
@@ -223,14 +243,14 @@ test('queued AI requests flushed during ready are delivered over the real cefriu
     console, URL, Map, Set, Promise, JSON, Object, Array, Error, TypeError, Math, Date, Number, String, Boolean, RegExp,
     TextEncoder, TextDecoder, AbortController, Response, Headers, DOMException, crypto: globalThis.crypto,
     document: { visibilityState: 'hidden' },
-    setInterval: (fn, ms) => { const t = setInterval(fn, ms); t.unref(); return t; },
+    setInterval: () => { throw new Error('cefrium-port must not use setInterval'); },
     setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; },
     clearTimeout,
     cefriumQuery: nativeQuery
   });
   context.globalThis = context;
   context.window = context;
-  vm.runInContext(portSource + '\nnexoCefriumPort(true, { alwaysPoll: true, pollMs: 1000 });\n' +
+  vm.runInContext(portSource + '\nnexoCefriumPort(true);\n' +
     hostShim + '\nglobalThis.browser = nexoAiHostShim("https://phantomshield.nexo.invalid/", {version:"9.2.1"});', context);
   for (const file of scriptsOf(fs.readFileSync(path.join(assets, 'host/ai-host.html'), 'utf8'))) {
     vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: file });

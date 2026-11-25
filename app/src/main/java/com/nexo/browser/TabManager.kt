@@ -648,12 +648,14 @@ object TabManager {
             session ->
 
             /*
-             * PiP sigue siendo contenido visible.
-             * Nunca suspender multimedia durante esta transición.
+             * PiP sigue siendo contenido visible: evitar que la sesión suspenda
+             * medios como inactiva. Desde Cefrium 0.22.0, `browser.onPause()`
+             * mantiene la página visible y reproduciendo en PiP nativamente;
+             * no se invoca `setActive(true)`/`onResume()` aquí para no cancelar
+             * la pausa diferida ni la recuperación de pantalla en Android 10.
              */
             session.setSuspendMediaWhenInactive(false)
             session.setHighPriority(true)
-            session.setActive(true)
             ExtensionManager.setTabActive(session, true)
         }
     }
@@ -708,13 +710,12 @@ object TabManager {
         persistNow()
     }
 
-    fun resumeActive(focusBrowser: Boolean = true) {
+    fun resumeActive() {
         activeSession()?.let {
             session ->
 
             session.setHighPriority(true)
             session.setActive(true)
-            if (focusBrowser) session.setFocused(true)
 
             ExtensionManager.setTabActive(
                 session,

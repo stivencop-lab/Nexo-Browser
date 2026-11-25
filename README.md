@@ -3,20 +3,20 @@
 
   <h1>Nexo Browser</h1>
   <p>Navegador nativo para Android con Chromium, bloqueo integrado y herramientas para leer, buscar y organizar la web.</p>
-  <p><strong>v0.39.2 · Liquid Glass</strong> · Android 10+ · Chromium 156 · Cefrium 0.21.0</p>
+  <p><strong>Liquid Glass</strong> · Android 10+ · Chromium 158 · Cefrium 0.22.0</p>
   <p><a href="#descargar">Descargar APK</a> · <a href="#primeros-pasos">Primeros pasos</a> · <a href="#compatibilidad-de-extensiones">Extensiones</a> · <a href="#desarrollo">Desarrollo</a></p>
 </div>
 
 ## Descargar
 
-**Nexo Browser v0.39.2** · `versionCode 76` · Paquete `com.nexo.browser`
+Última versión publicada: **Nexo Browser v0.39.7** · `versionCode 79` · Paquete `com.nexo.browser` *(la migración a Chromium 158 / Cefrium 0.22.0 vive en el código fuente actual y se incluirá en la próxima release tras validación en dispositivo).*
 
 | Dispositivo | Tamaño | APK firmado |
 | --- | ---: | --- |
-| Android ARM de 64 bits | 111,2 MiB | [Descargar arm64-v8a](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.2/Nexo-v0.39.2-arm64-v8a.apk) |
-| Android ARM de 32 bits | 83,8 MiB | [Descargar armeabi-v7a](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.2/Nexo-v0.39.2-armeabi-v7a.apk) |
+| Android ARM de 64 bits | 111,4 MiB | [Descargar arm64-v8a](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.7/Nexo-v0.39.7-arm64-v8a.apk) |
+| Android ARM de 32 bits | 84,0 MiB | [Descargar armeabi-v7a](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.7/Nexo-v0.39.7-armeabi-v7a.apk) |
 
-Puedes consultar la lista oficial de archivos y sus sumas. [Ver release v0.39.2](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.39.2) · [Descargar SHA256SUMS.txt](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.2/SHA256SUMS.txt)
+Puedes consultar la lista oficial de archivos y sus sumas. [Ver release v0.39.7](https://github.com/stivencop414-bot/Nexo-Browser/releases/tag/v0.39.7) · [Descargar SHA256SUMS.txt](https://github.com/stivencop414-bot/Nexo-Browser/releases/download/v0.39.7/SHA256SUMS.txt)
 
 <details>
 <summary>Elegir arquitectura y comprobar la descarga</summary>
@@ -33,27 +33,28 @@ Elige `arm64-v8a` si aparece en la lista. Si el dispositivo admite ARM de 32 bit
 sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
-Las sumas oficiales para esta versión son las siguientes.
+Las sumas oficiales para `v0.39.7` son las siguientes.
 
 | APK | SHA-256 |
 | --- | --- |
-| `Nexo-v0.39.2-arm64-v8a.apk` | `998cbd9c039d7c7052b8112c55e8c9a031f378bf2b66f7d04d8c5dfd1ee28cd1` |
-| `Nexo-v0.39.2-armeabi-v7a.apk` | `091f6a9de85e038fb554a65fde39e365edfd3ebbecbe811b06f294433b7d84e7` |
+| `Nexo-v0.39.7-arm64-v8a.apk` | `b8a818ebae49be61c43761872e40b7acec0e33f69c3c93248924f8eeb64630e1` |
+| `Nexo-v0.39.7-armeabi-v7a.apk` | `7b4b7a7dba1c3fd87e150a9bc5982023d443040baa66a2e8a70436b2bbde35a3` |
 
 Las actualizaciones conservan los datos cuando el APK mantiene el paquete y el certificado de firma y aumenta el `versionCode`. Consulta la ruta de importación si vienes del paquete anterior. [Firma y actualizaciones](docs/ACTUALIZACIONES-Y-FIRMA.md) · [Transferencia de perfil](docs/TRANSFERENCIA-PERFIL.md)
 
 </details>
 
-## Novedades en v0.39.2
+## Motor Chromium 158 y novedades recientes
 
 | Área | Qué cambia |
 | --- | --- |
+| **Cefrium 0.22.0 (Chromium 158)** | Actualización verificada con GPG/SHA-256 (`gradle/cefrium-0.22.0.sha256`), sin dependencias de Google Play services, Firebase ni ML Kit. Aislamiento automático de procesos vía `CefriumAppComponentFactory`, `Cefrium.diagnostics(context)` en Ajustes › versión, Client Hints de escritorio (`CefriumUserAgentMetadata`) y selector nativo de archivos/cámara. |
+| **PiP, foco y puente sin polling** | `MainActivity.onPause()` delega PiP a `browser.onPause()` (preservando audio en segundo plano cuando está activo), se retiraron los workarounds de foco sobre `EditText` y el puente `cefriumQuery` pasa a callbacks asíncronos aparcados (cero `setInterval`). Ver [migración y límites verificados de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md). |
 | **Liquid Glass** | Isla de 56 dp y contador de pestañas separado sobre la página. Temas Obsidian, OLED y Paper. Intensidad de cristal ajustable y Dock Clásico disponible. |
-| **Reanudación** | Nexo mantiene una captura de la página mientras Cefrium recupera la superficie. Un watchdog de 450 ms puede recrear el navegador de la pestaña y restaurar el estado de navegación. |
-| **Memoria** | Las pestañas normales aptas se descartan tras cinco minutos de inactividad. Las miniaturas nuevas se guardan en WebP. En equipos con más de 4 GiB, Nexo prepara un host Cefrium en reposo. |
+| **Reanudación y memoria** | `CefResumeBridge` queda instrumentado con contadores `recoveries`/`watchdog` para confirmar en hardware real si `0.22.0` permite retirarlo. Las pestañas normales aptas se descartan tras cinco minutos de inactividad y las miniaturas se guardan en WebP. |
 | **Extensiones de escritorio** | Verificación CRX3 multifirma, popups con viewport adaptable y origen por extensión, y reglas DNR estáticas evaluadas en el interceptor de PhantomShield. |
 
-La auditoría detalla las pruebas JVM y las mediciones pendientes en Android ARM, entre ellas los diez ciclos de reanudación, el tiempo de fotograma a 120 Hz y la ejecución del popup de Dark Reader. [Auditoría v0.39.2](docs/AUDITORIA-0.39.2.md)
+La auditoría histórica de `v0.39.2` y el informe técnico vigente de `Cefrium 0.22.0` detallan la validación automatizada y las pruebas pendientes en Android ARM. [Migración y límites de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md) · [Auditoría v0.39.2](docs/AUDITORIA-0.39.2.md)
 
 <p align="center">
   <img src="docs/capturas/v0.39.2-paper.png" alt="Configuración de Nexo en tema Paper" width="215" />
@@ -87,7 +88,7 @@ Nexo Command ofrece también `@history`, `@settings` y `@bookmarks`. Prueba `@se
 
 El Hub acepta fichas de **Chrome Web Store** y **Edge Add-ons**, archivos locales CRX/ZIP/XPI y paquetes HTTPS directos. NXR revisa el manifiesto, las firmas, los permisos y la continuidad de clave antes de la instalación o actualización.
 
-| Capacidad | Alcance en v0.39.2 |
+| Capacidad | Alcance actual (Cefrium 0.22.0) |
 | --- | --- |
 | **CRX3 y manifiestos MV2/MV3** | El instalador interpreta el manifiesto, verifica las firmas del CRX y ofrece un informe de compatibilidad. |
 | **Scripts, CSS y popups** | NXR ejecuta scripts declarados en sitios permitidos y abre popups y opciones en un panel Cefrium con origen separado por extensión. El panel expone un conjunto limitado de APIs. |
@@ -98,7 +99,7 @@ El veredicto del Hub describe las capacidades disponibles para cada paquete. Los
 
 ## Desarrollo
 
-**Requisitos** · JDK 25, Node.js 20+, Android SDK `platforms;android-37.2` y `build-tools;37.0.0`. El wrapper usa Gradle 9.8.2. La app se compila con SDK 37.2, `minSdk 29` y `targetSdk 35`. Cefrium se distribuye bajo LGPL-3.0 y las huellas de sus dependencias están fijadas en el repositorio. [Huellas de Cefrium](gradle/cefrium-0.21.0.sha256) · [Configuración del CI de Cefrium](docs/CEFrium-CI-SETUP.md)
+**Requisitos** · JDK 25, Node.js 20+, Android SDK `platforms;android-37.2` y `build-tools;37.0.0`. El wrapper usa Gradle 9.8.2. La app se compila con SDK 37.2, `minSdk 29` y `targetSdk 35`. Cefrium se distribuye bajo LGPL-3.0-or-later y las huellas de sus dependencias están fijadas en el repositorio. [Huellas de Cefrium 0.22.0](gradle/cefrium-0.22.0.sha256) · [Configuración del CI de Cefrium](docs/CEFrium-CI-SETUP.md)
 
 ```bash
 # Regresiones JavaScript
@@ -118,14 +119,14 @@ node --test app/src/test/js/*.test.cjs
 | Componente | Entrada en el código |
 | --- | --- |
 | UI Kotlin/XML y material | `activity_main.xml`, `MainActivity`, `NexoTokens`, `NexoGlass`, `NexoGlassBackdrop`, `GlassPreferences` |
-| Cefrium y ciclo de vida | `engine/cefrium/`, `CefResumeBridge`, `CefriumEngineSession`, `SpareRendererPool` |
+| Cefrium y ciclo de vida | `engine/cefrium/`, `CefResumeBridge`, `CefriumEngineSession`, `EngineDiagnostics`, `SpareRendererPool` |
 | Pestañas y miniaturas | `TabManager`, `TabFreezeManager`, `TabPreviewStore`, `TabSwitcher` |
 | NXR y privacidad | `extensions/hub/`, `extensions/nxr/`, `Crx3Parser`, `DnrBridge`, `shield/PhantomShield` |
 | Herramientas de página | `PageBridge`, `PageChannel`, `assets/nexo/`, `reader/`, `workspace/`, `ai/` |
 
-La integración consume la API pública `com.cefrium.*`. Las claves de proveedores se almacenan con Android Keystore. El historial, las miniaturas y los espacios de trabajo excluyen las pestañas privadas. [Arquitectura de Chromium nativo](docs/CHROMIUM-NATIVE-MIGRATION.md)
+La integración consume solo la API pública `com.cefrium.*`. Las claves de proveedores se almacenan con Android Keystore. El historial, las miniaturas y los espacios de trabajo excluyen las pestañas privadas. [Arquitectura de Chromium nativo](docs/CHROMIUM-NATIVE-MIGRATION.md) · [Migración y límites de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md)
 
-**CI y firma.** GitHub Actions ejecuta regresiones JavaScript y JVM, pruebas Robolectric, compilación y lint. El flujo de release verifica la identidad del APK y el certificado de firma antes de publicar los dos APK y su archivo de sumas. Los secretos se usan en el paso de firma. [Flujo de GitHub Actions](.github/workflows/main.yml) · [Firma y publicación](docs/ACTUALIZACIONES-Y-FIRMA.md)
+**CI y firma.** GitHub Actions ejecuta regresiones JavaScript y JVM, pruebas Robolectric, compilación, lint y verificación de reflexión R8 (`tools/check_release_reflection.py`, incluida `CefriumAppComponentFactory`). El flujo de release verifica la identidad del APK y el certificado de firma antes de publicar los dos APK y su archivo de sumas. Los secretos se usan en el paso de firma. [Flujo de GitHub Actions](.github/workflows/main.yml) · [Firma y publicación](docs/ACTUALIZACIONES-Y-FIRMA.md)
 
 </details>
 
@@ -133,11 +134,11 @@ La integración consume la API pública `com.cefrium.*`. Las claves de proveedor
 
 | Tema | Guías |
 | --- | --- |
-| **v0.39.2** | [Auditoría y estado de validación](docs/AUDITORIA-0.39.2.md), [Extension Hub](docs/NEXO-EXTENSION-HUB.md) |
+| **Cefrium 0.22.0 y estado** | [Migración y límites verificados de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md), [Extension Hub](docs/NEXO-EXTENSION-HUB.md), [Auditoría v0.39.2](docs/AUDITORIA-0.39.2.md) |
 | **Interfaz y organización** | [Nexo UI 7.0, referencia histórica](docs/NEXO-UI-7.0-LIQUID-CRAFT.md), [Grupos, rutas y Burner](docs/PESTANAS-RED-BURNER.md) |
 | **Navegación y multimedia** | [PhantomShield](docs/PHANTOMSHIELD.md), [Traducción en página](docs/TRADUCCION-EN-LINEA.md), [Audio y estabilidad](docs/ESTABILIDAD-Y-AUDIO-ANDROID.md) |
 | **IA y datos** | [Nexo AI 5.1](docs/NEXO-AI-5.1.md), [Memoria IA local](docs/IA-MEMORIA.md), [Transferencia de perfil](docs/TRANSFERENCIA-PERFIL.md) |
-| **Desarrollo y distribución** | [Migración a Chromium](docs/CHROMIUM-NATIVE-MIGRATION.md), [Identidad Android](docs/IDENTIDAD-NEXO.md), [Actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md) |
+| **Desarrollo y distribución** | [Migración a Chromium](docs/CHROMIUM-NATIVE-MIGRATION.md), [Configuración del CI](docs/CEFrium-CI-SETUP.md), [Identidad Android](docs/IDENTIDAD-NEXO.md), [Actualizaciones y firma](docs/ACTUALIZACIONES-Y-FIRMA.md) |
 
 <details>
 <summary>Historial de diseño y auditorías</summary>

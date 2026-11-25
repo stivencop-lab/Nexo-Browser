@@ -1,6 +1,6 @@
 # Nexo Extension Hub
 
-> Guía para Nexo Browser **v0.39.2**, NXR y Cefrium **0.21.0** (Chromium 156).
+> Guía para Nexo Browser, NXR y Cefrium **0.22.0** (Chromium 158).
 
 ## Instalar y revisar un complemento
 
@@ -21,11 +21,11 @@ El Hub separa la resolución de enlaces, las descargas, la inspección de paquet
 | **Resolutor de tiendas y URLs** | `extensions/hub/ExtensionStoreResolver.kt` | Detecta fichas oficiales de Chrome Web Store (`chromewebstore.google.com/detail/...`, `chrome.google.com/webstore/detail/...`), Microsoft Edge Add-ons (`microsoftedge.microsoft.com/addons/detail/...`), IDs de 32 caracteres `[a-p]`, búsquedas y URLs HTTPS directas (`.crx`/`.zip`/`.xpi`). |
 | **Cliente de red aislado** | `extensions/hub/ExtensionStoreClient.kt` | Descarga metadatos y paquetes sin cookies ni sesiones del navegador, con validación manual de cada redirección (máx. 5 saltos), listas blancas de hosts, límite de descarga de `256 MiB` y verificación SHA-256 + CRX + versión. |
 | **Verificador CRX2/CRX3** | `extensions/CrxPackage.kt` y `extensions/Crx3Parser.kt` | Lee la cabecera, verifica las firmas RSA/ECDSA de CRX3 en una pasada sobre el ZIP, comprueba el identificador de la extensión y calcula `publicKeySha256` para las actualizaciones. Conserva la verificación CRX2. |
-| **Matriz de compatibilidad** | `extensions/ExtensionCompatibility.kt` | Evalúa el manifiesto contra la matriz auditable de **20 APIs WebExtension** sobre Cefrium `0.21.0`, emite `InstallVerdict` y define los 4 estados reales del ciclo de vida. |
+| **Matriz de compatibilidad** | `extensions/ExtensionCompatibility.kt` | Evalúa el manifiesto contra la matriz auditable de **20 APIs WebExtension** sobre Cefrium `0.22.0`, emite `InstallVerdict` y define los 4 estados reales del ciclo de vida. |
 | **Instalador transaccional** | `extensions/nxr/NxrPackageInstaller.kt` | Inspecciona permisos/riesgos, defiende contra *Zip Slip*, duplicados y bombas ZIP, exige continuidad de clave (`publicKeySha256`) en actualizaciones, instala atómicamente con *rollback* y aplica **estado seguro por defecto (`enabled = false`)** para paquetes riesgosos/parciales/no verificados. |
 | **Gestor de actualizaciones** | `extensions/hub/ExtensionUpdateManager.kt` | Consulta nuevas versiones en CWS/Edge, calcula `PermissionDiff` (permisos y hosts añadidos/eliminados) y exige consentimiento explícito del usuario antes de aplicar cualquier ampliación de privilegios. |
 | **Gestión de extensiones** | `extensions/hub/ExtensionHubSheets.kt` y `ExtensionsActivity.kt` | Ficha previa a la instalación, progreso real, aviso honesto de compatibilidad, control por sitio, diagnóstico y actualización individual o masiva. |
-| **Barra contextual en navegación** | `MainActivity.kt` (`updateExtensionInstallBanner`) | Ofrece «Instalar en Nexo» o «Gestionar en Nexo» al detectar una ficha oficial. El modo escritorio automático se configura en Cefrium para la navegación a la tienda. |
+| **Barra contextual en navegación** | `MainActivity.kt` (`updateExtensionInstallBanner`) | Ofrece «Instalar en Nexo» o «Gestionar en Nexo» al detectar una ficha oficial. El modo escritorio automático se configura en Cefrium (con `CefriumUserAgentMetadata`) para la navegación a la tienda. |
 | **Panel HTML** | `extensions/nxr/NxrExtensionPanel.kt` y `assets/nexo/nxr-popup-viewport.js` | Abre popups y opciones con un origen HTTPS sintético por extensión, token de sesión y viewport adaptable. |
 | **Reglas de red** | `extensions/nxr/DnrBridge.kt` y `shield/PhantomShield.kt` | Evalúa reglas estáticas admitidas de bloqueo y excepción para subrecursos, con prioridad por extensión. |
 
@@ -64,7 +64,7 @@ La ficha muestra el estado del complemento.
 
 ## 4. Garantías de seguridad
 
-- **Modo escritorio de tienda:** se activa automáticamente al visitar por HTTPS `chromewebstore.google.com` o las rutas de Add-ons de `microsoftedge.microsoft.com`. El override de Cefrium se aplica al navegador y llega a los subrecursos mientras se visita la tienda. Nexo restablece la selección del usuario al salir.
+- **Modo escritorio de tienda:** se activa automáticamente al visitar por HTTPS `chromewebstore.google.com` o las rutas de Add-ons de `microsoftedge.microsoft.com`. El override de Cefrium (UA + `CefriumUserAgentMetadata`) se aplica al navegador y llega a los subrecursos mientras se visita la tienda. Nexo restablece la selección del usuario al salir.
 - **Integridad CRX3 endurecida:** verificación de firma + comprobación de cabecera contra EOCD ZIP + derivación determinista del ID desde la clave pública.
 - **Continuidad de clave pública (`publicKeySha256`):** al actualizar una extensión existente, si cambia la clave pública firmante (o se intenta sustituir un paquete firmado por uno sin firma), `NxrPackageInstaller` rechaza la operación.
 - **Consentimiento ante escalada de permisos:** `ExtensionUpdateManager.computePermissionDiff()` bloquea actualizaciones silenciosas que soliciten nuevos permisos o nuevos patrones de host (`UpdateConsentRequiredException`) hasta confirmación explícita.
@@ -73,30 +73,30 @@ La ficha muestra el estado del complemento.
 
 ---
 
-## 5. Matriz honesta de compatibilidad (20 APIs WebExtension sobre Cefrium 0.21.0)
+## 5. Matriz honesta de compatibilidad (20 APIs WebExtension sobre Cefrium 0.22.0)
 
-| # | API / Capacidad | Estado en NXR | Alcance real y limitación en Cefrium 0.21.0 |
+| # | API / Capacidad | Estado en NXR | Alcance real y limitación en Cefrium 0.22.0 |
 | --- | --- | --- | --- |
 | 1 | `storage` | **Soportada** | `chrome.storage.local` aislado por extensión y origen (4 MiB por extensión). La sincronización entre contextos sigue pendiente. |
 | 2 | `i18n` | **Soportada** | `chrome.i18n.getMessage` y `getUILanguage` usando `_locales` del paquete. |
 | 3 | `host_permissions` | **Soportada** | Validación `MatchPattern`, revocación por sitio y bloqueo en pestañas privadas por defecto. |
 | 4 | `runtime` | **Limitada** | `id`, `getManifest()`, `getURL()`, `onMessage`/`sendMessage` locales; sin *service worker* persistente. |
-| 5 | `content_scripts` | **Limitada** | Inyección JS/CSS en `document_start`/`end`/`idle`; Cefrium 0.21.0 **no expone mundos V8 aislados** (el cierre NXR aísla tokens, pero comparte DOM/globales con la página). |
+| 5 | `content_scripts` | **Limitada** | Inyección JS/CSS en `document_start`/`end`/`idle`; Cefrium 0.22.0 **no expone mundos V8 aislados** (el cierre NXR aísla tokens, pero comparte DOM/globales con la página). |
 | 6 | `action` | **Limitada** | Acción desde la ficha y popup HTML en un panel Cefrium adaptado al ancho, con puente NXR limitado. |
 | 7 | `options_ui` | **Limitada** | Ajustes de permisos y página HTML de opciones en un panel Cefrium con origen por extensión. |
 | 8 | `web_accessible_resources` | **Limitada** | Recursos validados contra *Zip Slip*; no se montan como `chrome-extension://` en el renderer. |
 | 9 | `activeTab` | **Limitada** | Acceso manual sobre la pestaña activa tras gesto explícito desde la hoja NXR. |
 | 10 | `clipboardWrite` | **Limitada** | Solo vía API web estándar tras gesto directo del usuario. |
-| 11 | `tabs` | **No soportada** | Cefrium 0.21.0 no expone `chrome.tabs` a terceros; el shim registra el límite en diagnóstico. |
+| 11 | `tabs` | **No soportada** | Cefrium 0.22.0 no expone `chrome.tabs` a terceros; el shim registra el límite en diagnóstico. |
 | 12 | `scripting` | **No soportada** | Sin inyección dinámica `chrome.scripting` (solo `content_scripts` declarados). |
 | 13 | `alarms` | **No soportada** | Sin planificador persistente en segundo plano fuera del documento. |
-| 14 | `contextMenus` | **No soportada** | Menús contextuales de terceros no expuestos en Cefrium 0.21.0. |
+| 14 | `contextMenus` | **No soportada** | Menús contextuales de terceros no expuestos en Cefrium 0.22.0. |
 | 15 | `notifications` | **No soportada** | `chrome.notifications` no expuesto a extensiones de terceros. |
-| 16 | `declarativeNetRequest` | **Limitada** | PhantomShield admite reglas estáticas de bloqueo y excepción para subrecursos. Las reglas dinámicas, las redirecciones y las modificaciones de cabeceras quedan pendientes. |
+| 16 | `declarativeNetRequest` | **Limitada** | PhantomShield admite reglas estáticas de bloqueo y excepción para subrecursos. Las reglas dinámicas, las redirecciones y las modificaciones de cabeceras quedan pendientes (requieren ampliación en `CefriumResourceInterceptor`). |
 | 17 | `webNavigation` | **No soportada** | Eventos `chrome.webNavigation` no expuestos a terceros. |
 | 18 | `cookies` | **No soportada** | `chrome.cookies` bloqueado para terceros por aislamiento. |
 | 19 | `webRequest` | **No soportada** | Interceptación de red `webRequest` no disponible para terceros en API pública de Cefrium. |
-| 20 | `background.service_worker` | **No soportada** | *Service workers* MV3 persistentes, `debugger`, `proxy` y `nativeMessaging` no existen en la API pública de Cefrium 0.21.0. |
+| 20 | `background.service_worker` | **No soportada** | *Service workers* MV3 persistentes, `debugger`, `proxy` y `nativeMessaging` no existen en la API pública de Cefrium 0.22.0. |
 
 ### Veredictos mostrados al usuario (`ExtensionCompatibility.InstallVerdict`)
 - **Compatible (`FULL`):** `content_scripts` ejecutables y permisos totalmente cubiertos.

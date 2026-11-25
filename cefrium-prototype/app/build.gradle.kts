@@ -23,8 +23,8 @@ android {
 
 }
 dependencies {
-    implementation("com.cefrium:cefrium-sdk-core:0.21.0")
-    implementation("com.cefrium:cefrium-native-codecs-arm64-v8a:0.21.0")
+    implementation("com.cefrium:cefrium-sdk-core:0.22.0")
+    implementation("com.cefrium:cefrium-native-codecs-arm64-v8a:0.22.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core:1.16.0")
     implementation("androidx.browser:browser:1.8.0")

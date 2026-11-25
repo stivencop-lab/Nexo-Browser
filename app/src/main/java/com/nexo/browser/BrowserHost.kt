@@ -2,18 +2,14 @@ package com.nexo.browser
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import java.lang.ref.WeakReference
 
 /**
  * Pantalla del navegador capaz de mostrar lo que piden las páginas web:
- * diálogos, selector de archivos y permisos de Android.
+ * diálogos, permisos de Android e intents externos.
  */
 interface BrowserHost {
     val hostActivity: Activity
-
-    /** Abre el selector de archivos del sistema; [onResult] recibe una lista vacía si se cancela. */
-    fun pickFiles(mimeTypes: List<String>, multiple: Boolean, onResult: (List<Uri>) -> Unit)
 
     /** Pide permisos de Android en tiempo de ejecución. */
     fun requestAndroidPermissions(permissions: Array<String>, onResult: (Boolean) -> Unit)
@@ -23,6 +19,9 @@ interface BrowserHost {
      * el mini video). Lanza ActivityNotFoundException si nadie la atiende.
      */
     fun launch(intent: Intent)
+
+    /** Evita activar PiP automático cuando el propio motor abre un selector del sistema (cámara/archivos). */
+    fun suppressNextAutoPip()
 }
 
 object BrowserHosts {

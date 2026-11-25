@@ -1,0 +1,27 @@
+# Cefrium 0.22.0 artifact manifest
+
+status: integrated
+sdk: 0.22.0
+chromium: 158.0.8127.18
+min_sdk: 29
+license: LGPL-3.0-or-later
+source: https://codeberg.org/cefrium/cef-android
+repository: https://maven.cefrium.com
+
+# SHA-256 values verified against both Maven .sha256 sidecars and GPG-signed SHA256SUMS-0.22.0.
+com.cefrium:cefrium-sdk-core:0.22.0: 3e3b27d404f604204048bb38b3d340d414d538a3688009ed9386e1ef276cb5e0
+com.cefrium:cefrium-native-codecs-arm64-v8a:0.22.0: 82bebc755c5d6dbaed0448fc8a3bf14a71509154dde5969e4086099820840e86
+com.cefrium:cefrium-native-codecs-armeabi-v7a:0.22.0: 9d337a1fedc57870df23010f763037a925315954dfb92a7ac6f547c9b491f677
+com.cefrium:cefrium-native-codecs-x86_64:0.22.0: 6e7d1223e39e5a1be0e31b271fd5f2dffd98daee8f5552b435e6bc1ad26547ed
+com.cefrium:cefrium-gradle-plugin:0.22.0:jar: 8249f1d2fa6005a9d36f043331685f839c66c5d3383c59fa68169cab45d5fab3
+com.cefrium:cefrium-sdk-core:0.22.0:pom: a7279bd712de6cc3a33d46cba397d27e10c2b70f5ee57e01a302dc37c41aa412
+com.cefrium:cefrium-sdk:0.22.0:pom: cb03fd220afb9e79fef6630189fe3850b0d458c261d3d4d719be9cc397dc0826
+
+# Official Codeberg release verification (v0.22.0):
+# SHA256SUMS-0.22.0.asc: valid detached signature (GOODSIG / VALIDSIG).
+# Maintainer fingerprint: 2A840ED00DE669F4219B8B3302A79E3B82151695
+# Signing subkey: 5B639D9BFE995C6418CEFA8970CB7258A38E268F
+# SBOM SPDX SHA-256: f5b9967690bcc3663a8a18bae85af3b173b8c3d9f5768f13dafa2a95e9dcf7aa
+# NOTICE SHA-256: 949548e8b4a5601ced473c809eafa94d2069bc66279e99cb533408e5255a357a
+# SHA256SUMS-0.22.0 file SHA-256: 3d5f5af40987cdb4730b0bbbde95e3212c2f24cf19adc41d0f7bf4f63f2c8d0d
+# Note: cefrium-sdk-core 0.22.0 no longer pulls Google Play services / Firebase / ML Kit.

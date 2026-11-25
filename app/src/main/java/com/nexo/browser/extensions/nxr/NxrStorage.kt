@@ -9,7 +9,7 @@ import java.security.MessageDigest
  * Almacenamiento `chrome.storage.local` aislado por extensión NXR y particionado por origen.
  *
  * Seguridad crítica sobre Cefrium:
- * - Cefrium 0.21.0 no expone mundos V8 aislados para content scripts de terceros, por lo que
+ * - Cefrium 0.22.0 no expone mundos V8 aislados para content scripts de terceros, por lo que
  *   el script de contenido comparte el mundo JS principal con la página visitada.
  * - Para impedir que un sitio malicioso (`evil.com`) lea o corrompa datos guardados por la misma
  *   extensión en otro sitio (`bank.com`), las operaciones procedentes de content scripts se

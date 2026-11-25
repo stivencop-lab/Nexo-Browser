@@ -22,9 +22,9 @@ import java.util.concurrent.Executors
  * Hojas nativas Nexo Flow 3.0 del Extension Hub:
  * - Descarga verificada desde Chrome Web Store, Microsoft Edge Add-ons o URL HTTPS directa.
  * - Ficha de inspección previa a instalar con estado «Descargada», veredicto honesto,
- *   desglose de APIs en Cefrium 0.21.0, huella de clave CRX y activación segura por defecto.
+ *   desglose de APIs en Cefrium 0.22.0, huella de clave CRX y activación segura por defecto.
  * - Revisión de escalado de permisos en actualizaciones.
- * - Matriz pública completa de las 20 APIs de WebExtensions en Cefrium 0.21.0.
+ * - Matriz pública completa de las 20 APIs de WebExtensions en Cefrium 0.22.0.
  */
 object ExtensionHubSheets {
     private val io by lazy { Executors.newSingleThreadExecutor() }
@@ -285,7 +285,7 @@ object ExtensionHubSheets {
         }
 
         if (inspection.capabilities.apiBreakdown.isNotEmpty()) {
-            body.addView(NexoUi.section(activity, "Compatibilidad real en Cefrium 0.21.0"))
+            body.addView(NexoUi.section(activity, "Compatibilidad real en Cefrium 0.22.0"))
             val apiText = inspection.capabilities.apiBreakdown.take(10).joinToString("\n") { row ->
                 val icon = when (row.support) {
                     ExtensionCompatibility.ApiSupport.SUPPORTED -> "✓"
@@ -448,13 +448,13 @@ object ExtensionHubSheets {
         }
     }
 
-    /** Hoja informativa transparente con la matriz de las 20 APIs sobre Cefrium 0.21.0. */
+    /** Hoja informativa transparente con la matriz de las 20 APIs sobre Cefrium 0.22.0. */
     fun showCompatibilityMatrixSheet(activity: Activity) {
         val p = ThemeManager.palette(activity)
         val body = NexoUi.column(activity)
         body.addView(NexoUi.note(
             activity,
-            "NXR ejecuta extensiones de terceros únicamente sobre las APIs públicas de Cefrium 0.21.0 (Chromium 156), " +
+            "NXR ejecuta extensiones de terceros únicamente sobre las APIs públicas de Cefrium 0.22.0 (Chromium 158), " +
                 "sin APIs internas ni reflexión privilegiada. Esta es la matriz real de soporte:"
         ))
         for (row in ExtensionCompatibility.API_MATRIX) {
@@ -492,7 +492,7 @@ object ExtensionHubSheets {
             activity,
             NexoSheets.column(
                 activity,
-                NexoSheets.header(activity, "Compatibilidad NXR (20 APIs)", "Cefrium 0.21.0 · Chromium 156"),
+                NexoSheets.header(activity, "Compatibilidad NXR (20 APIs)", "Cefrium 0.22.0 · Chromium 158"),
                 body
             )
         )

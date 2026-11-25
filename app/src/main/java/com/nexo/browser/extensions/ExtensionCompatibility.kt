@@ -2,7 +2,7 @@ package com.nexo.browser.extensions
 
 /**
  * Matriz honesta de compatibilidad de WebExtensions sobre NXR (Nexo Extensions Runtime)
- * y las APIs públicas de Cefrium 0.21.0 (Chromium embebido).
+ * y las APIs públicas de Cefrium 0.22.0 (Chromium embebido).
  *
  * Nunca promete capacidades que el motor no expone. Distingue explícitamente:
  * - APIs soportadas, limitadas y no soportadas (matriz de 20 APIs clave).
@@ -57,21 +57,21 @@ object ExtensionCompatibility {
         val apiBreakdown: List<ApiMatrixRow> = emptyList()
     )
 
-    /** Matriz pública y auditable de las 20 APIs principales de WebExtensions sobre Cefrium 0.21.0. */
+    /** Matriz pública y auditable de las 20 APIs principales de WebExtensions sobre Cefrium 0.22.0. */
     val API_MATRIX: List<ApiMatrixRow> = listOf(
         ApiMatrixRow("storage", ApiSupport.SUPPORTED, "chrome.storage.local/sync/session aislados por extensión y particionados por origen (cuota 4 MB)."),
         ApiMatrixRow("runtime", ApiSupport.LIMITED, "id, getManifest(), getURL(), onMessage y sendMessage locales; sin service worker persistente."),
         ApiMatrixRow("i18n", ApiSupport.SUPPORTED, "chrome.i18n.getMessage, getUILanguage y getAcceptLanguages usando _locales del paquete."),
-        ApiMatrixRow("content_scripts", ApiSupport.LIMITED, "Inyección JS/CSS en document_start/end/idle con MatchPattern; sin mundos V8 aislados en Cefrium 0.21.0 (cierre NXR protege tokens)."),
+        ApiMatrixRow("content_scripts", ApiSupport.LIMITED, "Inyección JS/CSS en document_start/end/idle con MatchPattern; sin mundos V8 aislados en Cefrium 0.22.0 (cierre NXR protege tokens)."),
         ApiMatrixRow("host_permissions", ApiSupport.SUPPORTED, "Validación de MatchPattern, permisos por sitio, revocación inmediata y bloqueo en pestañas privadas por defecto."),
         ApiMatrixRow("action", ApiSupport.LIMITED, "Interfaz popup HTML en panel NXR aislado y evento NXR_ACTION_CLICKED hacia la pestaña activa."),
         ApiMatrixRow("options_ui", ApiSupport.LIMITED, "Página HTML de opciones en panel NXR aislado + ajustes nativos de permisos, sitios y almacenamiento en Nexo."),
         ApiMatrixRow("web_accessible_resources", ApiSupport.LIMITED, "Recursos del paquete validados contra Zip Slip; no se montan en chrome-extension:// dentro del renderer."),
-        ApiMatrixRow("tabs", ApiSupport.UNSUPPORTED, "Cefrium 0.21.0 no expone chrome.tabs a extensiones de terceros; el shim registra el límite en diagnóstico."),
+        ApiMatrixRow("tabs", ApiSupport.UNSUPPORTED, "Cefrium 0.22.0 no expone chrome.tabs a extensiones de terceros; el shim registra el límite en diagnóstico."),
         ApiMatrixRow("activeTab", ApiSupport.LIMITED, "Acceso manual a la pestaña activa desde la hoja NXR tras gesto del usuario."),
         ApiMatrixRow("scripting", ApiSupport.UNSUPPORTED, "Inyección dinámica chrome.scripting no disponible para terceros (solo content_scripts declarados)."),
         ApiMatrixRow("alarms", ApiSupport.UNSUPPORTED, "No hay planificador persistente en segundo plano fuera del ciclo de vida del documento."),
-        ApiMatrixRow("contextMenus", ApiSupport.UNSUPPORTED, "Menús contextuales personalizados de terceros no disponibles en Cefrium 0.21.0."),
+        ApiMatrixRow("contextMenus", ApiSupport.UNSUPPORTED, "Menús contextuales personalizados de terceros no disponibles en Cefrium 0.22.0."),
         ApiMatrixRow("notifications", ApiSupport.UNSUPPORTED, "chrome.notifications no está expuesto a extensiones de terceros."),
         ApiMatrixRow("declarativeNetRequest", ApiSupport.LIMITED, "PhantomShield ejecuta reglas estáticas de bloqueo y excepción por dominio. Reglas dinámicas, expresiones regulares y redirecciones siguen fuera de alcance."),
         ApiMatrixRow("webNavigation", ApiSupport.UNSUPPORTED, "Eventos chrome.webNavigation no expuestos a extensiones de terceros."),
@@ -83,7 +83,7 @@ object ExtensionCompatibility {
 
     private val MATRIX_BY_API = API_MATRIX.associateBy { it.api }
 
-    /** Permisos realmente soportados por NXR en Cefrium 0.21.0. */
+    /** Permisos realmente soportados por NXR en Cefrium 0.22.0. */
     private val SUPPORTED_PERMS = setOf("storage", "i18n")
 
     /** Permisos con soporte parcial honesto sobre NXR/Cefrium. */
@@ -96,7 +96,7 @@ object ExtensionCompatibility {
         "userScripts" to "Se ejecutan como content scripts sin mundo V8 aislado del motor."
     )
 
-    /** Permisos cuya API no existe para terceros en Cefrium 0.21.0. */
+    /** Permisos cuya API no existe para terceros en Cefrium 0.22.0. */
     val UNSUPPORTED_PERMS = setOf(
         "tabs", "scripting", "alarms", "contextMenus", "menus", "notifications",
         "declarativeNetRequestWithHostAccess", "declarativeNetRequestFeedback",
@@ -145,7 +145,7 @@ object ExtensionCompatibility {
                     else if (permission.startsWith("declarativeNetRequest")) "declarativeNetRequest"
                     else permission
                     breakdown[permission] = MATRIX_BY_API[key]?.copy(api = permission)
-                        ?: ApiMatrixRow(permission, ApiSupport.UNSUPPORTED, "Sin equivalente en la API pública de Cefrium 0.21.0.")
+                        ?: ApiMatrixRow(permission, ApiSupport.UNSUPPORTED, "Sin equivalente en la API pública de Cefrium 0.22.0.")
                 }
                 else -> {
                     limited[permission] = "Permiso no reconocido por NXR; se ignora de forma segura."
@@ -161,7 +161,7 @@ object ExtensionCompatibility {
             if (manifest.contentScripts.any { it.world == ExtensionManifest.World.ISOLATED }) {
                 limited.putIfAbsent(
                     "content_scripts",
-                    "Cefrium 0.21.0 no expone mundos V8 aislados: NXR aísla tokens en cierre privado, pero comparte DOM/globales con la página."
+                    "Cefrium 0.22.0 no expone mundos V8 aislados: NXR aísla tokens en cierre privado, pero comparte DOM/globales con la página."
                 )
             }
             breakdown.putIfAbsent("content_scripts", MATRIX_BY_API.getValue("content_scripts"))
@@ -186,7 +186,7 @@ object ExtensionCompatibility {
             breakdown["background"] = ApiMatrixRow(
                 "background",
                 ApiSupport.UNSUPPORTED,
-                "Scripts de fondo persistentes no se ejecutan en proceso separado sobre Cefrium 0.21.0."
+                "Scripts de fondo persistentes no se ejecutan en proceso separado sobre Cefrium 0.22.0."
             )
         }
         if (manifest.dnrRulesets.isNotEmpty()) {

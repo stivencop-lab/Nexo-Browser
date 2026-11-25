@@ -310,7 +310,7 @@ function createNxrScope(config) {
     },
     getBrowserInfo: function(callback) {
       return withOptionalCallback(
-        Promise.resolve({ name: 'Nexo', vendor: 'Nexo', version: '5.0', buildID: 'cefrium-0.21.0' }),
+        Promise.resolve({ name: 'Nexo', vendor: 'Nexo', version: '5.0', buildID: 'cefrium-0.22.0' }),
         callback
       );
     },

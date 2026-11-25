@@ -81,17 +81,10 @@ internal object CefResumePolicy {
     ): Boolean = stopped || surfaceDestroyedWhilePip
 
     /**
-     * Nunca devolver el foco al compositor Chromium si un campo de texto nativo (barra de direcciones
-     * o buscar en página) está editándose; de lo contrario Cefrium roba el foco al abrir el teclado.
-     */
-    fun shouldFocusBrowser(
-        windowFocused: Boolean,
-        nativeInputFocused: Boolean
-    ): Boolean = windowFocused && !nativeInputFocused
-
-    /**
      * Un redimensionado normal del SurfaceView (`surfaceChanged`, p. ej. al aparecer el teclado o
-     * plegar barras) NO debe invocar `onResume()`/`setFocus(true)` si no había recuperación pendiente.
+     * plegar barras) NO debe invocar `onResume()` si no había recuperación pendiente.
+     * El foco entre campos nativos (`EditText`) y el navegador lo gestiona Cefrium 0.22.0
+     * nativamente desde `CefriumSurfaceContainer`.
      */
     fun shouldResumeOnSurfaceChanged(
         resumed: Boolean,
