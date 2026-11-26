@@ -119,6 +119,6 @@ dependencies {
     // org.json real en las pruebas JVM (el de Android es un stub).
     testImplementation("org.json:json:20260814")
     if (project.hasProperty("nexoScreenshots")) {
-        testImplementation("org.robolectric:robolectric:4.16")
+        testImplementation("org.robolectric:robolectric:4.18.1")
     }
 }
