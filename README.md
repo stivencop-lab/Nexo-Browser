@@ -7,7 +7,7 @@
 <br /><br />
 
 <p>
-  <a href="https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.0"><img src="https://img.shields.io/badge/version-0.40.0-6366F1?style=flat-square&labelColor=1F232E" alt="Versión 0.40.0" /></a>
+  <a href="https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.1"><img src="https://img.shields.io/badge/version-0.40.1-6366F1?style=flat-square&labelColor=1F232E" alt="Versión 0.40.1" /></a>
   <img src="https://img.shields.io/badge/Chromium-158-2563EB?style=flat-square&labelColor=1F232E" alt="Chromium 158" />
   <img src="https://img.shields.io/badge/Cefrium-0.22.0-0D9488?style=flat-square&labelColor=1F232E" alt="Cefrium 0.22.0" />
   <img src="https://img.shields.io/badge/platform-Android%2010%2B-16A34A?style=flat-square&labelColor=1F232E" alt="Android 10+" />
@@ -22,7 +22,7 @@
 <br />
 
 <a href="#descargar">
-  <img src="docs/brand/cta-download.png" alt="Descargar APK v0.40.0" width="265" />
+  <img src="docs/brand/cta-download.png" alt="Descargar APK v0.40.1" width="265" />
 </a>
 
 <br /><br />
@@ -31,7 +31,7 @@
 
 <p>
   <a href="#descargar">Descargar</a> ·
-  <a href="#novedades-en-v0400">Novedades</a> ·
+  <a href="#novedades-en-v0401">Novedades</a> ·
   <a href="#primeros-pasos">Primeros pasos</a> ·
   <a href="#compatibilidad-de-extensiones">Extensiones</a> ·
   <a href="#desarrollo">Desarrollo</a> ·
@@ -48,16 +48,16 @@
 
 ## Descargar
 
-**Nexo Browser v0.40.0** · `versionCode 80` · Paquete `com.nexo.browser`
+**Nexo Browser v0.40.1** · `versionCode 81` · Paquete `com.nexo.browser`
 
-Los APK de esta sección corresponden al tag `v0.40.0`. La rama `main` incluye cambios posteriores que llegarán con una próxima publicación firmada.
+Los APK de esta sección corresponden a la publicación firmada `v0.40.1`.
 
 | Dispositivo | Tamaño | APK firmado |
 | --- | ---: | --- |
-| Android ARM de 64 bits (`arm64-v8a`) | 115,2 MiB | [Descargar arm64-v8a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.0/Nexo-v0.40.0-arm64-v8a.apk) |
-| Android ARM de 32 bits (`armeabi-v7a`) | 87,5 MiB | [Descargar armeabi-v7a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.0/Nexo-v0.40.0-armeabi-v7a.apk) |
+| Android ARM de 64 bits (`arm64-v8a`) | 115,2 MiB | [Descargar arm64-v8a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.1/Nexo-v0.40.1-arm64-v8a.apk) |
+| Android ARM de 32 bits (`armeabi-v7a`) | 87,5 MiB | [Descargar armeabi-v7a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.1/Nexo-v0.40.1-armeabi-v7a.apk) |
 
-Consulta la publicación completa y sus sumas verificadas: [Ver release v0.40.0](https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.0) · [Descargar SHA256SUMS.txt](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.0/SHA256SUMS.txt)
+Consulta la publicación completa y sus sumas verificadas: [Ver release v0.40.1](https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.1) · [Descargar SHA256SUMS.txt](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.1/SHA256SUMS.txt)
 
 <details>
 <summary>Elegir arquitectura y comprobar la integridad SHA-256</summary>
@@ -74,26 +74,25 @@ Elige `arm64-v8a` si aparece en la lista; si el dispositivo es ARM de 32 bits, u
 sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
-Sumas SHA-256 oficiales de `v0.40.0`:
+Sumas SHA-256 oficiales de `v0.40.1`:
 
 | APK | SHA-256 |
 | --- | --- |
-| `Nexo-v0.40.0-arm64-v8a.apk` | `cb4aa9ca65062dce8e0578f3eb75a2450a6a185d8b7583f829e433566bc4d6ca` |
-| `Nexo-v0.40.0-armeabi-v7a.apk` | `da416306a4a4dbd015b7e9507454c4763a55a010c38549927dcaf56efc397256` |
+| `Nexo-v0.40.1-arm64-v8a.apk` | `fc362f813ff1f39e553b0dd21ae231b766e641abb0e138b58a8b8d01129261d9` |
+| `Nexo-v0.40.1-armeabi-v7a.apk` | `d89883a2e0196f528c17016cbe26992c934770f534e592e99c6dcb1d7d5050af` |
 
 Las actualizaciones conservan los datos siempre que se mantengan el paquete `com.nexo.browser`, el certificado de firma y un `versionCode` superior. [Firma y actualizaciones](docs/ACTUALIZACIONES-Y-FIRMA.md) · [Transferencia de perfil](docs/TRANSFERENCIA-PERFIL.md)
 
 </details>
 
-## Novedades en v0.40.0
+## Novedades en v0.40.1
 
 | Área | Qué cambia |
 | --- | --- |
-| **Chromium 158 · Cefrium 0.22.0** | Actualización verificada por GPG y SHA-256 ([`cefrium-0.22.0.sha256`](gradle/cefrium-0.22.0.sha256)). El APK release queda con **0 clases** de Google Play services, Firebase y ML Kit, y R8 optimiza el bytecode completo de Chromium. |
-| **PiP, foco y procesos aislados** | `MainActivity.onPause()` delega PiP a `browser.onPause()` (recuperación tras apagar/encender pantalla en Android 10 y pausa al cerrar PiP, conservando el audio en segundo plano cuando está activo). Se retiraron los workarounds de foco en `EditText` y el filtro manual de procesos en `NexoApplication` gracias a `CefriumAppComponentFactory`. |
-| **Puente `cefriumQuery` sin polling** | Se eliminaron los `setInterval` de 2–4 s en `cefrium-port.js` y el retraso de 250 ms de `bridge-shim.js`: los eventos llegan por esperas asíncronas aparcadas en `PageChannel` (también a iframes y a `ShieldAiHost`) y los RPC asíncronos resuelven el `QueryCallback` directamente. |
-| **Selector nativo, Client Hints y diagnóstico** | `<input type="file">` delega al selector nativo de Chromium (`accept`, `capture`, cámara vía `CefriumFileProvider`, múltiple y carpetas); el modo escritorio envía Client Hints completos (`CefriumUserAgentMetadata`); Ajustes › versión integra `Cefrium.diagnostics(context)` y contadores `recoveries`/`watchdog`. |
-| **Liquid Glass y Extension Hub** | Temas **Obsidian**, **OLED**, **Paper** y seguimiento del sistema, intensidad de cristal ajustable, verificación CRX3 multifirma, popups aislados por extensión y reglas DNR estáticas en PhantomShield. |
+| **Barra de direcciones, UI y Control del sitio** | Apertura de la barra de direcciones en 1 toque, optimizaciones de Liquid Glass, mejoras en Control del sitio y uso de APIs nativas de Cefrium 0.22.0 ([PR #86](https://github.com/stivencop-lab/Nexo-Browser/pull/86), [PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87)). |
+| **Subtítulos en vivo más fiables** | La captura web solicita fragmentos cada 125 ms, conserva el texto parcial mientras llega el definitivo, añade botón **Reintentar** y permite activar la detección de hablantes desde los ajustes ([Guía de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md)). |
+| **Licencia Apache 2.0 y dependencias al día** | Adopción de **Apache License 2.0** ([PR #88](https://github.com/stivencop-lab/Nexo-Browser/pull/88)), actualización a Gradle `9.9.2`, AGP `9.5.3`, DataStore `1.3.0`, MaterialKolor `6.0.0`, Robolectric `4.18.1` y caché de CI. |
+| **Chromium 158 · Cefrium 0.22.0** | Base de `v0.40` verificada por GPG y SHA-256 ([`cefrium-0.22.0.sha256`](gradle/cefrium-0.22.0.sha256)) con **0 clases** de Google Play services, Firebase ni ML Kit, puente `cefriumQuery` sin polling, selector nativo de archivos y Client Hints completos. |
 
 El informe técnico documenta cada cambio respecto al issue `#84`, las pruebas ejecutadas y los **16 límites/problemas verificados** que aún persisten en Cefrium `0.22.0`: [Migración y límites de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md)
 
@@ -103,10 +102,6 @@ El informe técnico documenta cada cambio respecto al issue `#84`, las pruebas e
   <img src="docs/capturas/v0.39.2-paper.png" alt="Configuración de Nexo en tema Paper" width="225" />
 </p>
 <p align="center"><sub>Temas OLED y Paper · vistas nativas renderizadas con Robolectric en API 35.</sub></p>
-
-### Cambios posteriores a v0.40.0
-
-La rama `main` incorpora mejoras posteriores en la barra de direcciones, Control del sitio y subtítulos. La captura web solicita fragmentos cada 125 ms, el texto parcial se conserva mientras llega el definitivo y la detección de hablantes se puede habilitar desde los ajustes de subtítulos. [PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87) · [Guía de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md)
 
 ## Primeros pasos
 
@@ -135,7 +130,7 @@ Nexo Command admite también `@history`, `@settings` y `@bookmarks`. Prueba `@se
 
 El Hub acepta fichas de **Chrome Web Store** y **Edge Add-ons**, archivos locales `.crx`/`.zip`/`.xpi` y paquetes HTTPS directos. NXR verifica manifiesto, firmas CRX2/CRX3, continuidad de clave pública (`publicKeySha256`) y ampliaciones de permisos antes de instalar o actualizar.
 
-| Capacidad | Alcance en v0.40.0 (Cefrium 0.22.0) |
+| Capacidad | Alcance en v0.40.1 (Cefrium 0.22.0) |
 | --- | --- |
 | **CRX3 y manifiestos MV2/MV3** | Análisis del manifiesto, verificación criptográfica de firmas CRX3 y veredicto de compatibilidad antes de habilitar. |
 | **Scripts, CSS y popups** | Ejecución de `content_scripts` declarados en sitios permitidos y popups/opciones en panel Cefrium con origen aislado por extensión. |
@@ -146,7 +141,7 @@ Consulta la matriz completa de 20 APIs y el ejemplo de ruleset: [Nexo Extension 
 
 ## Desarrollo
 
-Necesitas JDK 25, Node.js 20+ y la plataforma Android SDK `37.2`. Usa el wrapper de Gradle `9.8.2` del repositorio. La guía de compilación indica cómo instalar los paquetes del SDK y comprobar los APK. [Entorno local y CI](docs/CEFrium-CI-SETUP.md)
+Necesitas JDK 25, Node.js 20+ y la plataforma Android SDK `37.2`. Usa el wrapper de Gradle `9.9.2` del repositorio. La guía de compilación indica cómo instalar los paquetes del SDK y comprobar los APK. [Entorno local y CI](docs/CEFrium-CI-SETUP.md)
 
 ```bash
 # Regresiones JavaScript
