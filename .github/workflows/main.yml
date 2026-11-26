@@ -107,6 +107,26 @@ jobs:
           distribution: temurin
           java-version: "25"
 
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-t${{ matrix.transition }}-${{ hashFiles('build.gradle.kts', 'settings.gradle.kts', 'app/build.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-t${{ matrix.transition }}-
+            gradle-${{ runner.os }}-tfalse-
+
+      - name: Cache Robolectric runtime jars
+        if: matrix.transition == false
+        uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       - name: Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -197,6 +217,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+
+      - name: Cache prototype Gradle dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: gradle-prototype-${{ runner.os }}-${{ hashFiles('cefrium-prototype/build.gradle.kts', 'cefrium-prototype/settings.gradle.kts', 'cefrium-prototype/app/build.gradle.kts', 'cefrium-prototype/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-prototype-${{ runner.os }}-
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
@@ -294,6 +324,24 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+
+      - name: Restore Gradle cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-tfalse-${{ hashFiles('build.gradle.kts', 'settings.gradle.kts', 'app/build.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-tfalse-
+
+      - name: Restore Robolectric runtime jars
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
 
       - name: Android SDK
         uses: android-actions/setup-android@v3

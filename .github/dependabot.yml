@@ -8,6 +8,11 @@ updates:
     labels:
       - "dependencies"
       - "android"
+    ignore:
+      # maven.cefrium.com devuelve private_source_authentication_failure a Dependabot;
+      # Cefrium se actualiza manualmente verificando los hashes en gradle/cefrium-*.sha256.
+      - dependency-name: "com.cefrium:*"
+      - dependency-name: "com.cefrium"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
