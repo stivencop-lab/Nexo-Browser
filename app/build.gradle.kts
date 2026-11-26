@@ -105,7 +105,7 @@ dependencies {
     implementation("com.cefrium:cefrium-native-codecs-armeabi-v7a:0.22.0")
     implementation("androidx.core:core:1.19.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
-    implementation("androidx.datastore:datastore-preferences:1.1.7")
+    implementation("androidx.datastore:datastore-preferences:1.3.0")
     // Selector de pestañas: tarjetas recicladas y deslizar para cerrar.
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     // HCT / Material color utilities; the browser keeps its native View UI.
