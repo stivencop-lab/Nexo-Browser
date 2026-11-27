@@ -89,10 +89,11 @@ Las actualizaciones conservan los datos siempre que se mantengan el paquete `com
 
 | Área | Qué cambia |
 | --- | --- |
-| **Barra de direcciones, UI y Control del sitio** | Apertura de la barra de direcciones en 1 toque, optimizaciones de Liquid Glass, mejoras en Control del sitio y uso de APIs nativas de Cefrium 0.22.0 ([PR #86](https://github.com/stivencop-lab/Nexo-Browser/pull/86), [PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87)). |
-| **Subtítulos en vivo más fiables** | La captura web solicita fragmentos cada 125 ms, conserva el texto parcial mientras llega el definitivo, añade botón **Reintentar** y permite activar la detección de hablantes desde los ajustes ([Guía de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md)). |
-| **Licencia Apache 2.0 y dependencias al día** | Adopción de **Apache License 2.0** ([PR #88](https://github.com/stivencop-lab/Nexo-Browser/pull/88)), actualización a Gradle `9.9.2`, AGP `9.5.3`, DataStore `1.3.0`, MaterialKolor `6.0.0`, Robolectric `4.18.1` y caché de CI. |
-| **Chromium 158 · Cefrium 0.22.0** | Base de `v0.40` verificada por GPG y SHA-256 ([`cefrium-0.22.0.sha256`](gradle/cefrium-0.22.0.sha256)) con **0 clases** de Google Play services, Firebase ni ML Kit, puente `cefriumQuery` sin polling, selector nativo de archivos y Client Hints completos. |
+| **Barra de direcciones en 1 toque y navegación** | Apertura fiable del teclado al primer toque (sin robo de foco de Chromium), objetivos táctiles ampliados, **historial atrás/adelante por pestaña** (pulsación larga en Atrás/Adelante), **Control del sitio** renovado con almacenamiento real por sitio (`listSiteData`) y optimizaciones de Liquid Glass ([PR #86](https://github.com/stivencop-lab/Nexo-Browser/pull/86), [PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87)). |
+| **Subtítulos en vivo más fiables** | Captura web cada 125 ms con control de flujo WebM/Opus intacto, texto parcial conservado mientras llega el definitivo, detección opcional de cambios de hablante, botón **Reintentar** en la hoja rápida de CC y detección nativa de audio (`isPlayingAudio()`) ([Guía de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md)). |
+| **Acciones nativas de Cefrium 0.22.0** | Barra flotante al seleccionar texto (**Preguntar a Nexo AI**, **Traducir selección** y **Buscar en pestaña nueva** respetando privacidad/Burner), **impresión nativa** (`window.print()`), protección contra fugas WebRTC y alertas de proxy en **Burner**, y detector de pestaña bloqueada. |
+| **Licencia Apache 2.0, dependencias y CI** | Adopción de **Apache License 2.0** ([PR #88](https://github.com/stivencop-lab/Nexo-Browser/pull/88)), actualización a Gradle `9.9.2`, AGP `9.5.3`, DataStore `1.3.0`, MaterialKolor `6.0.0`, Robolectric `4.18.1` y caché de Gradle/Robolectric en GitHub Actions. |
+| **Base Chromium 158 · Cefrium 0.22.0** | Motor verificado por GPG y SHA-256 ([`cefrium-0.22.0.sha256`](gradle/cefrium-0.22.0.sha256)) con **0 clases** de Google Play services, Firebase ni ML Kit, puente `cefriumQuery` sin polling, selector nativo de archivos y Client Hints completos. |
 
 El informe técnico documenta cada cambio respecto al issue `#84`, las pruebas ejecutadas y los **16 límites/problemas verificados** que aún persisten en Cefrium `0.22.0`: [Migración y límites de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md)
 
@@ -180,7 +181,7 @@ El código propio de Nexo Browser se distribuye bajo **Apache License 2.0**. Cef
 
 | Tema | Guías |
 | --- | --- |
-| **v0.40.0 y Cefrium 0.22.0** | [Migración y límites verificados de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md), [Extension Hub](docs/NEXO-EXTENSION-HUB.md), [Arquitectura de Chromium nativo](docs/CHROMIUM-NATIVE-MIGRATION.md) |
+| **v0.40.x y Cefrium 0.22.0** | [Migración y límites verificados de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md), [Extension Hub](docs/NEXO-EXTENSION-HUB.md), [Arquitectura de Chromium nativo](docs/CHROMIUM-NATIVE-MIGRATION.md) |
 | **Interfaz y organización** | [Nexo UI 7.0 (referencia histórica)](docs/NEXO-UI-7.0-LIQUID-CRAFT.md), [Grupos, rutas y Burner](docs/PESTANAS-RED-BURNER.md) |
 | **Navegación y multimedia** | [PhantomShield](docs/PHANTOMSHIELD.md), [Traducción en página](docs/TRADUCCION-EN-LINEA.md), [Audio y estabilidad](docs/ESTABILIDAD-Y-AUDIO-ANDROID.md), [Diagnóstico de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md) |
 | **IA y datos** | [Nexo AI 5.1](docs/NEXO-AI-5.1.md), [Memoria IA local](docs/IA-MEMORIA.md), [Transferencia de perfil](docs/TRANSFERENCIA-PERFIL.md) |
