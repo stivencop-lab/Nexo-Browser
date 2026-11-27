@@ -14,7 +14,7 @@ En Linux puedes verificar el archivo desde la carpeta de descargas.
 sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
-En macOS, calcula el hash con `shasum -a 256 Nexo-v0.40.0-arm64-v8a.apk`. En PowerShell, usa `Get-FileHash -Algorithm SHA256 .\Nexo-v0.40.0-arm64-v8a.apk`. Sustituye el nombre del ejemplo por el de tu descarga y compara el resultado con su línea en `SHA256SUMS.txt`.
+En macOS, calcula el hash con `shasum -a 256 Nexo-v0.40.1-arm64-v8a.apk`. En PowerShell, usa `Get-FileHash -Algorithm SHA256 .\Nexo-v0.40.1-arm64-v8a.apk`. Sustituye el nombre del ejemplo por el de tu descarga y compara el resultado con su línea en `SHA256SUMS.txt`.
 
 ## Publicar una versión
 
@@ -42,7 +42,7 @@ La huella pública en [`config/android-signing-certificate.sha256`](../config/an
 python3 tools/verify_apk_signature.py \
   --apksigner "$ANDROID_HOME/build-tools/37.0.0/apksigner" \
   --certificate config/android-signing-certificate.sha256 \
-  /ruta/descargas/Nexo-v0.40.0-arm64-v8a.apk
+  /ruta/descargas/Nexo-v0.40.1-arm64-v8a.apk
 ```
 
 <details>

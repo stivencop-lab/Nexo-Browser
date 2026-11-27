@@ -2,7 +2,7 @@
 
 Reproduce un video y toca **CC** para activar los subtítulos. Con CC activo, otro toque abre la hoja rápida para elegir idioma, cambiar qué texto se muestra o apagar los subtítulos. Mantén pulsado **CC** para abrir la configuración completa. También puedes abrirla desde **Configuración › Subtítulos en vivo › Configurar subtítulos y traducción**.
 
-La guía describe la rama `main`. La captura más frecuente, los cambios de hablante y el botón **Reintentar** se incorporaron después del APK publicado como `v0.40.0`. [Cambios de la PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87)
+La captura más frecuente (125 ms), los cambios de hablante y el botón **Reintentar** están incluidos a partir de la versión firmada `v0.40.1`. [Cambios de la PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87)
 
 ## Elegir la fuente
 

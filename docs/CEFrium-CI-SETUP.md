@@ -8,7 +8,7 @@ Definidos en [`.github/workflows/main.yml`](../.github/workflows/main.yml):
 
 - **JDK 25** (`temurin` 25): el bytecode de `com.cefrium:cefrium-sdk-core:0.22.0` es Java 25 y el plugin `com.cefrium` comprueba la versión del compilador en cada tarea `JavaCompile`.
 - **Android SDK**: `platforms;android-37.2` para compilar, `build-tools;36.0.0` que selecciona AGP, `build-tools;37.0.0` para los verificadores del proyecto y `platform-tools` para ADB. La aplicación apunta a API 35 y requiere Android 10 o posterior (API 29).
-- **Gradle**: wrapper `9.8.2` (`gradle/wrapper/gradle-wrapper.properties`) con AGP `9.5.1` y Kotlin `2.4.10`.
+- **Gradle**: wrapper `9.9.2` (`gradle/wrapper/gradle-wrapper.properties`) con AGP `9.5.3` y Kotlin `2.4.10`.
 - **Node.js 20+**: ejecuta las regresiones JavaScript (`node --test app/src/test/js/*.test.cjs`) sin dependencias externas.
 - **Python 3**: valida reflexión en APKs R8 y la identidad del paquete.
 
