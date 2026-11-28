@@ -7,7 +7,7 @@
 <br /><br />
 
 <p>
-  <a href="https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.1"><img src="https://img.shields.io/badge/version-0.40.1-6366F1?style=flat-square&labelColor=1F232E" alt="Versión 0.40.1" /></a>
+  <a href="https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.2"><img src="https://img.shields.io/badge/version-0.40.2-6366F1?style=flat-square&labelColor=1F232E" alt="Versión 0.40.2" /></a>
   <img src="https://img.shields.io/badge/Chromium-158-2563EB?style=flat-square&labelColor=1F232E" alt="Chromium 158" />
   <img src="https://img.shields.io/badge/Cefrium-0.22.0-0D9488?style=flat-square&labelColor=1F232E" alt="Cefrium 0.22.0" />
   <img src="https://img.shields.io/badge/platform-Android%2010%2B-16A34A?style=flat-square&labelColor=1F232E" alt="Android 10+" />
@@ -22,7 +22,7 @@
 <br />
 
 <a href="#descargar">
-  <img src="docs/brand/cta-download.png" alt="Descargar APK v0.40.1" width="265" />
+  <img src="https://img.shields.io/badge/Descargar%20APK-v0.40.2-2563EB?style=for-the-badge&amp;logo=android&amp;logoColor=white&amp;labelColor=1F232E" alt="Descargar APK v0.40.2" />
 </a>
 
 <br /><br />
@@ -48,16 +48,16 @@
 
 ## Descargar
 
-**Nexo Browser v0.40.1** · `versionCode 81` · Paquete `com.nexo.browser`
+**Nexo Browser v0.40.2** · `versionCode 82` · Paquete `com.nexo.browser`
 
-Los APK de esta sección corresponden a la publicación firmada `v0.40.1`.
+Los APK de esta sección corresponden a la publicación firmada `v0.40.2`.
 
 | Dispositivo | Tamaño | APK firmado |
 | --- | ---: | --- |
-| Android ARM de 64 bits (`arm64-v8a`) | 115,2 MiB | [Descargar arm64-v8a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.1/Nexo-v0.40.1-arm64-v8a.apk) |
-| Android ARM de 32 bits (`armeabi-v7a`) | 87,5 MiB | [Descargar armeabi-v7a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.1/Nexo-v0.40.1-armeabi-v7a.apk) |
+| Android ARM de 64 bits (`arm64-v8a`) | 115,3 MiB | [Descargar arm64-v8a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.2/Nexo-v0.40.2-arm64-v8a.apk) |
+| Android ARM de 32 bits (`armeabi-v7a`) | 87,6 MiB | [Descargar armeabi-v7a](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.2/Nexo-v0.40.2-armeabi-v7a.apk) |
 
-La publicación incluye las sumas verificadas de los APK. [Ver release v0.40.1](https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.1) · [Descargar SHA256SUMS.txt](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.1/SHA256SUMS.txt)
+La publicación incluye las sumas verificadas de los APK. [Ver release v0.40.2](https://github.com/stivencop-lab/Nexo-Browser/releases/tag/v0.40.2) · [Descargar SHA256SUMS.txt](https://github.com/stivencop-lab/Nexo-Browser/releases/download/v0.40.2/SHA256SUMS.txt)
 
 <details>
 <summary>Elegir arquitectura y comprobar la integridad SHA-256</summary>
@@ -74,12 +74,12 @@ Elige `arm64-v8a` si aparece en la lista. Para un dispositivo ARM de 32 bits usa
 sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
-Sumas SHA-256 oficiales de `v0.40.1`:
+Comprueba cada APK con la suma SHA-256 de la versión `v0.40.2`.
 
 | APK | SHA-256 |
 | --- | --- |
-| `Nexo-v0.40.1-arm64-v8a.apk` | `fc362f813ff1f39e553b0dd21ae231b766e641abb0e138b58a8b8d01129261d9` |
-| `Nexo-v0.40.1-armeabi-v7a.apk` | `d89883a2e0196f528c17016cbe26992c934770f534e592e99c6dcb1d7d5050af` |
+| `Nexo-v0.40.2-arm64-v8a.apk` | `e78d0c882292ba3c0580ea99a956ec814cc82e54bb6b06acc7ba80db1285562f` |
+| `Nexo-v0.40.2-armeabi-v7a.apk` | `6c78ab79454b7cf5b36154c5ba63cece15d9182ec39e07ab3841205e741f4a70` |
 
 Las actualizaciones conservan los datos siempre que se mantengan el paquete `com.nexo.browser`, el certificado de firma y un `versionCode` superior. [Firma y actualizaciones](docs/ACTUALIZACIONES-Y-FIRMA.md) · [Transferencia de perfil](docs/TRANSFERENCIA-PERFIL.md)
 
@@ -131,7 +131,7 @@ Nexo Command admite también `@history`, `@settings` y `@bookmarks`. Prueba `@se
 
 El Hub acepta fichas de **Chrome Web Store** y **Edge Add-ons**, archivos locales `.crx`/`.zip`/`.xpi` y paquetes HTTPS directos. NXR verifica manifiesto, firmas CRX2/CRX3, continuidad de clave pública (`publicKeySha256`) y ampliaciones de permisos antes de instalar o actualizar.
 
-| Capacidad | Alcance en v0.40.1 (Cefrium 0.22.0) |
+| Capacidad | Alcance en v0.40.2 (Cefrium 0.22.0) |
 | --- | --- |
 | **CRX3 y manifiestos MV2/MV3** | Análisis del manifiesto, verificación criptográfica de firmas CRX3 y veredicto de compatibilidad antes de habilitar. |
 | **Scripts, CSS y popups** | Ejecución de scripts y CSS declarados en sitios permitidos y popups/opciones en un panel con origen aislado por extensión. La fase de inicio de documento se aplica al primer aviso de Cefrium. |
