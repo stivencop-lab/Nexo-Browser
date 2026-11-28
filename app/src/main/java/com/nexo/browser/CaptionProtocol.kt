@@ -387,21 +387,6 @@ internal class CaptionReconnectBudget {
     }
 }
 
-/** Consecutive reconnect attempts are cleared only by a real transcription or a user reset. */
-internal class CaptionReconnectBudget {
-    private var attempts = 0
-
-    fun next(limit: Int): Int? = if (attempts < limit) attempts++ else null
-
-    fun onTranscript(text: String) {
-        if (text.isNotBlank()) reset()
-    }
-
-    fun reset() {
-        attempts = 0
-    }
-}
-
 /** Lo que se dibuja: texto principal, parte pendiente (más tenue) y original debajo (modo "ambos"). */
 data class CaptionDisplay(
     val primary: String,
