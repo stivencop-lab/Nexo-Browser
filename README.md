@@ -31,7 +31,7 @@
 
 <p>
   <a href="#descargar">Descargar</a> ·
-  <a href="#novedades-en-v0401">Novedades</a> ·
+  <a href="#novedades-en-v0402">Novedades</a> ·
   <a href="#primeros-pasos">Primeros pasos</a> ·
   <a href="#compatibilidad-de-extensiones">Extensiones</a> ·
   <a href="#desarrollo">Desarrollo</a> ·
@@ -85,17 +85,17 @@ Las actualizaciones conservan los datos siempre que se mantengan el paquete `com
 
 </details>
 
-## Novedades en v0.40.1
+## Novedades en v0.40.2
 
 | Área | Qué cambia |
 | --- | --- |
-| **Barra de direcciones en 1 toque y navegación** | Apertura fiable del teclado al primer toque (sin robo de foco de Chromium), objetivos táctiles ampliados, **historial atrás/adelante por pestaña** (pulsación larga en Atrás/Adelante), **Control del sitio** renovado con almacenamiento real por sitio (`listSiteData`) y optimizaciones de Liquid Glass ([PR #86](https://github.com/stivencop-lab/Nexo-Browser/pull/86), [PR #87](https://github.com/stivencop-lab/Nexo-Browser/pull/87)). |
-| **Subtítulos en vivo más fiables** | Captura web cada 125 ms con control de flujo WebM/Opus intacto, texto parcial conservado mientras llega el definitivo, detección opcional de cambios de hablante, botón **Reintentar** en la hoja rápida de CC y detección nativa de audio (`isPlayingAudio()`) ([Guía de subtítulos](docs/DIAGNOSTICO-SUBTITULOS.md)). |
-| **Acciones nativas de Cefrium 0.22.0** | Barra flotante al seleccionar texto (**Preguntar a Nexo AI**, **Traducir selección** y **Buscar en pestaña nueva** respetando privacidad/Burner), **impresión nativa** (`window.print()`), protección contra fugas WebRTC y alertas de proxy en **Burner**, y detector de pestaña bloqueada. |
-| **Licencia Apache 2.0, dependencias y CI** | Adopción de **Apache License 2.0** ([PR #88](https://github.com/stivencop-lab/Nexo-Browser/pull/88)), actualización a Gradle `9.9.2`, AGP `9.5.3`, DataStore `1.3.0`, MaterialKolor `6.0.0`, Robolectric `4.18.1` y caché de Gradle/Robolectric en GitHub Actions. |
-| **Base Chromium 158 · Cefrium 0.22.0** | Motor verificado por GPG y SHA-256 ([`cefrium-0.22.0.sha256`](gradle/cefrium-0.22.0.sha256)) con **0 clases** de Google Play services, Firebase ni ML Kit, puente `cefriumQuery` sin polling, selector nativo de archivos y Client Hints completos. |
+| **Navegación y privacidad** | Nexo bloquea la navegación si el motor rechaza la ruta de red. La recuperación de pestañas, la búsqueda dentro de la página y las miniaturas conservan la pestaña y el documento correctos. Los permisos de sitios se aíslan por perfil privado o Burner. |
+| **Descargas y datos** | Las descargas de páginas conservan la petición y el perfil de Chromium. Los archivos se publican al terminar y las descargas directas solo reanudan por rangos de un recurso con ETag fuerte. La importación de datos valida las escrituras y el borrado por sitio vuelve a consultar el resultado. |
+| **PhantomShield y extensiones** | El interceptor sigue atendiendo peticiones durante las actualizaciones de listas. El ajuste de rastreo controla las listas de privacidad. NXR reutiliza el catálogo por revisión, recupera la versión anterior si se interrumpe una actualización y retira el CSS gestionado cuando se revocan permisos. |
+| **Subtítulos, lector e IA** | Los comandos multimedia se entregan al marco correspondiente. Los subtítulos y la traducción cancelan trabajo obsoleto. El lector acota el recorrido del DOM y carga la biblioteca sin conexión en segundo plano. Cada consulta de IA permanece en la conversación desde la que se envió. |
+| **Compilación y pruebas** | Gradle verifica las huellas de Cefrium en la app y el prototipo. Se ampliaron las regresiones de navegación, puente JavaScript e interfaz, y se actualizaron las instrucciones para compilar y diagnosticar. |
 
-El informe técnico documenta cada cambio respecto al issue `#84`, las pruebas ejecutadas y los **16 límites/problemas verificados** que aún persisten en Cefrium `0.22.0`: [Migración y límites de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md)
+[Correcciones de la auditoría](https://github.com/stivencop-lab/Nexo-Browser/pull/101) · [Migración y límites de Cefrium 0.22.0](docs/CEFRIUM-0.22-MIGRACION-Y-LIMITES.md)
 
 <p align="center">
   <img src="docs/capturas/v0.39.2-oled.png" alt="Configuración de Nexo en tema OLED" width="225" />
