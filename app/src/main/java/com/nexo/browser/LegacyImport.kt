@@ -102,37 +102,55 @@ object LegacyImport {
         prefs(context).edit().putLong(KEY_SNOOZED_AT, System.currentTimeMillis()).apply()
     }
 
+    private val importing = java.util.concurrent.atomic.AtomicBoolean()
+
     private fun run(activity: Activity, onImported: () -> Unit) {
         val app = activity.applicationContext
         if (!signedAlike(app)) {
             failed(activity, SecurityException("firma distinta"))
             return
         }
+        if (!importing.compareAndSet(false, true)) return
         Toast.makeText(activity, "Trayendo datos de Nexo anterior…", Toast.LENGTH_SHORT).show()
+
+        fun report(result: Result<Summary>) {
+            main.post {
+                importing.set(false)
+                if (activity.isFinishing || activity.isDestroyed) return@post
+                result.fold(
+                    onSuccess = { summary ->
+                        AlertDialog.Builder(activity)
+                            .setTitle("Datos traídos")
+                            .setMessage(describe(summary) + "\n\nCuando compruebes que todo está bien puedes desinstalar la app anterior.")
+                            .setPositiveButton("Listo") { _, _ -> onImported() }
+                            .setOnCancelListener { onImported() }
+                            .show()
+                    },
+                    onFailure = { failed(activity, it) }
+                )
+            }
+        }
+
         io.execute {
             val result = runCatching {
                 val bundle = app.contentResolver.call(Uri.parse("content://$AUTHORITY"), LegacyProfileProvider.METHOD_EXPORT, null, null)
                 val raw = bundle?.getString(LegacyProfileProvider.KEY_PAYLOAD) ?: error("La app anterior no respondió.")
-                LegacyMerge.parse(raw)
+                val payload = LegacyMerge.parse(raw)
+                payload to applyPreferences(app, payload)
             }
+            val (payload, summary) = result.getOrElse { report(Result.failure(it)); return@execute }
             main.post {
-                result.fold(
-                    onSuccess = { payload ->
-                        val summary = runCatching { apply(app, payload) }
-                        summary.onSuccess { s ->
-                            prefs(app).edit().putString(KEY_STATE, "done").apply()
-                            if (!activity.isFinishing && !activity.isDestroyed) {
-                                AlertDialog.Builder(activity)
-                                    .setTitle("Datos traídos")
-                                    .setMessage(describe(s) + "\n\nCuando compruebes que todo está bien puedes desinstalar la app anterior.")
-                                    .setPositiveButton("Listo") { _, _ -> onImported() }
-                                    .setOnCancelListener { onImported() }
-                                    .show()
-                            }
-                        }.onFailure { error -> failed(activity, error) }
-                    },
-                    onFailure = { error -> failed(activity, error) }
-                )
+                val tabs = LegacyMerge.newTabs(TabManager.allTabs().map { it.url }, payload.tabs)
+                var imported = 0
+                for (tab in tabs) if (TabManager.importTab(tab.url, tab.title, tab.groupName, tab.desktopMode) != null) imported++
+                val saved = TabManager.persistWithResult()
+                io.execute {
+                    report(runCatching {
+                        check(imported == tabs.size && saved?.get() == true) { "No se pudo confirmar la escritura de las pestañas." }
+                        check(prefs(app).edit().putString(KEY_STATE, "done").commit()) { "No se pudo confirmar la migración." }
+                        summary.copy(tabs = imported)
+                    })
+                }
             }
         }
     }
@@ -145,7 +163,7 @@ object LegacyImport {
         }
         AlertDialog.Builder(activity)
             .setTitle("No se pudieron traer los datos")
-            .setMessage("$reason\n\nNo se cambió nada. Puedes reintentarlo desde Ajustes › Traer datos de Nexo anterior.")
+            .setMessage("$reason\n\nPuedes reintentar la importación desde Ajustes › Traer datos de Nexo anterior.")
             .setPositiveButton("Entendido", null)
             .show()
     }
@@ -158,8 +176,8 @@ object LegacyImport {
         s.secrets.takeIf { it > 0 }?.let { if (it == 1) "1 clave de servicio" else "$it claves de servicios" }
     ).joinToString(", ").ifBlank { "La app anterior no tenía datos que traer." }.replaceFirstChar { it.uppercase() }
 
-    /** Aplica en el hilo principal (TabManager vive allí). Los ajustes se escriben de una vez. */
-    private fun apply(context: Context, payload: LegacyMerge.Payload): Summary {
+    /** Las escrituras de preferencias se confirman antes de importar las pestañas. */
+    private fun applyPreferences(context: Context, payload: LegacyMerge.Payload): Summary {
         val settings = context.getSharedPreferences("nexo_browser_settings", Context.MODE_PRIVATE).edit()
         payload.settings.forEach { (key, value) ->
             when (value) {
@@ -172,24 +190,25 @@ object LegacyImport {
 
         val historyPrefs = context.getSharedPreferences("nexo_history", Context.MODE_PRIVATE)
         val existingHistory = runCatching { JSONArray(historyPrefs.getString("entries", "[]")) }.getOrDefault(JSONArray())
-        HistoryStore.replaceAll(context, LegacyMerge.mergeHistory(existingHistory, payload.history))
+        check(HistoryStore.replaceAll(context, LegacyMerge.mergeHistory(existingHistory, payload.history))) {
+            "No se pudo confirmar el historial."
+        }
 
         val quick = context.getSharedPreferences("nexo_quick_access", Context.MODE_PRIVATE)
         val existingLinks = runCatching { JSONArray(quick.getString("custom", "[]")) }.getOrDefault(JSONArray())
         val hidden = quick.getStringSet("hidden", emptySet()).orEmpty() + payload.hiddenLinks
-        quick.edit().putString("custom", LegacyMerge.mergeLinks(existingLinks, payload.customLinks).toString())
-            .putStringSet("hidden", hidden).commit()
-
-        val tabs = LegacyMerge.newTabs(TabManager.allTabs().map { it.url }, payload.tabs)
-        tabs.forEach { TabManager.importTab(it.url, it.title, it.groupName, it.desktopMode) }
+        check(quick.edit().putString("custom", LegacyMerge.mergeLinks(existingLinks, payload.customLinks).toString())
+            .putStringSet("hidden", hidden).commit()) { "No se pudieron confirmar los accesos rápidos." }
 
         val secrets = LegacyMerge.secretsToApply(
             TransferSchema.secretNames.associateWith { SecretStore.get(context, it).isNotEmpty() },
             payload.secrets
         )
-        secrets.forEach { (name, value) -> SecretStore.put(context, name, value) }
+        secrets.forEach { (name, value) ->
+            check(SecretStore.put(context, name, value, durable = true)) { "No se pudo guardar una clave de servicio." }
+        }
 
-        return Summary(payload.history.length(), tabs.size, payload.customLinks.length(), payload.settings.size, secrets.size)
+        return Summary(payload.history.length(), 0, payload.customLinks.length(), payload.settings.size, secrets.size)
     }
 
     // --- Lado de la app anterior (actualización de transición) --------------

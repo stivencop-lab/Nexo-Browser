@@ -405,7 +405,7 @@ object BrowserMediaController {
         val host = if (entry.isPrivate) "" else com.nexo.browser.media.MediaSitePrefs.normalizeHost(tab?.url)
         return Snapshot(
             tabId = selectedId,
-            title = entry.title,
+            title = if (entry.isPrivate) PRIVATE_TITLE else entry.title,
             playing = isPlaybackActive(selectedId),
             details = details[selectedId]?.let { if (entry.isPrivate) it.forPrivate() else it },
             host = host,
@@ -428,7 +428,7 @@ object BrowserMediaController {
         val tab = TabManager.allTabs().firstOrNull { it.id == id }
         return Snapshot(
             tabId = id,
-            title = entry.title,
+            title = if (entry.isPrivate) PRIVATE_TITLE else entry.title,
             playing = false,
             details = details[id]?.let { if (entry.isPrivate) it.forPrivate() else it },
             host = if (entry.isPrivate) "" else com.nexo.browser.media.MediaSitePrefs.normalizeHost(tab?.url),

@@ -18,11 +18,14 @@ class DownloadsActivity : Activity() {
     // Descargas en curso, mostradas antes que las terminadas.
     private var running: List<ActiveDownload> = emptyList()
     private var runningKey = ""
+    private var privateScope: String? = null
     private val progressListener: () -> Unit = { refresh() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
+        privateScope = intent.getStringExtra(EXTRA_PRIVATE_SCOPE)
+        WindowPrivacy.apply(window, privateScope != null)
         setContentView(R.layout.activity_list)
 
         listView = findViewById(R.id.listView)
@@ -30,12 +33,12 @@ class DownloadsActivity : Activity() {
             setText(R.string.empty_downloads)
             ThemeManager.styleText(this@DownloadsActivity, this, muted = true)
         }
-        findViewById<TextView>(R.id.listTitle).text = "Descargas"
+        findViewById<TextView>(R.id.listTitle).text = if (privateScope == null) "Descargas" else "Descargas privadas"
 
         findViewById<Button>(R.id.listAction).apply {
             text = "Limpiar lista"
             setOnClickListener {
-                DownloadStore.clearList(this@DownloadsActivity)
+                DownloadStore.clearList(this@DownloadsActivity, privateScope)
                 refresh()
             }
         }
@@ -75,12 +78,15 @@ class DownloadsActivity : Activity() {
                 DownloadStore.cancel(job.id)
                 Toast.makeText(this, "Cancelando…", Toast.LENGTH_SHORT).show()
             }
-            .show()
+            .create().also { dialog ->
+                WindowPrivacy.protect(dialog.window, privateScope != null)
+                dialog.show()
+            }
     }
 
     private fun refresh() {
-        val updated = DownloadStore.list(this)
-        val active = DownloadStore.activeDownloads()
+        val updated = DownloadStore.list(this, privateScope)
+        val active = DownloadStore.activeDownloads(privateScope)
         // Con descargas en curso la lista se redibuja con cada avance.
         val key = active.joinToString { it.id + ":" + it.received.get() + ":" + it.connections }
         if (listView.adapter != null && updated == entries && key == runningKey) return
@@ -175,10 +181,13 @@ class DownloadsActivity : Activity() {
                 .setMessage(entry.fileName)
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Eliminar") { _, _ ->
-                    DownloadStore.remove(this, entry.id)
+                    DownloadStore.remove(this, entry.id, privateScope)
                     refresh()
                 }
-                .show()
+                .create().also { dialog ->
+                    WindowPrivacy.protect(dialog.window, privateScope != null)
+                    dialog.show()
+                }
         }
         val sizeStr = Formatter.formatShortFileSize(this, entry.size)
         sheet = NexoSheets.show(
@@ -189,6 +198,11 @@ class DownloadsActivity : Activity() {
                 NexoSheets.list(this, actions, dismiss)
             )
         )
+        WindowPrivacy.protect(sheet?.window, privateScope != null)
+    }
+
+    companion object {
+        internal const val EXTRA_PRIVATE_SCOPE = "privateDownloadScope"
     }
 
     private fun share(entry: DownloadEntry) {

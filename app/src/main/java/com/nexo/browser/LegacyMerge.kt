@@ -108,7 +108,7 @@ object LegacyMerge {
         val out = JSONArray()
         for (array in listOf(existing, incoming)) for (i in 0 until array.length()) {
             val url = array.optJSONObject(i)?.optString("url").orEmpty()
-            if (url.isNotEmpty() && seen.add(url.trimEnd('/').lowercase()) && out.length() < MAX_LINKS) out.put(JSONObject().put("url", url))
+            if (url.isNotEmpty() && seen.add(UrlSafety.navigationKey(url)) && out.length() < MAX_LINKS) out.put(JSONObject().put("url", url))
         }
         return out
     }

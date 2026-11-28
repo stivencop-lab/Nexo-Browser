@@ -689,12 +689,12 @@
     track: null, trackMode: "", trackTimer: 0, knownCues: 0, offsetSec: 0, offsetTimer: 0,
     dom: false, domTimer: 0, domText: "", domWatch: 0, domChecks: 0, ytEnabled: false, ytTimer: 0,
     restartTimer: 0, capturing: false, waitCancel: null, pausedNotified: false,
-    target: "", file: null, fileTimer: 0, fileUrls: 0
+    target: "", file: null, fileTimer: 0, fileUrls: 0, fileAbort: null, discoveryTimer: 0
   };
   const MAX_CUES = 3000;
   // Identificador estable por línea: los reproductores HLS añaden líneas
   // mientras se ve el video y los índices de la lista se desplazan.
-  const cueIds = new WeakMap();
+  let cueIds = new WeakMap();
   let nextCueId = 0;
 
   function sendToNexo(message) {
@@ -1000,6 +1000,7 @@
     captions.track = track;
     captions.trackMode = track.mode;
     captions.knownCues = 0;
+    cueIds = new WeakMap();
     nextCueId = 0;
     // "hidden" carga las líneas sin dibujarlas: Nexo muestra las suyas (traducidas).
     try { track.mode = "hidden"; } catch (_) {}
@@ -1195,6 +1196,7 @@
   }
 
   function startDomCaptions() {
+    cancelSubtitleDownload();
     stopDomWatch();
     if (captions.recorder) stopRecording(true);
     captions.choosing = false;
@@ -1310,23 +1312,53 @@
     return cues.sort((a, b) => a.s - b.s);
   }
 
+  function cancelSubtitleDownload() {
+    if (!captions.fileAbort) return;
+    captions.fileAbort.abort();
+    captions.fileAbort = null;
+  }
+
   async function loadSubtitleFile(token) {
     const urls = subtitleUrls();
     captions.fileUrls = urls.length;
-    // fetch de la página: el CDN responde igual que al reproductor.
-    const pageFetch = typeof fetch === "function" ? fetch.bind(globalThis) : null;
-    if (!urls.length || !pageFetch) return false;
+    if (!urls.length || typeof fetch !== "function") return false;
     const url = pickSubtitleUrl(urls, captions.target || captions.lang);
+    cancelSubtitleDownload();
+    const controller = new AbortController();
+    captions.fileAbort = controller;
+    const timeout = setTimeout(() => controller.abort(), 5000);
     let text = "";
     try {
-      const response = await pageFetch(url, { credentials: "same-origin" });
-      if (!response.ok) return false;
-      if (Number(response.headers.get("content-length") || 0) > MAX_SUB_BYTES) return false;
-      text = (await response.text()).slice(0, MAX_SUB_BYTES);
+      const response = await fetch(url, { credentials: "same-origin", signal: controller.signal });
+      if (!response.ok || !response.body || Number(response.headers.get("content-length") || 0) > MAX_SUB_BYTES) {
+        controller.abort();
+        return false;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let bytes = 0;
+      try {
+        while (true) {
+          const item = await reader.read();
+          if (item.done) break;
+          bytes += item.value.byteLength;
+          if (bytes > MAX_SUB_BYTES) {
+            controller.abort();
+            return false;
+          }
+          text += decoder.decode(item.value, { stream: true });
+        }
+        text += decoder.decode();
+      } finally {
+        reader.releaseLock();
+      }
     } catch (_) {
       return false;
+    } finally {
+      clearTimeout(timeout);
+      if (captions.fileAbort === controller) captions.fileAbort = null;
     }
-    if (token !== captions.token || !captions.active || !captions.granted || textSource()) return false;
+    if (controller.signal.aborted || token !== captions.token || !captions.active || !captions.granted || textSource()) return false;
     const cues = parseSubtitles(text);
     if (!cues.length) return false;
     startFileCaptions(cues);
@@ -1380,6 +1412,7 @@
    */
   function stopSources(notify) {
     captions.token++;
+    cancelSubtitleDownload();
     clearTimeout(captions.restartTimer);
     captions.restartTimer = 0;
     clearTimeout(captions.ytTimer);
@@ -1454,8 +1487,13 @@
     fallbackAfterTrack();
   }
 
+  let captionHeartbeatAt = 0;
   function discoverCaptions() {
     if (!captions.active) return;
+    if (captions.granted && Date.now() - captionHeartbeatAt >= 5000) {
+      captionHeartbeatAt = Date.now();
+      sendToNexo({ type: "captions_heartbeat" });
+    }
     const video = captionVideo();
     if (captions.granted && captions.video && (!captions.video.isConnected || captions.video.ended || video !== captions.video)) {
       release();
@@ -1477,13 +1515,18 @@
       watchLateTracks(null);
       clearTimeout(lateTrackTimer);
       captions.active = false;
+      clearInterval(captions.discoveryTimer);
+      captions.discoveryTimer = 0;
       captions.granted = false;
       captions.pausedNotified = false;
       captions.video = null;
       return;
     }
     const liveChanged = captions.live !== (live === true);
-    if (!captions.active) captions.pausedNotified = false;
+    if (!captions.active) {
+      captions.pausedNotified = false;
+      captions.discoveryTimer = setInterval(discoverCaptions, 1000);
+    }
     captions.active = true;
     captions.live = live === true;
     captions.lang = typeof lang === "string" && lang ? lang : "multi";
@@ -1493,8 +1536,6 @@
     discoverCaptions();
   }
 
-  // El sondeo también descubre reproductores nuevos (SPA) y videos en Shadow DOM abierto.
-  setInterval(discoverCaptions, 1000);
   document.addEventListener("playing", event => {
     captions.pausedNotified = false;
     discoverCaptions();
@@ -1758,7 +1799,12 @@
    * arriba) y el sondeo cada 2 s bastan para detectar videos nuevos.
    */
 
-  setInterval(reportVideoState, POLL_INTERVAL_MS);
+  if (window === window.top) {
+    setInterval(() => {
+      if (videoKnown || pipActive || document.getElementsByTagName("video").length ||
+          Date.now() - lastShadowScanAt >= shadowScanInterval) reportVideoState();
+    }, POLL_INTERVAL_MS);
+  }
 
   // ---------------------------------------------------------------
   // Conexión con Nexo (con reconexión)

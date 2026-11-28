@@ -85,7 +85,6 @@ class SuggestionIndex(entries: List<HistoryEntry>) {
                 .substringAfterLast('@').substringBefore(':').lowercase()
 
         /** Misma página con o sin www, esquema o barra final. */
-        fun dedupeKey(url: String): String =
-            url.substringAfter("://").removePrefix("www.").substringBefore('#').trimEnd('/').lowercase()
+        fun dedupeKey(url: String): String = UrlSafety.navigationKey(url, suggestion = true)
     }
 }

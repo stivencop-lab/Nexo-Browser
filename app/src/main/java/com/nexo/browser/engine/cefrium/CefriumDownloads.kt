@@ -6,6 +6,7 @@ import com.nexo.browser.UrlSafety
 import com.nexo.browser.engine.DownloadFetcher
 import com.nexo.browser.engine.DownloadResponse
 import com.nexo.browser.engine.EngineDownload
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
@@ -13,9 +14,8 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 /**
- * Descargas de Nexo: OkHttp con las cookies del perfil de la pestaña (normal,
- * privado o Burner). Así la descarga pasa por el gestor de Nexo (pausas,
- * tramos en paralelo, carpeta elegida) en lugar del de Chromium.
+ * Descargas directas que el usuario pidió desde el menú de un enlace.
+ * Las descargas entregadas por Chromium conservan la petición en el motor.
  */
 internal object CefriumDownloads {
     private const val MAX_REDIRECTS = 5
@@ -39,12 +39,14 @@ internal object CefriumDownloads {
             referrer: String?,
             isPrivate: Boolean,
             burnerId: String?
-        ): DownloadResponse =
-            request(url, headers, referrer, CefriumProfiles.forSession(isPrivate, burnerId), null)
+        ): DownloadResponse {
+            if (burnerId != null) throw IOException("La descarga Burner debe usar el navegador de esa identidad.")
+            return request(url, headers, referrer, CefriumProfiles.forSession(isPrivate, null))
+        }
     }
 
     /** Bloquea: nunca en el hilo principal (las cookies de Cefrium responden en él). */
-    fun request(url: String, headers: Map<String, String>, referrer: String?, profile: CefriumProfile, agent: String?): DownloadResponse {
+    private fun request(url: String, headers: Map<String, String>, referrer: String?, profile: CefriumProfile): DownloadResponse {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Descarga en el hilo principal" }
         var currentUrl = url
         var currentReferrer = referrer?.takeIf { UrlSafety.isWebUrl(it) }
@@ -52,14 +54,19 @@ internal object CefriumDownloads {
 
         while (true) {
             if (!UrlSafety.isWebUrl(currentUrl)) throw IOException("Este recurso no se puede descargar directamente")
-            val builder = Request.Builder().url(currentUrl).header("User-Agent", agent ?: userAgent)
+            val destination = currentUrl.toHttpUrlOrNull() ?: throw IOException("URL de descarga inválida")
+            val builder = Request.Builder().url(destination).header("User-Agent", userAgent)
             headers.forEach { (name, value) ->
                 if (!name.equals("Cookie", ignoreCase = true) && !name.equals("Authorization", ignoreCase = true)) {
                     builder.header(name, value)
                 }
             }
             cookieHeader(profile, currentUrl)?.let { builder.header("Cookie", it) }
-            currentReferrer?.let { builder.header("Referer", it) }
+            currentReferrer?.toHttpUrlOrNull()?.let { origin ->
+                if (origin.scheme == destination.scheme && origin.host == destination.host && origin.port == destination.port) {
+                    builder.header("Referer", origin.newBuilder().username("").password("").fragment(null).build().toString())
+                }
+            }
 
             val response = client.newCall(builder.build()).execute()
             val code = response.code
@@ -98,11 +105,11 @@ internal object CefriumDownloads {
 }
 
 /**
- * Archivo que generó la página (`blob:`, `data:`): Chromium lo dejó en la
- * caché de la app y el gestor de Nexo lo copia a Descargas. El temporal se
+ * Archivo guardado por Chromium con la petición original. El gestor lo copia
+ * desde la caché a Descargas. El temporal se
  * borra al terminar de leerlo o al descartarlo.
  */
-internal class PageGeneratedDownload(
+internal class CefriumFileDownload(
     override val uri: String,
     private val file: java.io.File,
     override val suggestedName: String?,
@@ -130,37 +137,18 @@ internal class PageGeneratedDownload(
     companion object {
         private const val FOLDER = "page-downloads"
 
-        /** Archivo temporal para la descarga [id]; los que quedaron de otra sesión se borran. */
+        private val sessionPrefix = "download-${java.util.UUID.randomUUID()}-"
+
+        fun clearOrphaned(context: android.content.Context) {
+            java.io.File(context.cacheDir, FOLDER).listFiles()?.forEach { file ->
+                if (file.name.startsWith("download-") && !file.name.startsWith(sessionPrefix) &&
+                    (file.name.endsWith(".part") || file.name.endsWith(".part.crdownload"))) file.delete()
+            }
+        }
+
         fun reserve(context: android.content.Context, id: Int): java.io.File {
             val folder = java.io.File(context.cacheDir, FOLDER).apply { mkdirs() }
-            val day = 24L * 3600 * 1000
-            folder.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > day }?.forEach { it.delete() }
-            return java.io.File(folder, "${System.currentTimeMillis()}-$id.part")
+            return java.io.File(folder, "$sessionPrefix$id-${java.util.UUID.randomUUID()}.part")
         }
-    }
-}
-
-/** Descarga que Chromium iba a guardar: se cancela allí y la hace el gestor de Nexo. */
-internal class CefriumDownload(
-    override val uri: String,
-    override val suggestedName: String?,
-    override val mimeType: String?,
-    private val referrer: String?,
-    private val profile: CefriumProfile,
-    private val userAgent: String?
-) : EngineDownload {
-    override fun discard() = Unit
-
-    override fun open(): DownloadResponse {
-        val response = CefriumDownloads.request(uri, emptyMap(), referrer, profile, userAgent)
-        // El nombre y el tipo que Chromium ya conoce sirven si el servidor no los repite.
-        val headers = response.headers.toMutableMap()
-        if (headers.keys.none { it.equals("Content-Disposition", true) } && !suggestedName.isNullOrBlank()) {
-            headers["Content-Disposition"] = "attachment; filename=\"" + suggestedName.replace("\"", "") + "\""
-        }
-        if (headers.keys.none { it.equals("Content-Type", true) } && !mimeType.isNullOrBlank()) {
-            headers["Content-Type"] = mimeType
-        }
-        return DownloadResponse(response.uri, response.statusCode, headers, response.body)
     }
 }

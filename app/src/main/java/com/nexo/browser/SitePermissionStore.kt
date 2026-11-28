@@ -12,6 +12,17 @@ import com.cefrium.CefriumPermission
  */
 object SitePermissionStore {
     private const val PREFS = "nexo_site_permissions"
+    private const val PRIVATE_SCOPE = "incognito"
+    private val ephemeral = java.util.concurrent.ConcurrentHashMap<String, MutableMap<String, Decision>>()
+
+    internal fun scope(isPrivate: Boolean, burnerId: String?): String? =
+        burnerId ?: PRIVATE_SCOPE.takeIf { isPrivate }
+
+    internal fun scope(tab: BrowserTab?): String? = scope(tab?.isPrivate == true, tab?.burnerId)
+
+    internal fun clear(scope: String) {
+        ephemeral.remove(scope)
+    }
 
     enum class Decision(val id: String, val label: String, val cefrium: CefriumContentSetting) {
         ASK("ask", "Preguntar", CefriumContentSetting.ASK),
@@ -37,14 +48,28 @@ object SitePermissionStore {
     private fun key(origin: String, permission: CefriumPermission): String =
         "${origin.lowercase()}|${permission.name}"
 
-    fun get(context: Context, origin: String?, permission: CefriumPermission): Decision {
+    fun get(context: Context, origin: String?, permission: CefriumPermission, scope: String? = null): Decision {
         val clean = SiteControlModel.originOf(origin) ?: return Decision.ASK
-        val raw = prefs(context).getString(key(clean, permission), null)
-        return Decision.fromId(raw)
+        val permissionKey = key(clean, permission)
+        if (scope != null) return ephemeral[scope]?.get(permissionKey) ?: Decision.ASK
+        return Decision.fromId(prefs(context).getString(permissionKey, null))
     }
 
-    fun set(context: Context, origin: String?, permission: CefriumPermission, decision: Decision, browser: CefriumBrowser? = null) {
+    fun set(
+        context: Context,
+        origin: String?,
+        permission: CefriumPermission,
+        decision: Decision,
+        browser: CefriumBrowser? = null,
+        scope: String? = null
+    ) {
         val clean = SiteControlModel.originOf(origin) ?: return
+        if (scope != null) {
+            val permissionKey = key(clean, permission)
+            if (decision == Decision.ASK) ephemeral[scope]?.remove(permissionKey)
+            else ephemeral.computeIfAbsent(scope) { java.util.concurrent.ConcurrentHashMap() }[permissionKey] = decision
+            return
+        }
         val editor = prefs(context).edit()
         if (decision == Decision.ASK) editor.remove(key(clean, permission))
         else editor.putString(key(clean, permission), decision.id)
@@ -77,10 +102,10 @@ object SitePermissionStore {
         editor.apply()
     }
 
-    fun summary(context: Context, origin: String?): String {
+    fun summary(context: Context, origin: String?, scope: String? = null): String {
         val clean = SiteControlModel.originOf(origin) ?: return "Sin permisos web"
         val custom = MANAGED_PERMISSIONS.mapNotNull { (perm, label) ->
-            when (get(context, clean, perm)) {
+            when (get(context, clean, perm, scope)) {
                 Decision.ALLOW -> "$label: permitido"
                 Decision.BLOCK -> "$label: bloqueado"
                 Decision.ASK -> null

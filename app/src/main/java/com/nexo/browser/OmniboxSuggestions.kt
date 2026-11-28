@@ -45,6 +45,9 @@ class OmniboxSuggestions(
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "NexoSuggest").apply { isDaemon = true } }
     private var generation = 0
+    private var pending: java.util.concurrent.Future<*>? = null
+    private var disposed = false
+    private var localQuery: String? = null
     private var query = ""
     private var lastRemoteAllowed = false
     private var local: List<NexoCommandEngine.Result> = emptyList()
@@ -52,23 +55,31 @@ class OmniboxSuggestions(
     private val remoteTask = Runnable { requestRemote() }
 
     /** Devuelve el primer resultado local accionable (para Enter en consultas con prefijo `@`). */
-    fun firstLocalAction(): OmniboxSuggestion? = local.firstOrNull()?.let { toSuggestion(it) }
+    fun firstLocalAction(text: String): OmniboxSuggestion? =
+        local.firstOrNull()?.takeIf { text.trim() == localQuery }?.let(::toSuggestion)
 
     /** Texto de la barra con foco; vacío o null oculta el panel. */
     fun update(text: String?, remoteAllowed: Boolean) {
+        if (disposed) return
+        pending?.cancel(true)
         val current = text?.trim().orEmpty()
         val id = ++generation
         main.removeCallbacks(remoteTask)
         RemoteSuggestions.cancel()
         if (current.isEmpty()) { hide(); return }
-        if (current != query) remote = emptyList()
+        if (current != query || lastRemoteAllowed != remoteAllowed) {
+            remote = emptyList()
+            local = emptyList()
+            localQuery = null
+        }
         query = current
         lastRemoteAllowed = remoteAllowed
+        render()
 
         val app = activity.applicationContext
         val activeId = TabManager.activeTab()?.id
         val onWebPage = TabManager.activeTab()?.let { !BrowserPrefs.isNexoHome(it.url) } == true
-        val tabsSnapshot = TabManager.allTabs().map { tab ->
+        val tabsSnapshot = TabManager.allTabs().filterNot { it.isPrivate }.map { tab ->
             NexoCommandEngine.TabCandidate(
                 id = tab.id,
                 title = tab.title,
@@ -80,7 +91,7 @@ class OmniboxSuggestions(
         }
         val parsed = NexoCommandEngine.parseQuery(current)
 
-        worker.execute {
+        pending = worker.submit {
             val bookmarksSnapshot = runCatching { bookmarksProvider() }.getOrDefault(emptyList())
             val shortcutsSnapshot = if (parsed.scope == NexoCommandEngine.Scope.ALL) {
                 runCatching { StartPageView.savedShortcuts(app) }.getOrDefault(emptyList())
@@ -105,6 +116,7 @@ class OmniboxSuggestions(
             main.post {
                 if (id != generation) return@post
                 local = found
+                localQuery = current
                 render()
             }
         }
@@ -137,9 +149,21 @@ class OmniboxSuggestions(
         ++generation
         main.removeCallbacks(remoteTask)
         RemoteSuggestions.cancel()
-        local = emptyList(); remote = emptyList(); query = ""
+        pending?.cancel(true)
+        pending = null
+        local = emptyList()
+        localQuery = null
+        remote = emptyList()
+        query = ""
         panel.removeAllViews()
         panel.visibility = View.GONE
+    }
+
+    fun dispose() {
+        disposed = true
+        hide()
+        main.removeCallbacksAndMessages(null)
+        worker.shutdownNow()
     }
 
     private fun render() {

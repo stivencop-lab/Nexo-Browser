@@ -80,6 +80,27 @@ class NexoAiHistoryTest {
     }
 
     @Test
+    fun pendingContextKeepsItsConversationAndIsDiscardedAfterDeletion() {
+        val file = temp.newFile("pending.json")
+        NexoAiController.initializeForTest(file, testTransport = answering())
+        val reserved = requireNotNull(NexoAiController.reserveSubmission())
+        assertNull(NexoAiController.reserveSubmission())
+        val other = NexoAiController.newConversation()
+        assertTrue(NexoAiController.finishSubmission(reserved))
+        NexoAiController.sendPrompt(settings, "sk-test", "Consulta original", "", conversationId = reserved.conversationId)
+        val snapshot = NexoAiController.snapshot()
+        assertEquals(other, snapshot.activeConversationId)
+        assertTrue(snapshot.activeConversation!!.messages.isEmpty())
+        assertEquals("Consulta original", snapshot.conversations.single { it.id == reserved.conversationId }.messages.first().text)
+
+        val removed = requireNotNull(NexoAiController.reserveSubmission())
+        NexoAiController.deleteConversation(removed.conversationId)
+        assertFalse(NexoAiController.finishSubmission(removed))
+        assertEquals("", NexoAiController.sendPrompt(settings, "sk-test", "Consulta eliminada", "", conversationId = removed.conversationId))
+        assertFalse(file.readText().contains("Consulta eliminada"))
+    }
+
+    @Test
     fun controllerDeletesMessagesRenamesAndWipesEverythingOnDisk() {
         val file = temp.newFile("history.json")
         NexoAiController.initializeForTest(storageFile = file, testTransport = answering())

@@ -121,6 +121,12 @@ function nexoCefriumPort(isTop, _options) {
       opts.onSuccess = function(response) {
         listening = false;
         failures = 0;
+        let retry = 0;
+        try { retry = Number(jsonParse(response).retryAfter) || 0; } catch (_) {}
+        if (retry > 0 && typeof setTimeout === 'function') {
+          setTimeout(listen, Math.min(4000, retry) + Math.floor(Math.random() * 200));
+          return;
+        }
         handle(response);
         scheduleListen();
       };

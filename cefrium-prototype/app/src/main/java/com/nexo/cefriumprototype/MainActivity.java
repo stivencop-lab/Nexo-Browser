@@ -1,29 +1,28 @@
 package com.nexo.cefriumprototype;
 
-import android.app.Activity;
+import android.Manifest;
 import android.app.AlertDialog;
-import android.net.Uri;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.cefrium.CefriumBrowser;
 
 /**
- * Smoke test. On a fresh start it walks example.com -> iana.org -> back ->
- * forward -> reload and logs PASS/FAIL lines under the NexoCefrium tag:
+ * Smoke test. On a fresh start it walks two local origins, back,
+ * forward and reload and logs PASS/FAIL lines under the NexoCefrium tag:
  *   adb logcat -s NexoCefrium CefriumBrowser
  * Start with "--ez incognito true" to run the same checks in a private profile.
  */
-public final class MainActivity extends Activity {
-    private static final String STATE_CEF = "cefrium_state";
-    private static final String HOME = "https://example.com/";
-    private static final String SECOND = "https://www.iana.org/help/example-domains";
+public final class MainActivity extends androidx.activity.ComponentActivity {
     private static final String SMOKE_COOKIE = "nexo_smoke";
     private static final String INCOGNITO_COOKIE = "nexo_incog";
 
@@ -33,11 +32,40 @@ public final class MainActivity extends Activity {
     private CefriumBrowser popup;
     private boolean incognito;
     private int step;
+    private SmokeServer smoke;
+    private String first;
+    private String second;
+    private String expecting;
+    private final Runnable timeout = () -> failSmoke("timeout cargando " + expecting);
+    private CefriumPermissionHandler.PermissionPrompt androidRequest;
+    private final androidx.activity.result.ActivityResultLauncher<String[]> permissions =
+            registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
+                var current = androidRequest;
+                androidRequest = null;
+                if (current == null) return;
+                var required = androidPermissions(current);
+                if (required != null && canGrant(required)) current.grant();
+                else current.deny();
+            });
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        int previousPort = state == null ? 0 : state.getInt("smoke_port");
+        try {
+            try {
+                smoke = new SmokeServer(previousPort);
+            } catch (java.io.IOException error) {
+                if (previousPort == 0) throw error;
+                smoke = new SmokeServer(0);
+            }
+        } catch (java.io.IOException error) {
+            failSmoke("no se pudo iniciar el servidor local");
+            return;
+        }
+        first = smoke.origin() + "/first";
+        second = smoke.foreignOrigin() + "/second";
         incognito = getIntent().getBooleanExtra("incognito", false);
-        session = CefriumSession.create(this, incognito, new CefriumSession.Hooks(
+        session = CefriumSession.create(this, incognito, smoke.origin(), new CefriumSession.Hooks(
                 (type, payload) -> Log.i(Nexo.TAG, "bridge message type=" + type + " payload=" + payload),
                 this::showPermissionPrompt,
                 new PopupHost(),
@@ -48,69 +76,90 @@ public final class MainActivity extends Activity {
         setContentView(root);
         session.setStateListener(this::onLoaded);
 
-        Bundle saved = state == null ? null : state.getBundle(STATE_CEF);
-        if (saved != null) {
-            step = -1; // restored: no smoke walk
+        Bundle saved = state == null ? null : state.getBundle("cefrium_state");
+        if (saved != null && previousPort == smoke.port()) {
+            step = -1;
             session.restoreState(saved);
         } else {
             Log.i(Nexo.TAG, "SMOKE start incognito=" + incognito);
-            session.loadUrl(HOME);
+            navigate(first, () -> session.loadUrl(first));
         }
     }
 
-    private void onLoaded(String url, boolean canGoBack, boolean canGoForward) {
-        String host = Uri.parse(url).getHost();
-        switch (step) {
+    private void navigate(String url, Runnable navigate) {
+        expecting = url;
+        main.removeCallbacks(timeout);
+        main.postDelayed(timeout, 10_000L);
+        navigate.run();
+    }
+
+    private void failSmoke(String reason) {
+        step = -1;
+        expecting = null;
+        main.removeCallbacks(timeout);
+        check(reason, false);
+    }
+
+    private void onLoaded(String url, boolean canGoBack, boolean canGoForward, String failure) {
+        if (expecting == null || "about:blank".equals(url)) return;
+        if (failure != null) { failSmoke("navegación: " + failure); return; }
+        if (!expecting.equals(url)) return;
+        main.removeCallbacks(timeout);
+        expecting = null;
+        switch (step++) {
             case 0:
-                if (!"example.com".equals(host)) return;
-                step = 1;
-                check("example.com rendered", true);
-                runBridgeAndShieldChecks();
+                check("primera página local cargada", true);
                 runCookieChecks();
-                later(() -> session.loadUrl(SECOND));
+                session.evaluateJavaScript(BRIDGE_AND_SHIELD_JS);
+                waitForShield(android.os.SystemClock.uptimeMillis() + 5_000L);
                 break;
             case 1:
-                if (!"www.iana.org".equals(host)) return;
-                step = 2;
-                check("canGoBack after second page", canGoBack);
+                check("atrás disponible en el segundo origen", canGoBack);
                 session.evaluateJavaScript(FOREIGN_BRIDGE_JS);
-                later(session::goBack);
+                later(() -> navigate(first, session::goBack));
                 break;
             case 2:
-                if (!"example.com".equals(host)) return;
-                step = 3;
-                check("back returned to example.com", true);
-                check("canGoForward after back", canGoForward);
-                later(session::goForward);
+                check("adelante disponible al volver", canGoForward);
+                later(() -> navigate(second, session::goForward));
                 break;
             case 3:
-                if (!"www.iana.org".equals(host)) return;
-                step = 4;
-                check("forward returned to iana.org", true);
-                later(session::reload);
+                check("adelante volvió al segundo origen", true);
+                later(() -> navigate(second, session::reload));
                 break;
             case 4:
-                if (!"www.iana.org".equals(host)) return;
-                step = 5;
-                check("reload finished", true);
+                check("recarga completada", true);
                 Bundle state = session.saveState();
-                check("saveState non-empty", state != null && !state.isEmpty());
-                Log.i(Nexo.TAG, "SMOKE navigation done; returning to example.com for manual checks");
-                later(() -> session.loadUrl(HOME));
+                check("saveState no está vacío", state != null && !state.isEmpty());
+                Log.i(Nexo.TAG, "SMOKE navigation done");
+                later(() -> session.loadUrl(first));
                 break;
             default:
                 break;
         }
     }
 
+    private void waitForShield(long deadline) {
+        boolean controlled = smoke.controlReached && session.blockedSmokeTarget();
+        if (controlled || android.os.SystemClock.uptimeMillis() >= deadline) {
+            check("interceptor bloqueó /filtered y /control llegó al servidor",
+                    controlled && !smoke.filteredReached);
+            navigate(second, () -> session.loadUrl(second));
+            return;
+        }
+        main.postDelayed(() -> waitForShield(deadline), 100);
+    }
+
     private static final String BRIDGE_AND_SHIELD_JS =
             "(function(){"
-            + "window.cefriumQuery({request: JSON.stringify({type:'smoke'}),"
-            + " onSuccess: function(r){ console.log('NEXO PASS bridge on example.com: ' + r); },"
-            + " onFailure: function(c, m){ console.log('NEXO FAIL bridge on example.com: ' + c + ' ' + m); }});"
-            + "fetch('https://securepubads.g.doubleclick.net/tag/js/gpt.js', {mode:'no-cors'})"
-            + " .then(function(){ console.log('NEXO FAIL shield: doubleclick request went through'); })"
-            + " .catch(function(e){ console.log('NEXO PASS shield blocked doubleclick: ' + e); });"
+            + "if(typeof window.cefriumQuery === 'function') window.cefriumQuery({"
+            + "request: JSON.stringify({type:'smoke'}),"
+            + "onSuccess: function(r){ console.log('NEXO PASS bridge local: ' + r); },"
+            + "onFailure: function(c, m){ console.log('NEXO FAIL bridge local: ' + c + ' ' + m); }});"
+            + "else console.log('NEXO FAIL bridge local ausente');"
+            + "fetch('/control').then(function(r){ if(!r.ok) throw Error(r.status); })"
+            + ".catch(function(e){ console.log('NEXO FAIL control: ' + e); });"
+            + "fetch('/filtered').then(function(){ console.log('NEXO FAIL filtered respondió'); })"
+            + ".catch(function(e){ console.log('NEXO filtered rechazado: ' + e); });"
             + "})();";
 
     private static final String FOREIGN_BRIDGE_JS =
@@ -121,30 +170,70 @@ public final class MainActivity extends Activity {
             + " onFailure: function(c, m){ console.log('NEXO PASS bridge denied foreign origin: ' + c + ' ' + m); }});"
             + "})();";
 
-    private void runBridgeAndShieldChecks() { session.evaluateJavaScript(BRIDGE_AND_SHIELD_JS); }
-
     /** Each profile writes its own cookie and must not see the other one's. */
     private void runCookieChecks() {
         CefriumCookieStore cookies = session.cookies();
         String own = incognito ? INCOGNITO_COOKIE : SMOKE_COOKIE;
         String other = incognito ? SMOKE_COOKIE : INCOGNITO_COOKIE;
-        cookies.setCookie(HOME, own + "=1; Max-Age=3600; Path=/; Secure")
-                .thenCompose(ok -> { check("setCookie accepted", Boolean.TRUE.equals(ok)); return cookies.cookieHeader(HOME); })
+        cookies.setCookie(first, own + "=1; Max-Age=3600; Path=/")
+                .thenCompose(ok -> { check("setCookie accepted", Boolean.TRUE.equals(ok)); return cookies.cookieHeader(first); })
                 .thenAccept(header -> main.post(() -> {
-                    Log.i(Nexo.TAG, "cookies for example.com: " + header);
                     check("profile sees its own cookie " + own, header.contains(own + "="));
                     check("profile does not see " + other, !header.contains(other + "="));
                 }));
     }
 
+    private String[] androidPermissions(CefriumPermissionHandler.PermissionPrompt prompt) {
+        var required = new java.util.LinkedHashSet<String>();
+        for (var permission : prompt.permissions()) {
+            switch (permission) {
+                case CAMERA -> required.add(Manifest.permission.CAMERA);
+                case MICROPHONE -> required.add(Manifest.permission.RECORD_AUDIO);
+                case GEOLOCATION -> {
+                    required.add(Manifest.permission.ACCESS_FINE_LOCATION);
+                    required.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+                }
+                case NOTIFICATIONS -> {
+                    if (Build.VERSION.SDK_INT >= 33) required.add(Manifest.permission.POST_NOTIFICATIONS);
+                }
+                case CLIPBOARD_READ -> {}
+                default -> { return null; }
+            }
+        }
+        return required.toArray(new String[0]);
+    }
+
+    private boolean canGrant(String[] required) {
+        for (String permission : required) {
+            if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) continue;
+            if (Manifest.permission.ACCESS_FINE_LOCATION.equals(permission)
+                    && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) continue;
+            return false;
+        }
+        return true;
+    }
+
     private void showPermissionPrompt(CefriumPermissionHandler.PermissionPrompt prompt) {
-        new AlertDialog.Builder(this)
+        String[] required = androidPermissions(prompt);
+        if (required == null || androidRequest != null || isFinishing() || isDestroyed()) {
+            prompt.deny();
+            return;
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(prompt.origin())
                 .setMessage("Permitir " + prompt.permissions() + "?")
-                .setPositiveButton("Permitir", (d, w) -> prompt.grant())
+                .setPositiveButton("Permitir", (d, w) -> {
+                    if (canGrant(required)) prompt.grant();
+                    else {
+                        androidRequest = prompt;
+                        permissions.launch(required);
+                    }
+                })
                 .setNegativeButton("Bloquear", (d, w) -> prompt.deny())
                 .setOnCancelListener(d -> prompt.deny())
-                .show();
+                .create();
+        prompt.onResolved = dialog::dismiss;
+        dialog.show();
     }
 
     private void setFullscreen(boolean fullscreen) {
@@ -191,7 +280,10 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
-        if (session != null) state.putBundle(STATE_CEF, session.saveState());
+        if (session != null && smoke != null) {
+            state.putBundle("cefrium_state", session.saveState());
+            state.putInt("smoke_port", smoke.port());
+        }
         super.onSaveInstanceState(state);
     }
 
@@ -203,6 +295,7 @@ public final class MainActivity extends Activity {
         main.removeCallbacksAndMessages(null);
         closePopup();
         if (session != null) session.close();
+        if (smoke != null) smoke.close();
         super.onDestroy();
     }
 }

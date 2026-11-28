@@ -91,7 +91,7 @@ object SiteControlSheet {
             val meta = buildList {
                 add(conn.explanation)
                 if (isWeb && origin != null) add("Origen: $origin")
-                if (isWeb) add("Permisos: ${SitePermissionStore.summary(activity, origin)}")
+                if (isWeb) add("Permisos: ${SitePermissionStore.summary(activity, origin, SitePermissionStore.scope(tab))}")
                 session?.lastLoadDurationMs?.takeIf { isWeb && it > 0L }?.let { add("Última carga: $it ms") }
                 if (tab.isPrivate) add(if (tab.burnerId != null) "Perfil aislado Burner" else "Perfil privado en memoria")
             }
@@ -218,7 +218,7 @@ object SiteControlSheet {
             })
         }
         if (isWeb && origin != null && session != null) {
-            groupAdd(privacy, NexoUi.actionRow(activity, R.drawable.ic_tab_tools, "Permisos del sitio", SitePermissionStore.summary(activity, origin)) {
+            groupAdd(privacy, NexoUi.actionRow(activity, R.drawable.ic_tab_tools, "Permisos del sitio", SitePermissionStore.summary(activity, origin, SitePermissionStore.scope(tab))) {
                 sheet.dismiss()
                 showPermissions(activity, tab, session, url, host, origin)
             })
@@ -372,7 +372,7 @@ object SiteControlSheet {
             val holder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
             fun render() {
                 holder.removeAllViews()
-                val current = SitePermissionStore.get(activity, origin, perm)
+                val current = SitePermissionStore.get(activity, origin, perm, SitePermissionStore.scope(tab))
                 holder.addView(NexoUi.segmented(activity, SitePermissionStore.Decision.entries.map { it to it.label }, current) { decision ->
                     session.setSiteContentSetting(origin, perm, decision)
                     render()
@@ -393,9 +393,12 @@ object SiteControlSheet {
             setTextColor(p.muted)
             setPadding(dp(16f), dp(14f), dp(16f), dp(4f))
         }
-        session.inspectSiteData(url) { cookies, bytes ->
-            cookieStatus.text = SiteControlModel.formatSiteDataSummary(cookies, bytes)
+        fun refreshSiteData() {
+            session.inspectSiteData(url) { cookies, bytes ->
+                cookieStatus.text = SiteControlModel.formatSiteDataSummary(cookies, bytes)
+            }
         }
+        refreshSiteData()
         cookieCard.addView(cookieStatus)
         cookieCard.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_close, "Borrar cookies y datos", danger = true) {
             AlertDialog.Builder(activity)
@@ -403,11 +406,19 @@ object SiteControlSheet {
                 .setMessage("Se eliminarán las cookies y el almacenamiento local de $origin en este perfil. Es posible que debas iniciar sesión de nuevo.")
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Borrar") { _, _ ->
-                    session.clearSiteDataAndCookies(url) {
-                        cookieStatus.text = "0 cookies guardadas"
-                        Toastish.show(activity, "Cookies y datos de $host eliminados")
+                    if (tab.session !== session) return@setPositiveButton
+                    cookieStatus.text = "Borrando cookies y datos…"
+                    session.clearSiteDataAndCookies(url) { ok ->
+                        if (!activity.isDestroyed) {
+                            refreshSiteData()
+                            Toastish.show(activity, if (ok) "Cookies y datos de $host eliminados"
+                                else "No se pudo confirmar el borrado de datos de $host")
+                        }
                     }
-                }.show()
+                }.create().also { dialog ->
+                    WindowPrivacy.protect(dialog.window, tab.isPrivate)
+                    dialog.show()
+                }
         })
         body.addView(cookieCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18f) })
         NexoSheets.show(activity, NexoSheets.column(activity, NexoSheets.header(activity, "Permisos de $host"), body))

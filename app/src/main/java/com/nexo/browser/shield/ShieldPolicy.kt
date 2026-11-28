@@ -169,7 +169,6 @@ internal object ShieldPolicy {
         Triple("c.amazon-adsystem.com", "/aax2/apstag.js", "web-accessible/noop.js")
     )
 
-    private val TWO_PART_SUFFIX = Regex("""\.(?:com?|org|net|gov|edu|ac)\.[a-z]{2}$""")
 
     fun hostnameMatches(hostname: String, domain: String): Boolean =
         hostname == domain || hostname.endsWith(".$domain")
@@ -205,11 +204,7 @@ internal object ShieldPolicy {
         return hostInSet(host, PROTECTED_HOSTS) || MEDIA_EXTENSION.containsMatchIn(path) || FUNCTIONAL_PATH.containsMatchIn(path)
     }
 
-    fun siteOfHost(host: String?): String {
-        val value = host.orEmpty().lowercase()
-        val parts = value.split('.').filter { it.isNotEmpty() }
-        return parts.takeLast(if (TWO_PART_SUFFIX.containsMatchIn(value)) 3 else 2).joinToString(".")
-    }
+    fun siteOfHost(host: String?): String = UrlParts.siteOf(host.orEmpty())
 
     /** Desenvuelve redirecciones de rastreo conocidas (`l.facebook.com`, `out.reddit.com`...) si el destino es HTTP(S). */
     fun unwrapBounceRedirect(url: String): String? {
@@ -306,23 +301,24 @@ internal object ShieldPolicy {
         url: String,
         type: String,
         topHost: String?,
-        documentUrl: String?
+        documentUrl: String?,
+        tracking: Boolean = true
     ): ShieldDecision {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return ShieldDecision.Allow
         if (!settings.isEnabledForHost(topHost)) return ShieldDecision.Allow
         val host = UrlParts.host(url) ?: return ShieldDecision.Allow
         if (settings.isRequestHostAllowed(host)) return ShieldDecision.Allow
-        if (type == "script") surrogateFor(url)?.let { return ShieldDecision.Surrogate(it) }
+        if (tracking && type == "script") surrogateFor(url)?.let { return ShieldDecision.Surrogate(it) }
         if (type == "main_frame") {
             // Una página que el usuario abre no se cancela; solo las redes de ventanas emergentes.
             return if (popupHosts.any { hostnameMatches(host, it) }) ShieldDecision.BlockPage else ShieldDecision.Allow
         }
         if (settings.cryptominerEnabled && isCryptominerHost(host)) return ShieldDecision.Block
         if (isYouTubeAdRequest(url)) return ShieldDecision.Block
-        if (engine.shouldBlock(url, type, documentUrl, countBlocked = false)) return ShieldDecision.Block
+        if (engine.shouldBlock(url, type, documentUrl, countBlocked = false, tracking = tracking)) return ShieldDecision.Block
 
         val level = ShieldSettings.normalizeLevel(settings.protectionLevel)
-        if (level == ShieldSettings.LEVEL_STRICT || level == ShieldSettings.LEVEL_AGGRESSIVE) {
+        if (tracking && (level == ShieldSettings.LEVEL_STRICT || level == ShieldSettings.LEVEL_AGGRESSIVE)) {
             val isThirdParty = topHost != null && siteOfHost(host) != siteOfHost(topHost)
             if (isThirdParty && !isProtectedSafetyUrl(url)) {
                 if (type == "ping") return ShieldDecision.Block

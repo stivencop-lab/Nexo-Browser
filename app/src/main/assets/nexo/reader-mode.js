@@ -9,6 +9,8 @@
   var MAX_TOTAL_CHARS = 120000;
   var MIN_WORDS = 45;
   var MIN_CHARS = 220;
+  var MAX_NODES = 12000;
+  var MAX_DEPTH = 128;
 
   var SKIP_TAGS = {
     SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, SVG: 1, CANVAS: 1,
@@ -72,6 +74,12 @@
     if (style.display === 'none' || style.visibility === 'hidden') return true;
     var inlineStyle = getAttr(el, 'style').toLowerCase();
     if (/display\s*:\s*none|visibility\s*:\s*hidden/.test(inlineStyle)) return true;
+    var view = el.ownerDocument && el.ownerDocument.defaultView;
+    if (view && typeof view.getComputedStyle === 'function') {
+      var computed = view.getComputedStyle(el);
+      return computed.display === 'none' || computed.visibility === 'hidden' ||
+        computed.visibility === 'collapse' || computed.opacity === '0' || computed.contentVisibility === 'hidden';
+    }
     return false;
   }
 
@@ -91,108 +99,113 @@
     return false;
   }
 
-  function collectVisibleText(node) {
-    if (!node) return '';
-    if (node.nodeType === 3) return node.nodeValue || '';
-    if (node.nodeType !== 1) return '';
-    if (isBoilerplate(node)) return '';
-    var out = '';
-    var kids = node.childNodes || [];
-    for (var i = 0; i < kids.length; i++) {
-      var part = collectVisibleText(kids[i]);
-      if (part) out += (out && !/\s$/.test(out) && !/^\s/.test(part) ? ' ' : '') + part;
-    }
-    return out;
-  }
-
-  function collectLinks(node, baseHref, out) {
-    if (!node || node.nodeType !== 1 || isBoilerplate(node)) return;
-    var tag = (node.tagName || '').toUpperCase();
-    if (tag === 'A') {
-      var href = sanitizeUrl(getAttr(node, 'href'), baseHref);
-      var label = cleanWhitespace(collectVisibleText(node));
-      if (href && label && out.length < 6) {
-        out.push({ label: label.slice(0, 120), href: href });
+  function budget(nodes, millis) {
+    var deadline = Date.now() + millis;
+    return {
+      take: function () {
+        if (nodes <= 0 || ((--nodes & 63) === 0 && Date.now() > deadline)) {
+          nodes = 0;
+          return false;
+        }
+        return true;
       }
-      return;
-    }
-    var kids = node.childNodes || [];
-    for (var i = 0; i < kids.length; i++) {
-      collectLinks(kids[i], baseHref, out);
-    }
+    };
   }
 
-  function scoreContainer(el) {
-    if (!el || el.nodeType !== 1 || isBoilerplate(el)) return -1;
-    var tag = (el.tagName || '').toUpperCase();
-    var score = 0;
-    if (tag === 'ARTICLE') score += 45;
-    else if (tag === 'MAIN') score += 35;
-    else if (getAttr(el, 'role').toLowerCase() === 'main') score += 30;
-
-    var classAndId = getAttr(el, 'class') + ' ' + getAttr(el, 'id');
-    if (POSITIVE_RE.test(classAndId)) score += 20;
-
-    var paragraphs = typeof el.querySelectorAll === 'function' ? el.querySelectorAll('p') : [];
-    var pTextLen = 0;
-    var pCount = 0;
-    for (var i = 0; i < paragraphs.length; i++) {
-      var p = paragraphs[i];
-      if (hasBoilerplateAncestor(p, el)) continue;
-      var txt = cleanWhitespace(collectVisibleText(p));
-      if (txt.length >= 25) {
-        pTextLen += txt.length;
-        pCount++;
+  // Walk a child at a time so a wide or deep DOM cannot create a large queue or stack.
+  function traverse(rootEl, work, enter, leave) {
+    if (!rootEl) return;
+    var stack = [{ node: rootEl, index: -1 }];
+    while (stack.length) {
+      var frame = stack[stack.length - 1];
+      if (frame.index === -1) {
+        if (!work.take()) break;
+        if (!enter(frame.node)) { stack.pop(); continue; }
+        frame.index = 0;
+      }
+      var children = frame.node.childNodes;
+      if (children && frame.index < children.length && stack.length < MAX_DEPTH) {
+        stack.push({ node: children[frame.index++], index: -1 });
+      } else {
+        stack.pop();
+        if (leave) leave(frame.node);
       }
     }
-    if (pCount === 0) {
-      var fallback = cleanWhitespace(collectVisibleText(el));
-      if (fallback.length < MIN_CHARS) return -1;
-      return score + Math.min(fallback.length / 40, 60);
+    if (leave) {
+      while (stack.length) {
+        var pending = stack.pop();
+        if (pending.index !== -1) leave(pending.node);
+      }
     }
-
-    var links = typeof el.querySelectorAll === 'function' ? el.querySelectorAll('a') : [];
-    var linkChars = 0;
-    for (var j = 0; j < links.length; j++) {
-      linkChars += cleanWhitespace(collectVisibleText(links[j])).length;
-    }
-    var totalLen = Math.max(1, cleanWhitespace(collectVisibleText(el)).length);
-    var linkDensity = Math.min(1, linkChars / totalLen);
-
-    score += pCount * 8 + Math.min(pTextLen / 25, 220);
-    if (linkDensity > 0.45) score *= (1 - linkDensity);
-    return score;
   }
 
-  function hasBoilerplateAncestor(node, stopAt) {
-    var cur = node;
-    while (cur && cur !== stopAt) {
-      if (isBoilerplate(cur)) return true;
-      cur = cur.parentElement || cur.parentNode;
-    }
-    return false;
+  function collectVisibleText(node, work) {
+    var parts = [];
+    var size = 0;
+    traverse(node, work || budget(1024, 12), function (child) {
+      if (child.nodeType === 3 && size < MAX_TOTAL_CHARS) {
+        var text = (child.nodeValue || '').slice(0, MAX_TOTAL_CHARS - size);
+        parts.push(text);
+        size += text.length + 1;
+      }
+      return child.nodeType === 1 && size < MAX_TOTAL_CHARS && !isBoilerplate(child);
+    });
+    return parts.join(' ');
+  }
+
+  function collectLinks(node, baseHref, out, work) {
+    traverse(node, work, function (el) {
+      if (el.nodeType !== 1 || out.length >= 6 || isBoilerplate(el)) return false;
+      if ((el.tagName || '').toUpperCase() !== 'A') return true;
+      var href = sanitizeUrl(getAttr(el, 'href'), baseHref);
+      var label = href && cleanWhitespace(collectVisibleText(el, work));
+      if (label) out.push({ label: label.slice(0, 120), href: href });
+      return false;
+    });
   }
 
   function pickContentRoot(doc) {
     if (!doc || !doc.body) return null;
-    var candidates = [];
-    if (typeof doc.querySelectorAll === 'function') {
-      var found = doc.querySelectorAll('article, main, [role="main"], section, div');
-      for (var i = 0; i < found.length; i++) candidates.push(found[i]);
-    }
-    candidates.push(doc.body);
-
-    var best = null;
+    var best = doc.body;
     var bestScore = -1;
-    for (var k = 0; k < candidates.length; k++) {
-      var c = candidates[k];
-      var s = scoreContainer(c);
-      if (s > bestScore) {
-        bestScore = s;
-        best = c;
+    var path = [];
+
+    traverse(doc.body, budget(MAX_NODES, 90), function (node) {
+      if (node.nodeType === 3) {
+        if (path.length) path[path.length - 1].chars += cleanWhitespace((node.nodeValue || '').slice(0, 8192)).length;
+        return false;
       }
-    }
-    return bestScore > 0 ? best : doc.body;
+      if (node.nodeType !== 1 || isBoilerplate(node)) return false;
+      path.push({ chars: 0, linkChars: 0, paragraphChars: 0, paragraphs: 0 });
+      return true;
+    }, function (node) {
+      var stats = path.pop();
+      var tag = (node.tagName || '').toUpperCase();
+      if (tag === 'A') stats.linkChars = stats.chars;
+      if (tag === 'P' && stats.chars >= 25) {
+        stats.paragraphChars += stats.chars;
+        stats.paragraphs++;
+      }
+      var mainRole = getAttr(node, 'role').toLowerCase() === 'main';
+      var candidate = node === doc.body || mainRole || /^(ARTICLE|MAIN|SECTION|DIV)$/.test(tag);
+      if (candidate && (stats.paragraphs > 0 || stats.chars >= MIN_CHARS)) {
+        var score = tag === 'ARTICLE' ? 45 : tag === 'MAIN' ? 35 : mainRole ? 30 : 0;
+        if (POSITIVE_RE.test(getAttr(node, 'class') + ' ' + getAttr(node, 'id'))) score += 20;
+        if (stats.paragraphs) score += stats.paragraphs * 8 + Math.min(stats.paragraphChars / 25, 220);
+        else score += Math.min(stats.chars / 40, 60);
+        var density = stats.linkChars / Math.max(1, stats.chars);
+        if (density > 0.45) score *= (1 - density);
+        if (score > bestScore) { bestScore = score; best = node; }
+      }
+      var parent = path[path.length - 1];
+      if (parent) {
+        parent.chars += stats.chars;
+        parent.linkChars += stats.linkChars;
+        parent.paragraphChars += stats.paragraphChars;
+        parent.paragraphs += stats.paragraphs;
+      }
+    });
+    return best;
   }
 
   function extractMeta(doc, selectorList) {
@@ -228,55 +241,20 @@
       blocks.push(block);
     }
 
-    function walk(node) {
-      if (!node || node.nodeType !== 1) return;
-      if (blocks.length >= MAX_BLOCKS || totalChars >= MAX_TOTAL_CHARS) return;
-      if (isBoilerplate(node)) return;
-
+    var work = budget(MAX_NODES, 120);
+    traverse(rootEl, work, function (node) {
+      if (node.nodeType !== 1 || blocks.length >= MAX_BLOCKS || totalChars >= MAX_TOTAL_CHARS ||
+          isBoilerplate(node)) return false;
       var tag = (node.tagName || '').toUpperCase();
-      if (tag === 'H1') {
-        // El título principal ya se muestra en la cabecera; encabezados H1 extra pasan como h2.
-        return;
-      }
-      if (tag === 'H2') {
-        pushBlock('h2', collectVisibleText(node), []);
-        return;
-      }
-      if (tag === 'H3' || tag === 'H4') {
-        pushBlock('h3', collectVisibleText(node), []);
-        return;
-      }
-      if (tag === 'BLOCKQUOTE') {
-        var qLinks = [];
-        collectLinks(node, baseHref, qLinks);
-        pushBlock('quote', collectVisibleText(node), qLinks);
-        return;
-      }
-      if (tag === 'PRE') {
-        var codeText = (node.textContent || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
-        if (codeText) pushBlock('code', codeText.slice(0, 4000), []);
-        return;
-      }
-      if (tag === 'LI') {
-        var liLinks = [];
-        collectLinks(node, baseHref, liLinks);
-        pushBlock('li', collectVisibleText(node), liLinks);
-        return;
-      }
-      if (tag === 'P') {
-        var pLinks = [];
-        collectLinks(node, baseHref, pLinks);
-        pushBlock('p', collectVisibleText(node), pLinks);
-        return;
-      }
-
-      var kids = node.childNodes || [];
-      for (var i = 0; i < kids.length; i++) {
-        walk(kids[i]);
-      }
-    }
-
-    walk(rootEl);
+      if (tag === 'H1') return false;
+      var type = { H2: 'h2', H3: 'h3', H4: 'h3', PRE: 'code', BLOCKQUOTE: 'quote', LI: 'li', P: 'p' }[tag];
+      if (!type) return true;
+      var text = collectVisibleText(node, work);
+      var links = [];
+      if (text && (type === 'p' || type === 'li' || type === 'quote')) collectLinks(node, baseHref, links, work);
+      pushBlock(type, type === 'code' ? text.slice(0, 4000) : text, links);
+      return false;
+    });
     return blocks;
   }
 

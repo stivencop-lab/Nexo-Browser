@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -79,6 +80,7 @@ object PhantomShield {
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
     private val io by lazy { Executors.newSingleThreadScheduledExecutor() }
+    private val counterIo by lazy { Executors.newSingleThreadScheduledExecutor() }
     private val secureRandom by lazy { java.security.SecureRandom() }
     private lateinit var appContext: Context
     private lateinit var store: ShieldStore
@@ -90,8 +92,7 @@ object PhantomShield {
     @Volatile private var trackerDomains: Set<String> = emptySet()
     private var bundled: FilterLists.Bundled? = null
     private val blockedTotal = AtomicLong(0)
-    private var persistScheduled = false
-    private var updating: Thread? = null
+    private val persistScheduled = AtomicBoolean()
     private val tabs = CopyOnWriteArrayList<WeakReference<ShieldTab>>()
     private val http by lazy {
         OkHttpClient.Builder()
@@ -293,6 +294,7 @@ object PhantomShield {
         val prevPrivacy = effectivePrivacyEnabled()
         val prevGpc = effectiveGpcEnabled()
         val prevLevel = effectiveProtectionLevel()
+        val prevTracking = prefTrackingProtection
         cookieMode = BrowserPrefs.cookieMode(context)
         prefQueryStripping = BrowserPrefs.queryStripping(context)
         prefFingerprinting = BrowserPrefs.fingerprinting(context)
@@ -300,7 +302,7 @@ object PhantomShield {
         prefStrictTracking = BrowserPrefs.strictTracking(context)
         prefTrackingProtection = BrowserPrefs.trackingProtection(context)
         if (!started) return
-        if (prevLevel != effectiveProtectionLevel()) clearDecisionCache()
+        if (prevLevel != effectiveProtectionLevel() || prevTracking != prefTrackingProtection) clearDecisionCache()
         val changes = JSONObject()
         if (prevPrivacy != effectivePrivacyEnabled()) {
             changes.put("privacyEnabled", JSONObject().put("newValue", effectivePrivacyEnabled()))
@@ -320,7 +322,8 @@ object PhantomShield {
     private fun effectivePrivacyEnabled(): Boolean = settings.privacyEnabled || prefFingerprinting
     private fun effectiveGpcEnabled(): Boolean = settings.gpcEnabled && prefGpc
     private fun effectiveProtectionLevel(): String =
-        if (prefStrictTracking && settings.protectionLevel == ShieldSettings.LEVEL_BALANCED) ShieldSettings.LEVEL_STRICT
+        if (prefTrackingProtection && prefStrictTracking && settings.protectionLevel == ShieldSettings.LEVEL_BALANCED)
+            ShieldSettings.LEVEL_STRICT
         else settings.protectionLevel
 
     /** Peticiones de los service workers de un perfil (no pertenecen a ninguna pestaña); una vez por perfil. */
@@ -400,8 +403,7 @@ object PhantomShield {
     }
 
     /** Descarga las listas (con espejos), guarda el resultado como la extensión y recarga las reglas. */
-    @Synchronized
-    internal fun updateAllLists(): JSONArray {
+    private fun updateAllLists(): JSONArray {
         val results = JSONArray()
         var requiredOk = true
         var anyRequired = false
@@ -512,16 +514,13 @@ object PhantomShield {
     ) {
         tab?.blocked?.incrementAndGet()
         tab?.recordCategory(category, host, type)
-        if (tab?.isPrivate == true) return
+        if (tab?.isPrivate == true || !started) return
         blockedTotal.incrementAndGet()
-        synchronized(this) {
-            if (persistScheduled) return
-            persistScheduled = true
-        }
-        main.postDelayed({
-            synchronized(this) { persistScheduled = false }
+        if (!persistScheduled.compareAndSet(false, true)) return
+        counterIo.schedule({
+            persistScheduled.set(false)
             store.set(JSONObject().put("blockedCount", blockedTotal.get()))
-        }, 2000)
+        }, 2, TimeUnit.SECONDS)
     }
 
     // --- Red ---
@@ -583,7 +582,10 @@ object PhantomShield {
             if (!started || !enabled) return forget(url)
             val topHost = UrlParts.host(top)
             val docHost = UrlParts.host(document).orEmpty()
-            val cacheKey = if (!request.isMainFrame && url.length <= 320) "$type|${topHost.orEmpty()}|$docHost|$url" else null
+            val revision = decisionRevision.get()
+            val tracking = prefTrackingProtection
+            val cacheKey = if (!request.isMainFrame && url.length <= 320)
+                "$revision|$tracking|$type|${topHost.orEmpty()}|$docHost|$url" else null
             val cached = cacheKey?.let { decisionCache.get(it) }
             val currentRules = rules
             val eff = effectiveSettings()
@@ -593,7 +595,7 @@ object PhantomShield {
             } else {
                 if (cacheKey != null) decisionCacheMisses.incrementAndGet()
                 val computed = runCatching {
-                    ShieldPolicy.decide(currentRules.network, eff, popupDomains, url, type, topHost, document)
+                    ShieldPolicy.decide(currentRules.network, eff, popupDomains, url, type, topHost, document, tracking)
                         .let { d ->
                             when {
                                 d != ShieldDecision.Allow -> d
@@ -605,7 +607,7 @@ object PhantomShield {
                             }
                         }
                 }.getOrDefault(ShieldDecision.Allow)
-                if (cacheKey != null) decisionCache.put(cacheKey, computed)
+                if (cacheKey != null && revision == decisionRevision.get()) decisionCache.put(cacheKey, computed)
                 computed
             }
             return when (decision) {
@@ -665,11 +667,13 @@ object PhantomShield {
 
     private const val DECISION_CACHE_MAX = 1024
     private val decisionCache = DecisionLruCache(DECISION_CACHE_MAX)
+    private val decisionRevision = AtomicLong()
     private val decisionCacheHits = AtomicLong(0L)
     private val decisionCacheMisses = AtomicLong(0L)
     private val inFlightAiPages = ConcurrentHashMap<String, Boolean>()
 
     private fun clearDecisionCache() {
+        decisionRevision.incrementAndGet()
         decisionCache.clear()
     }
 
@@ -680,8 +684,9 @@ object PhantomShield {
     private fun cookieAllowed(tab: ShieldTab?, url: String?): Boolean = when (cookieMode) {
         BrowserPrefs.COOKIES_NONE -> false
         BrowserPrefs.COOKIES_FIRST_PARTY -> {
-            val top = tab?.topHost
-            top == null || ShieldPolicy.siteOfHost(top) == ShieldPolicy.siteOfHost(url?.let { UrlParts.host(it) })
+            val top = tab?.topHost?.takeIf(String::isNotBlank)
+            val host = url?.let(UrlParts::host)?.takeIf(String::isNotBlank)
+            host != null && (top == null || UrlParts.siteOf(top) == UrlParts.siteOf(host))
         }
         else -> true
     }
@@ -775,7 +780,7 @@ object PhantomShield {
                 val parsed = channel.parse(request) ?: return false
                 val deliver = singleShot(callback)
                 if (parsed.message == null) {
-                    if (parsed.wait) channel.awaitEvents(parsed.since, parsed.waiterKey, deliver)
+                    if (parsed.wait) channel.awaitEvents(parsed.since, parsed.waiterKey, isMainFrame, deliver)
                     else deliver(channel.envelope(null, parsed.since))
                     return true
                 }
@@ -837,7 +842,7 @@ object PhantomShield {
     ) {
         val parsed = tab.channel.parse(request) ?: return deliver(tab.channel.envelope(null, -1))
         if (parsed.message == null) {
-            if (parsed.wait) tab.channel.awaitEvents(parsed.since, parsed.waiterKey, deliver)
+            if (parsed.wait) tab.channel.awaitEvents(parsed.since, parsed.waiterKey, isMainFrame, deliver)
             else deliver(tab.channel.envelope(null, parsed.since))
             return
         }
@@ -1311,7 +1316,7 @@ object PhantomShield {
             "RESET_STATS" -> {
                 blockedTotal.set(0)
                 tabs.mapNotNull { it.get() }.forEach { it.resetCounters(); it.ai = ShieldAi.TabState() }
-                store.set(JSONObject().put("blockedCount", 0))
+                counterIo.execute { store.set(JSONObject().put("blockedCount", blockedTotal.get())) }
                 done(JSONObject().put("ok", true).put("blockedCount", 0))
             }
             "FORCE_UPDATE" -> io.execute {
@@ -1411,14 +1416,14 @@ object PhantomShield {
             append(port).append('\n')
             append("if (!nexoCefriumPort(window === window.top)) return;\n")
             // Los medios y el puente de Nexo capturan el puerto antes de que el shim de PhantomShield lo retire.
-            append(media).append('\n')
             append(bridgeShim).append('\n')
+            append("const nexoBridge = nexoBridgeShim(globalThis.__nexoShield, window === window.top);\n")
+            append(media).append('\n')
             // Estilos del mini video (pip.css): hoja construida, que la CSP del sitio no bloquea.
             append("try { const s = new CSSStyleSheet(); s.replaceSync(").append(JSONObject.quote(pipCss))
                 .append("); document.adoptedStyleSheets = document.adoptedStyleSheets.concat([s]); } catch (_) {}\n")
             // Puente de Nexo (page-bridge.js), con su `browser` propio.
-            append("{ const nexoBridge = nexoBridgeShim(globalThis.__nexoShield, window === window.top);\n")
-            append("if (nexoBridge) (function(browser){ try {\n").append(bridge).append("\n} catch (_) {} })(nexoBridge); }\n")
+            append("if (nexoBridge) (function(browser){ try {\n").append(bridge).append("\n} catch (_) {} })(nexoBridge);\n")
             append(shim).append('\n')
             append("const browser = nexoPhantomShim(").append(JSONObject.quote(BASE_URL)).append(", ").append(manifest).append(");\n")
             append("if (!browser) return;\n")

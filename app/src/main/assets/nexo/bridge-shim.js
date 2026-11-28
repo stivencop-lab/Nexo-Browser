@@ -54,6 +54,16 @@ function nexoBridgeShim(port, isTop) {
     }
   });
 
+  if (typeof globalThis.addEventListener === 'function') {
+    globalThis.addEventListener('pagehide', function() {
+      try { send('bridge', { type: 'content_script_gone' }); } catch (_) {}
+    });
+    globalThis.addEventListener('pageshow', function(event) {
+      if (!event.persisted) return;
+      try { send('bridge', { type: 'content_script_ready' }); } catch (_) {}
+    });
+  }
+
   function call(payload) {
     return new Promise(function(resolve, reject) {
       const id = -(++seq);
@@ -82,6 +92,7 @@ function nexoBridgeShim(port, isTop) {
   });
 
   return Object.freeze({
+    frame: frame,
     runtime: Object.freeze({
       // Un solo canal por marco: volver a conectar devuelve el mismo puerto.
       connectNative: function() { return nativePort; },

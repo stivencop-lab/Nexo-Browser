@@ -57,18 +57,22 @@ object SecretStore {
         return Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
     }
 
-    fun put(context: Context, name: String, value: String): Boolean {
+    fun put(context: Context, name: String, value: String, durable: Boolean = false): Boolean {
         val clean = value.trim()
         cache.remove(name)
         if (clean.isEmpty()) {
-            prefs(context).edit().remove(name).apply()
+            val editor = prefs(context).edit().remove(name)
+            if (durable) return editor.commit()
+            editor.apply()
             return true
         }
         return runCatching {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key())
             val encrypted = cipher.iv + cipher.doFinal(clean.toByteArray(Charsets.UTF_8))
-            prefs(context).edit().putString(name, Base64.encodeToString(encrypted, Base64.NO_WRAP)).apply()
+            val editor = prefs(context).edit().putString(name, Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            if (durable) check(editor.commit()) { "No se pudo confirmar la escritura" }
+            else editor.apply()
             cache[name] = clean
             true
         }.getOrDefault(false)

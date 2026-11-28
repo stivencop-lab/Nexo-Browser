@@ -781,6 +781,8 @@ private class TabCardAdapter(
         val activeChip: TextView
     ) : RecyclerView.ViewHolder(card) {
         var boundId: String? = null
+        var boundOrigin: String? = null
+        var cancelIcon: (() -> Unit)? = null
         var shownPreview: Bitmap? = null
     }
 
@@ -934,6 +936,14 @@ private class TabCardAdapter(
         }
     }
 
+    override fun onViewRecycled(holder: Holder) {
+        holder.cancelIcon?.invoke()
+        holder.cancelIcon = null
+        holder.boundId = null
+        holder.boundOrigin = null
+        super.onViewRecycled(holder)
+    }
+
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val tab = items[position]
         val state = states.getOrNull(position)
@@ -1039,7 +1049,12 @@ private class TabCardAdapter(
             holder.image.setImageDrawable(null)
             holder.image.visibility = View.GONE
         }
-        val origin = BrowserPagePresentation.shortcut(tab.url)?.origin
+        val origin = if (tab.isPrivate) null else BrowserPagePresentation.shortcut(tab.url)?.origin
+        if (changedTab || holder.boundOrigin != origin) {
+            holder.cancelIcon?.invoke()
+            holder.cancelIcon = null
+            holder.boundOrigin = origin
+        }
         when {
             tab.isPrivate -> {
                 holder.iconWell.background = null
@@ -1073,8 +1088,9 @@ private class TabCardAdapter(
                     holder.placeholderLetter.setTextColor(p.text)
                     holder.placeholderLetter.text = SiteIconStore.letter(host)
                     holder.placeholderLetter.visibility = View.VISIBLE
-                    SiteIconStore.load(activity, origin) { bitmap ->
-                        if (holder.boundId == tab.id) showSiteIcon(holder, bitmap)
+                    if (holder.cancelIcon == null) holder.cancelIcon = SiteIconStore.load(activity, origin) { bitmap ->
+                        if (holder.boundId == tab.id && holder.boundOrigin == origin &&
+                            BrowserPagePresentation.shortcut(tab.url)?.origin == origin) showSiteIcon(holder, bitmap)
                     }
                 }
             }

@@ -37,6 +37,7 @@ class BookmarksActivity : Activity() {
     private lateinit var clearSearch: ImageButton
     private lateinit var folderBar: LinearLayout
 
+    private var bookmarks: List<BookmarkStore.Bookmark> = emptyList()
     private var visible: List<BookmarkStore.Bookmark> = emptyList()
     private var selectedFolder: String? = null
     private var query = ""
@@ -46,6 +47,7 @@ class BookmarksActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeManager.applyWindow(this)
         super.onCreate(savedInstanceState)
+        pendingExportHtml = savedInstanceState?.getBoolean("bookmarkExportHtml", true) ?: true
         setContentView(R.layout.activity_list)
 
         listView = findViewById(R.id.listView)
@@ -80,7 +82,39 @@ class BookmarksActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        render()
+        runBookmarkOperation({ BookmarkStore.list(it) }) { result ->
+            result.onSuccess { bookmarks = it; render() }
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("bookmarkExportHtml", pendingExportHtml)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun <T> runBookmarkOperation(
+        work: (android.content.Context) -> T,
+        complete: (Result<T>) -> Unit
+    ) {
+        val app = applicationContext
+        bookmarkIo.execute {
+            val result = runCatching { work(app) }
+            runOnUiThread {
+                if (!isDestroyed && !isFinishing) complete(result)
+            }
+        }
+    }
+
+    private fun readImport(input: java.io.InputStream): String {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(16_384)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            require(count <= MAX_IMPORT_BYTES - output.size()) { "El archivo de favoritos supera el límite de importación." }
+            output.write(buffer, 0, count)
+        }
+        return output.toString(Charsets.UTF_8.name())
     }
 
     private fun buildTopControls() {
@@ -152,8 +186,7 @@ class BookmarksActivity : Activity() {
     }
 
     private fun render() {
-        val file = BookmarkStore.file(this)
-        val folders = BookmarkStore.folders(file)
+        val folders = (listOf(BookmarkStore.DEFAULT_FOLDER) + bookmarks.map { it.folder }).distinct()
         if (selectedFolder != null && selectedFolder !in folders) selectedFolder = null
 
         folderBar.removeAllViews()
@@ -170,7 +203,7 @@ class BookmarksActivity : Activity() {
         }
         folderBar.addView(NexoUi.chipRow(this, chips, sidePaddingDp = 16f))
 
-        visible = BookmarkStore.search(file, query, selectedFolder)
+        visible = BookmarkStore.search(bookmarks, query, selectedFolder)
         emptyView.text = if (query.isNotEmpty()) {
             "Sin favoritos que coincidan con «$query»."
         } else if (selectedFolder != null) {
@@ -209,9 +242,16 @@ class BookmarksActivity : Activity() {
             },
             SheetAction(R.drawable.ic_menu_bookmark, "Editar favorito") { showEditDialog(bm) },
             SheetAction(R.drawable.ic_menu_close, "Eliminar favorito", danger = true) {
-                BookmarkStore.delete(this, bm.id)
-                render()
-                Toast.makeText(this, "Favorito eliminado", Toast.LENGTH_SHORT).show()
+                runBookmarkOperation({ app ->
+                    check(BookmarkStore.delete(app, bm.id)) { "El favorito ya no existe." }
+                    BookmarkStore.list(app)
+                }) { result ->
+                    result.onSuccess {
+                        bookmarks = it
+                        render()
+                        Toastish.show(this, "Favorito eliminado")
+                    }.onFailure { Toastish.show(this, "No se pudo eliminar el favorito.") }
+                }
             }
         )
         sheet = NexoSheets.show(this, NexoSheets.column(
@@ -263,13 +303,16 @@ class BookmarksActivity : Activity() {
                 }
                 val title = titleInput.text?.toString().orEmpty().trim().ifBlank { normalized }
                 val folder = folderInput.text?.toString().orEmpty().trim().ifBlank { BookmarkStore.DEFAULT_FOLDER }
-                val file = BookmarkStore.file(this)
-                if (existing == null) {
-                    BookmarkStore.add(file, title, normalized, folder)
-                } else {
-                    BookmarkStore.update(file, existing.id, title, normalized, folder)
+                runBookmarkOperation({ app ->
+                    val file = BookmarkStore.file(app)
+                    val saved = if (existing == null) BookmarkStore.add(file, title, normalized, folder) != null
+                        else BookmarkStore.update(file, existing.id, title, normalized, folder)
+                    check(saved) { "No se pudo guardar el favorito." }
+                    BookmarkStore.list(app)
+                }) { result ->
+                    result.onSuccess { bookmarks = it; render() }
+                        .onFailure { Toastish.show(this, "No se pudo guardar el favorito.") }
                 }
-                render()
             }.show()
     }
 
@@ -313,42 +356,33 @@ class BookmarksActivity : Activity() {
         val uri = data?.data ?: return
         if (resultCode != RESULT_OK) return
         when (requestCode) {
-            REQ_IMPORT -> {
-                val content = runCatching {
-                    contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
-                }.getOrNull().orEmpty()
-                if (content.isBlank()) {
-                    Toast.makeText(this, "El archivo está vacío o no se pudo leer.", Toast.LENGTH_LONG).show()
-                    return
-                }
-                val file = BookmarkStore.file(this)
-                val trimmed = content.trim()
-                val imported = if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-                    BookmarkStore.importJson(file, trimmed)
+            REQ_IMPORT -> runBookmarkOperation({ app ->
+                val content = app.contentResolver.openInputStream(uri)?.use(::readImport)?.trim().orEmpty()
+                require(content.isNotEmpty()) { "El archivo está vacío o no se pudo leer." }
+                val file = BookmarkStore.file(app)
+                val imported = if (content.startsWith("{") || content.startsWith("[")) {
+                    BookmarkStore.importJson(file, content)
                 } else {
-                    BookmarkStore.importNetscapeHtml(file, trimmed)
+                    BookmarkStore.importNetscapeHtml(file, content)
                 }
-                render()
-                Toast.makeText(
-                    this,
-                    if (imported > 0) "Importados $imported favoritos nuevos." else "No se encontraron favoritos web nuevos.",
-                    Toast.LENGTH_LONG
-                ).show()
+                imported to BookmarkStore.list(file)
+            }) { result ->
+                result.onSuccess { (imported, updated) ->
+                    bookmarks = updated
+                    render()
+                    Toastish.show(this, if (imported > 0) "Importados $imported favoritos nuevos." else "No se encontraron favoritos web nuevos.")
+                }.onFailure { Toastish.show(this, it.message ?: "No se pudieron importar los favoritos.") }
             }
             REQ_EXPORT -> {
-                val payload = if (pendingExportHtml) {
-                    BookmarkStore.exportNetscapeHtml(BookmarkStore.list(this))
-                } else {
-                    BookmarkStore.exportJson(BookmarkStore.list(this))
+                val exportHtml = pendingExportHtml
+                runBookmarkOperation({ app ->
+                    val records = BookmarkStore.list(app)
+                    val payload = if (exportHtml) BookmarkStore.exportNetscapeHtml(records) else BookmarkStore.exportJson(records)
+                    val stream = app.contentResolver.openOutputStream(uri, "wt") ?: error("No se pudo abrir el archivo de exportación.")
+                    stream.bufferedWriter(Charsets.UTF_8).use { it.write(payload) }
+                }) { result ->
+                    Toastish.show(this, if (result.isSuccess) "Favoritos exportados correctamente." else "No se pudo guardar el archivo de exportación.")
                 }
-                val ok = runCatching {
-                    contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-                }.isSuccess
-                Toast.makeText(
-                    this,
-                    if (ok) "Favoritos exportados correctamente." else "No se pudo guardar el archivo de exportación.",
-                    Toast.LENGTH_LONG
-                ).show()
             }
         }
     }
@@ -366,6 +400,11 @@ class BookmarksActivity : Activity() {
     }
 
     companion object {
+        private const val MAX_IMPORT_BYTES = 48 * 1024 * 1024
+        private val bookmarkIo = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+            Thread(task, "NexoBookmarks").apply { isDaemon = true }
+        }
+
         private const val REQ_IMPORT = 710
         private const val REQ_EXPORT = 711
     }

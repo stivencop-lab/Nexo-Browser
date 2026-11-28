@@ -32,7 +32,7 @@ const reports=require('node:path').resolve(__dirname,'../app/build/reports/brows
   await page.setViewportSize({width,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,theme+' '+width);
  }}
  await page.setViewportSize({width:390,height:844});await page.emulateMedia({colorScheme:'dark'});
- await page.locator('.memory-card').screenshot({path:reports+'/memory.png'});
+ await page.locator('section[aria-labelledby="memory-title"]').screenshot({path:reports+'/memory.png'});
  await page.locator('#memory-search').fill('news');assert.equal(await page.locator('.memory-domain').count(),1);
  await page.getByRole('button',{name:'Excluir de IA news.com',exact:true}).click();
  await page.waitForFunction(()=>document.getElementById('excluded-hosts').value==='news.com');

@@ -91,37 +91,69 @@ object NativeImageNetwork {
 
     private val shared by lazy { client() }
 
-    internal fun fetch(start: String, limit: Int, accept: String, sameSiteOnly: Boolean = false, truncate: Boolean = false, transport: OkHttpClient = shared): Resource? {
+    internal class Budget(durationMs: Long) {
+        private val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(durationMs)
+        private val active = java.util.concurrent.atomic.AtomicReference<okhttp3.Call?>()
+        @Volatile var cancelled = false
+            private set
+
+        val exhausted: Boolean get() = cancelled || System.nanoTime() >= deadline
+
+        fun attach(call: okhttp3.Call) {
+            active.set(call)
+            if (exhausted) call.cancel()
+            else call.timeout().deadlineNanoTime(minOf(deadline, System.nanoTime() + TimeUnit.SECONDS.toNanos(3)))
+        }
+
+        fun release(call: okhttp3.Call) { active.compareAndSet(call, null) }
+
+        fun cancel() {
+            cancelled = true
+            active.get()?.cancel()
+        }
+    }
+
+    internal fun fetch(
+        start: String, limit: Int, accept: String, sameSiteOnly: Boolean = false, truncate: Boolean = false,
+        transport: OkHttpClient = shared, budget: Budget? = null
+    ): Resource? {
         val first = NativeImagePolicy.url(start) ?: return null
         var current = first
         repeat(4) {
             val request = Request.Builder().url(current).header("Accept", accept)
                 .header("User-Agent", "NexoBrowser").build()
-            transport.newCall(request).execute().use { response ->
-                if (response.code in 300..399) {
-                    if (it == 3) return null
-                    val next = current.resolve(response.header("Location") ?: return null) ?: return null
-                    current = NativeImagePolicy.url(next.toString()) ?: return null
-                    if (sameSiteOnly && !SiteIconDiscovery.sameSite(first.host, current.host)) return null
-                    return@repeat
-                }
-                if (response.code != 200) return null
-                val body = response.body ?: return null
-                val type = body.contentType()?.toString().orEmpty()
-                if (accept.startsWith("image") && (type.contains("svg", true) || type.startsWith("text/", true))) return null
-                if (!truncate && body.contentLength() > limit) return null
-                val bytes = body.byteStream().use { input ->
-                    val out = ByteArrayOutputStream(minOf(limit, 8192))
-                    val buffer = ByteArray(8192)
-                    while (out.size() <= limit) {
-                        val count = input.read(buffer, 0, minOf(buffer.size, limit + 1 - out.size()))
-                        if (count < 0) break
-                        out.write(buffer, 0, count)
+            if (budget?.exhausted == true) return null
+            val call = transport.newCall(request)
+            budget?.attach(call)
+            try {
+                call.execute().use { response ->
+                    if (response.code in 300..399) {
+                        if (it == 3) return null
+                        val next = current.resolve(response.header("Location") ?: return null) ?: return null
+                        current = NativeImagePolicy.url(next.toString()) ?: return null
+                        if (sameSiteOnly && !SiteIconDiscovery.sameSite(first.host, current.host)) return null
+                        return@repeat
                     }
-                    out.toByteArray()
+                    if (response.code != 200) return null
+                    val body = response.body ?: return null
+                    val type = body.contentType()?.toString().orEmpty()
+                    if (accept.startsWith("image") && (type.contains("svg", true) || type.startsWith("text/", true))) return null
+                    if (!truncate && body.contentLength() > limit) return null
+                    val bytes = body.byteStream().use { input ->
+                        val out = ByteArrayOutputStream(minOf(limit, 8192))
+                        val buffer = ByteArray(8192)
+                        while (out.size() <= limit) {
+                            val count = input.read(buffer, 0, minOf(buffer.size, limit + 1 - out.size()))
+                            if (count < 0) break
+                            out.write(buffer, 0, count)
+                        }
+                        out.toByteArray()
+                    }
+                    if (bytes.size > limit && !truncate) return null
+                    return Resource(current.toString(), if (bytes.size > limit) bytes.copyOf(limit) else bytes)
                 }
-                if (bytes.size > limit && !truncate) return null
-                return Resource(current.toString(), if (bytes.size > limit) bytes.copyOf(limit) else bytes)
+            } finally {
+                budget?.release(call)
             }
         }
         return null

@@ -19,7 +19,7 @@ import java.security.MessageDigest
  * Puro sobre [File]: probado en la JVM.
  */
 class NxrStorage(private val rootDir: File) {
-    private val lock = Any()
+    private val lock = NxrPackageInstaller.mutationLock
 
     private fun extDir(extId: String): File = File(rootDir, sanitizeId(extId))
 
@@ -55,13 +55,7 @@ class NxrStorage(private val rootDir: File) {
         require(data.length() <= MAX_KEYS) {
             "Demasiadas claves en storage.local (máximo $MAX_KEYS)."
         }
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(serialized, Charsets.UTF_8)
-        if (!tmp.renameTo(file)) {
-            file.writeText(serialized, Charsets.UTF_8)
-            tmp.delete()
-        }
+        com.nexo.browser.writeAtomicFile(file, serialized.toByteArray(Charsets.UTF_8))
     }
 
     private fun totalByteSizeUnlocked(extId: String): Long {

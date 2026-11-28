@@ -330,8 +330,12 @@ class TranslationBatcher(private val delayMs: Long, private val maxChars: Int, p
     var inFlight = false
         private set
 
-    fun add(item: Item, now: Long) { waiting.addLast(item to now) }
+    fun add(item: Item, now: Long) {
+        if (waiting.size == MAX_WAITING) waiting.removeFirst()
+        waiting.addLast(item to now)
+    }
 
+    val capacity: Int get() = MAX_WAITING - waiting.size
     val size: Int get() = waiting.size
 
     /** Momento en que conviene enviar el lote, o null si no hay nada. */
@@ -342,6 +346,9 @@ class TranslationBatcher(private val delayMs: Long, private val maxChars: Int, p
     }
 
     fun take(now: Long): List<Item>? {
+        while (waiting.firstOrNull()?.second?.let { it > 0 && now - it > LIVE_TTL_MS } == true) {
+            waiting.removeFirst()
+        }
         val due = dueAt() ?: return null
         if (now < due) return null
         val batch = mutableListOf<Item>()
@@ -358,6 +365,26 @@ class TranslationBatcher(private val delayMs: Long, private val maxChars: Int, p
     fun done() { inFlight = false }
 
     fun clear() { waiting.clear(); inFlight = false }
+
+    private companion object {
+        const val MAX_WAITING = 120
+        const val LIVE_TTL_MS = 12_000L
+    }
+}
+
+/** Consecutive reconnect attempts are cleared only by a real transcription or a user reset. */
+internal class CaptionReconnectBudget {
+    private var attempts = 0
+
+    fun next(limit: Int): Int? = if (attempts < limit) attempts++ else null
+
+    fun onTranscript(text: String) {
+        if (text.isNotBlank()) reset()
+    }
+
+    fun reset() {
+        attempts = 0
+    }
 }
 
 /** Consecutive reconnect attempts are cleared only by a real transcription or a user reset. */

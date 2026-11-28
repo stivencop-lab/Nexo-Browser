@@ -82,7 +82,8 @@ object PagePrompts {
         }
     }
 
-    private fun show(dialog: AlertDialog, once: Once): Boolean {
+    private fun show(session: EngineSession, dialog: AlertDialog, once: Once): Boolean {
+        WindowPrivacy.protect(dialog.window, TabManager.tabForSession(session)?.isPrivate == true)
         dialog.setOnDismissListener { once.cancel() }
         return runCatching {
             dialog.show()
@@ -99,7 +100,7 @@ object PagePrompts {
             .setMessage(message)
             .setPositiveButton("Aceptar") { _, _ -> once.confirm() }
         offerBlock(session, builder, once)
-        show(builder.create(), once)
+        show(session, builder.create(), once)
         return true
     }
 
@@ -113,7 +114,7 @@ object PagePrompts {
             .setNegativeButton("Cancelar") { _, _ -> once.cancel() }
             .setPositiveButton("Aceptar") { _, _ -> once.confirm() }
         offerBlock(session, builder, once)
-        show(builder.create(), once)
+        show(session, builder.create(), once)
         return true
     }
 
@@ -132,7 +133,7 @@ object PagePrompts {
         val dialog = builder.create()
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         input.selectAll()
-        show(dialog, once)
+        show(session, dialog, once)
         return true
     }
 
@@ -146,7 +147,7 @@ object PagePrompts {
             .setNegativeButton("Quedarme") { _, _ -> once.cancel() }
             .setPositiveButton("Salir") { _, _ -> once.confirm() }
             .create()
-        show(dialog, once)
+        show(session, dialog, once)
         return true
     }
 
@@ -167,6 +168,7 @@ object PagePrompts {
             .setOnDismissListener { if (!answered) { answered = true; handler.cancel() } }
             .create()
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        WindowPrivacy.protect(dialog.window, TabManager.tabForSession(session)?.isPrivate == true)
         runCatching { dialog.show() }.onFailure { if (!answered) { answered = true; handler.cancel() } }
     }
 

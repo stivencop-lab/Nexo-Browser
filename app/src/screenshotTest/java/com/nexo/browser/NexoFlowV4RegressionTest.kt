@@ -31,8 +31,10 @@ class NexoFlowV4RegressionTest {
         val omnibox = root.findViewById<View>(R.id.omnibox)
         assertNotNull(omnibox)
         val topBar = root.findViewById<android.view.ViewGroup>(R.id.topBar)
-        assertTrue((ai.parent as View).parent === topBar)
-        assertTrue((omnibox.parent as View).parent === topBar)
+        val island = root.findViewById<View>(R.id.chromeIsland)
+        assertTrue(island.parent === topBar)
+        assertTrue((ai.parent as View).parent === island)
+        assertTrue((omnibox.parent as View).parent === island)
         assertEquals(R.id.chromeCluster, (ai.parent as View).id)
         controller.pause().stop().destroy()
     }

@@ -74,6 +74,9 @@ object NexoAiController {
         }
     }
 
+    private val storageIo = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "NexoAiStorage").apply { isDaemon = true }
+    }
     private val lock = Any()
     private val listeners = CopyOnWriteArrayList<(NexoAiModels.ControllerSnapshot) -> Unit>()
     private val activeHandles = ConcurrentHashMap<String, NexoAiClient.CancelHandle>()
@@ -96,24 +99,50 @@ object NexoAiController {
     private var unreadReadyConversationId: String? = null
     private var lastErrorSummary: String? = null
     private var controllerGeneration: Long = 0L
+    private var loading = false
+    private var testStorage = false
+    private var writeScheduled = false
+    private var pendingWrite: Pair<NexoAiStore, NexoAiStore.PersistedState>? = null
+
+    internal data class Submission(val conversationId: String, val generation: Long)
+    private val preparing = mutableMapOf<String, Submission>()
+
+    internal fun reserveSubmission(): Submission? = synchronized(lock) {
+        val id = activeConversationId
+        if (!initialized || id.isBlank() || preparing.containsKey(id) ||
+            activeRequests.values.any { it.conversationId == id }) return@synchronized null
+        Submission(id, controllerGeneration).also { preparing[id] = it }
+    }
+
+    internal fun isPreparing(conversationId: String): Boolean = synchronized(lock) {
+        loading || preparing.containsKey(conversationId)
+    }
+
+    internal fun finishSubmission(submission: Submission): Boolean = synchronized(lock) {
+        if (submission.generation != controllerGeneration || preparing[submission.conversationId] !== submission)
+            return@synchronized false
+        preparing.remove(submission.conversationId)
+        conversations.any { it.id == submission.conversationId }
+    }
 
     fun initialize(context: Context) {
         val app = context.applicationContext
-        if (initialized) {
+        val storage = synchronized(lock) {
             if (appContext == null) appContext = app
-            return
+            if (initialized || loading) return
+            loading = true
+            NexoAiStore(File(File(app.filesDir, "nexo_ai"), "conversations.json")).also { store = it }
         }
-        synchronized(lock) {
-            if (initialized) {
-                if (appContext == null) appContext = app
-                return
+        storageIo.execute {
+            val loaded = storage.load()
+            val snap = synchronized(lock) {
+                if (store !== storage) return@execute
+                applyLoadedLocked(loaded)
+                loading = false
+                initialized = true
+                buildSnapshotLocked()
             }
-            appContext = app
-            val file = File(File(app.filesDir, "nexo_ai"), "conversations.json")
-            val s = NexoAiStore(file)
-            store = s
-            loadFromStoreLocked(s)
-            initialized = true
+            notifyListeners(snap)
         }
     }
 
@@ -127,6 +156,10 @@ object NexoAiController {
     ) {
         synchronized(lock) {
             controllerGeneration++
+            loading = false
+            testStorage = true
+            preparing.clear()
+            pendingWrite = null
             activeHandles.values.forEach { it.cancel() }
             activeHandles.clear()
             activeRequests.clear()
@@ -143,7 +176,7 @@ object NexoAiController {
             lastErrorSummary = null
             val s = NexoAiStore(storageFile)
             store = s
-            loadFromStoreLocked(s)
+            applyLoadedLocked(s.load())
             initialized = true
         }
     }
@@ -157,8 +190,7 @@ object NexoAiController {
         initializeForTest(storageFile, testTransport, testExecutor, syncUi = true)
     }
 
-    private fun loadFromStoreLocked(s: NexoAiStore) {
-        val loaded = s.load()
+    private fun applyLoadedLocked(loaded: NexoAiStore.PersistedState) {
         conversations = loaded.conversations.toMutableList()
         if (conversations.isEmpty()) {
             val fresh = createEmptyConversationLocked("")
@@ -241,15 +273,36 @@ object NexoAiController {
     }
 
     private fun persistLocked() {
-        store?.save(activeConversationId, conversations)
+        val storage = store ?: return
+        if (!initialized) return
+        if (testStorage) {
+            storage.save(activeConversationId, conversations)
+            return
+        }
+        pendingWrite = storage to NexoAiStore.PersistedState(activeConversationId, conversations.toList())
+        if (writeScheduled) return
+        writeScheduled = true
+        storageIo.execute {
+            while (true) {
+                val write = synchronized(lock) {
+                    val next = pendingWrite
+                    pendingWrite = null
+                    if (next == null) writeScheduled = false
+                    next
+                } ?: return@execute
+                runCatching { write.first.save(write.second.activeConversationId, write.second.conversations) }
+                    .onFailure { android.util.Log.e("NexoAiStorage", "No se pudo guardar el historial", it) }
+            }
+        }
     }
 
     /** Inicia una conversación nueva sin eliminar las anteriores. */
     fun newConversation(hostHint: String = ""): String {
         val snap = synchronized(lock) {
+            if (!initialized) return ""
             // Reutiliza la conversación activa si ya está completamente vacía
             val current = conversations.firstOrNull { it.id == activeConversationId }
-            if (current != null && current.messages.isEmpty()) {
+            if (current != null && current.messages.isEmpty() && !preparing.containsKey(current.id)) {
                 return current.id
             }
             val fresh = createEmptyConversationLocked(hostHint)
@@ -298,6 +351,7 @@ object NexoAiController {
                 activeHandles.remove(reqId)?.cancel()
                 activeRequests.remove(reqId)
             }
+            preparing.remove(conversationId)
             conversations.removeAt(idx)
             activeTasks.remove(conversationId)
             if (conversations.isEmpty()) {
@@ -317,6 +371,8 @@ object NexoAiController {
     /** Borra todo el historial (cancela lo que esté en curso) y deja una conversación vacía. */
     fun deleteAllConversations() {
         val snap = synchronized(lock) {
+            if (!initialized) return
+            preparing.clear()
             activeHandles.values.forEach { it.cancel() }
             activeHandles.clear()
             activeRequests.clear()
@@ -437,7 +493,7 @@ object NexoAiController {
             reasoningEffort = reasoningEffort,
             conversationId = conversationId,
             cancelHandle = cancelHandle
-        )
+        ) ?: return ""
 
         val logHost = pageBinding?.host.orEmpty()
         val ctxForLog = appContext
@@ -532,7 +588,7 @@ object NexoAiController {
             reasoningEffort = reasoningEffort,
             conversationId = conversationId,
             cancelHandle = cancelHandle
-        )
+        ) ?: return ""
 
         if (longTask) {
             val taskSnap = synchronized(lock) {
@@ -829,20 +885,22 @@ object NexoAiController {
         reasoningEffort: String?,
         conversationId: String?,
         cancelHandle: NexoAiClient.CancelHandle
-    ): Triple<String, List<Pair<String, String>>, Long> {
+    ): Triple<String, List<Pair<String, String>>, Long>? {
         val effectiveModel = settings.effectiveModel()
         val targetConvId: String
         val historyTurns: List<Pair<String, String>>
         val launchGen: Long
         val snapStart = synchronized(lock) {
+            if (!initialized) return null
             launchGen = controllerGeneration
             if (conversations.isEmpty()) {
                 val fresh = createEmptyConversationLocked(pageBinding?.host.orEmpty())
                 conversations.add(fresh)
                 activeConversationId = fresh.id
             }
-            targetConvId = conversationId?.takeIf { id -> conversations.any { it.id == id } } ?: activeConversationId
+            targetConvId = conversationId ?: activeConversationId
             val idx = conversations.indexOfFirst { it.id == targetConvId }
+            if (idx < 0) return null
             val conv = conversations[idx]
 
             historyTurns = conv.messages
@@ -1038,9 +1096,10 @@ object NexoAiController {
         val mIdx = conv.messages.indexOfFirst { it.id == messageId }
         if (mIdx < 0) return
         val updatedMessages = conv.messages.toMutableList()
-        updatedMessages[mIdx] = transform(updatedMessages[mIdx])
+        val updated = transform(updatedMessages[mIdx])
+        updatedMessages[mIdx] = updated
         conversations[idx] = conv.copy(
-            updatedAtMs = System.currentTimeMillis(),
+            updatedAtMs = if (updated.isInFlight) conv.updatedAtMs else System.currentTimeMillis(),
             messages = updatedMessages
         )
     }

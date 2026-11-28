@@ -13,7 +13,6 @@
   const hostname = location.hostname.toLowerCase();
   const hiddenAttribute = 'data-phantomshield-hidden';
   const MAX_TOKENS = 12000;          // clases + ids recordados por documento
-  const MAX_SURVEY_NODES = 6000;     // elementos revisados por pasada
   const FLUSH_DELAY_MS = 350;
   // Trabajo incremental: los nodos añadidos se revisan por tramos, con un
   // presupuesto de elementos y de tiempo por pasada, y nada en pestañas ocultas.
@@ -36,7 +35,8 @@
   let pendingIds = [];
   let surveyQueue = [];
   let surveyTimer = null;
-  let surveyBudget = 0;
+  let surveyIndex = 0;
+  let needsRescan = false;
 
   function hostMatches(domain) {
     return hostname === domain || hostname.endsWith('.' + domain);
@@ -144,7 +144,7 @@
     }
     const classes = element.classList;
     if (!classes) return;
-    for (let i = 0; i < classes.length && i < 24; i++) {
+    for (let i = 0; i < classes.length && i < 24 && seen.size < MAX_TOKENS; i++) {
       const name = classes[i];
       if (name.length > 80 || seen.has('.' + name)) continue;
       seen.add('.' + name);
@@ -152,39 +152,52 @@
     }
   }
 
-  function survey(root) {
-    if (!generic || !(root instanceof Element) || seen.size >= MAX_TOKENS) return;
-    note(root);
-    const elements = root.querySelectorAll('[class],[id]');
-    const limit = Math.min(elements.length, MAX_SURVEY_NODES, Math.max(0, surveyBudget));
-    for (let i = 0; i < limit; i++) note(elements[i]);
-    surveyBudget -= limit + 1;
-    if (pendingClasses.length || pendingIds.length) scheduleFlush();
-  }
-
-  /** Encola raíces a revisar; se procesan después, por tramos. */
-  function queueSurvey(node) {
+  function queueSurvey(node, single = false) {
     if (!generic || seen.size >= MAX_TOKENS) return;
-    if (surveyQueue.length >= MAX_QUEUE) return; // ráfaga enorme: el resto ya lo cubre la pasada siguiente
-    surveyQueue.push(node);
+    if (surveyQueue.length - surveyIndex >= MAX_QUEUE) {
+      needsRescan = true;
+      return;
+    }
+    surveyQueue.push({ node, single, walker: null });
     scheduleSurvey();
   }
 
   function scheduleSurvey() {
-    if (surveyTimer !== null || !surveyQueue.length || document.visibilityState === 'hidden') return;
+    if (surveyTimer !== null || surveyIndex >= surveyQueue.length || document.visibilityState === 'hidden') return;
     surveyTimer = setTimeout(runSurvey, 0);
   }
 
   function runSurvey() {
     surveyTimer = null;
-    if (!enabled || document.visibilityState === 'hidden') return;
-    const started = Date.now();
-    surveyBudget = SLICE_NODES;
-    while (surveyQueue.length && surveyBudget > 0 && Date.now() - started < SLICE_MS) {
-      const node = surveyQueue.shift();
-      if (node && node.isConnected !== false) survey(node);
+    if (!enabled || !generic || document.visibilityState === 'hidden') return;
+    const deadline = performance.now() + SLICE_MS;
+    for (let count = 0; count < SLICE_NODES && performance.now() < deadline &&
+        surveyIndex < surveyQueue.length && seen.size < MAX_TOKENS; count++) {
+      const item = surveyQueue[surveyIndex];
+      if (item.node.isConnected === false) { surveyIndex++; continue; }
+      if (item.single) { note(item.node); surveyIndex++; continue; }
+      if (!item.walker) {
+        item.walker = document.createTreeWalker(item.node, NodeFilter.SHOW_ELEMENT);
+        note(item.node);
+        continue;
+      }
+      const next = item.walker.nextNode();
+      if (next) note(next);
+      else surveyIndex++;
     }
-    if (surveyQueue.length) scheduleSurvey();
+    if (surveyIndex === surveyQueue.length || seen.size >= MAX_TOKENS) {
+      surveyQueue = [];
+      surveyIndex = 0;
+      if (needsRescan) {
+        needsRescan = false;
+        queueSurvey(document.documentElement);
+      }
+    } else if (surveyIndex >= SLICE_NODES) {
+      surveyQueue = surveyQueue.slice(surveyIndex);
+      surveyIndex = 0;
+    }
+    if (pendingClasses.length || pendingIds.length) scheduleFlush();
+    scheduleSurvey();
   }
 
   function scheduleFlush() {
@@ -226,8 +239,15 @@
   function startObserver() {
     if (!enabled || observer || !document.documentElement) return;
     observer = new MutationObserver(function(mutations) {
+      let remaining = SLICE_NODES;
       for (const mutation of mutations) {
+        if (remaining-- <= 0) { needsRescan = true; break; }
+        if (mutation.type === 'attributes') {
+          queueSurvey(mutation.target, true);
+          continue;
+        }
         for (const node of mutation.addedNodes) {
+          if (remaining-- <= 0) { needsRescan = true; break; }
           if (!(node instanceof Element)) continue;
           // Ocultar un anuncio evidente no espera: es barato y evita el parpadeo.
           if (nodeLooksLikeAd(node)) hideElement(node);
@@ -235,7 +255,9 @@
         }
       }
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    observer.observe(document.documentElement, {
+      childList: true, subtree: true, attributes: generic, attributeFilter: generic ? ['class', 'id'] : undefined
+    });
     queueSurvey(document.documentElement);
   }
 
@@ -247,6 +269,9 @@
     clearTimeout(surveyTimer);
     surveyTimer = null;
     surveyQueue = [];
+    surveyIndex = 0;
+    needsRescan = false;
+    seen.clear();
     pendingClasses = [];
     pendingIds = [];
   }
@@ -311,6 +336,8 @@
 
   browser.storage.onChanged.addListener(function(changes, areaName) {
     if (areaName === 'local' && (changes.adblockEnabled || changes.disabled_domains || changes.annoyancesEnabled || changes.user_cosmetic_rules)) {
+      enabled = false;
+      stopObserver();
       removeStyle();
       refreshState();
     }

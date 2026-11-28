@@ -30,7 +30,7 @@ object TabManager {
         fun onProgress(tab: BrowserTab, progress: Int, loading: Boolean)
         fun onTabCountChanged(count: Int)
         fun onMessage(message: String)
-        fun onContextElement(element: EngineContextElement)
+        fun onContextElement(tab: BrowserTab, element: EngineContextElement)
 
         /** Un sitio pidió (o dejó) pantalla completa, p. ej. el botón de YouTube. */
         fun onFullScreenChanged(tab: BrowserTab, fullScreen: Boolean) = Unit
@@ -58,7 +58,6 @@ object TabManager {
         AppContext.initialize(context)
         ExtensionManager.initialize(context)
         TranslatorManager.initialize(context)
-        TabRouting.initialize()
 
         if (!initialized) {
             Engines.current.initialize(context.applicationContext)
@@ -182,6 +181,7 @@ object TabManager {
                 BrowserPrefs.homePage(requireContext())
             }
 
+        val sibling = burnerId?.let { id -> tabs.firstOrNull { it.burnerId == id } }
         val tab = BrowserTab(
             url = initialUrl,
             title = if (isPrivate) "Pestaña privada" else "Nueva pestaña",
@@ -189,7 +189,8 @@ object TabManager {
             desktopMode = appContext?.let { BrowserPrefs.desktopDefault(it) } == true,
             groupName = TabGroupRules.name(groupName),
             burnerId = burnerId,
-            networkProfile = networkProfile
+            burnerSeed = sibling?.burnerSeed ?: java.security.SecureRandom().nextInt(),
+            networkProfile = if (sibling != null) sibling.networkProfile else networkProfile
         )
 
         tabs += tab
@@ -224,10 +225,20 @@ object TabManager {
 
     fun applyNetwork(id: String, profile: TabNetworkProfile?) {
         val tab = tabs.firstOrNull { it.id == id } ?: return
-        tab.networkProfile = profile?.validated(); tab.networkState = "Preparando ruta"
-        tab.session?.let { closeSession(it) }; tab.session = null
-        BrowserMediaController.removeTab(tab.id)
-        if(tab.id == activeId) switchTo(tab.id,loadUrl=true,rememberPrevious=false)
+        val route = profile?.validated()
+        val affected = tab.burnerId?.let { burner -> tabs.filter { it.burnerId == burner } } ?: listOf(tab)
+        affected.forEach { candidate ->
+            candidate.session?.let { session ->
+                session.flushState()
+                closeSession(session)
+            }
+            candidate.session = null
+            candidate.networkProfile = route
+            candidate.networkState = "Preparando ruta"
+            candidate.isLoading = false
+            BrowserMediaController.removeTab(candidate.id)
+        }
+        affected.firstOrNull { it.id == activeId }?.let { switchTo(it.id, rememberPrevious = false) }
         persist()
     }
 
@@ -468,6 +479,7 @@ object TabManager {
         }
         activationHistory.remove(id)
         crashTimes.remove(id)
+        com.nexo.browser.shield.MalwareScan.forget(id)
 
         removed.session?.let { session ->
             runCatching {
@@ -483,6 +495,8 @@ object TabManager {
         tabs.remove(removed)
         removed.burnerId?.let { id ->
             if (tabs.none { it.burnerId == id }) {
+                SitePermissionStore.clear(id)
+                DownloadStore.closePrivateScope(id)
                 Engines.current.clearContextData(requireContext(), id)
                 BurnerMailbox.close(id)
             }
@@ -490,6 +504,10 @@ object TabManager {
         if (!removed.isPrivate) TabPreviewStore.remove(requireContext(), removed.id)
         // Última pestaña privada común (sin Burner): el motor borra sus datos.
         if (removed.isPrivate && removed.burnerId == null && tabs.none { it.isPrivate && it.burnerId == null }) {
+            SitePermissionStore.scope(removed)?.let {
+                SitePermissionStore.clear(it)
+                DownloadStore.closePrivateScope(it)
+            }
             Engines.current.onPrivateSessionEnded(requireContext())
         }
 
@@ -538,8 +556,11 @@ object TabManager {
         tab.sessionState = null
         val session = tab.session
         when {
-            session == null -> ensureSession(tab) // opens and loads exactly once, after routing
-            TabRouting.blocked(session) -> applyNetwork(tab.id, tab.networkProfile)
+            session == null -> {
+                switchTo(tab.id, rememberPrevious = false)
+                return
+            }
+            TabRouting.blocked(session) -> TabRouting.prepare(tab, session) { session.loadUrl(tab.url) }
             TabRouting.preparing(session) -> Unit // the pending route loads the latest tab.url
             else -> session.loadUrl(target)
         }
@@ -552,10 +573,14 @@ object TabManager {
         val tab = activeTab() ?: return
         if (tab.session == null) {
             tab.sessionState = null
-            ensureSession(tab)
-        } else if(tab.session?.let { TabRouting.synthetic(it) } == true) {
-            applyNetwork(tab.id,tab.networkProfile)
-        } else tab.session?.reload(bypassCache)
+            switchTo(tab.id, rememberPrevious = false)
+        } else {
+            val session = tab.session ?: return
+            when {
+                TabRouting.blocked(session) -> TabRouting.prepare(tab, session) { session.loadUrl(tab.url) }
+                !TabRouting.preparing(session) -> session.reload(bypassCache)
+            }
+        }
     }
 
     /** Pestaña vecina del mismo modo (normal o privado), para el gesto de la barra. */
@@ -634,14 +659,11 @@ object TabManager {
                 enabled
             )
 
-        tab.url = target
-
-        if (target.isNotBlank()) {
-            tab.session?.loadUrl(target)
+        if (target.isNotBlank()) navigate(target)
+        else {
+            listener?.onTabChanged(tab)
+            persist()
         }
-
-        listener?.onTabChanged(tab)
-        persist()
     }
 
     fun prepareForPictureInPicture() {
@@ -797,7 +819,7 @@ object TabManager {
             tab.inactiveSince = now
             freezer.schedule(nextFreezeDeadline(now))
         }
-        if(!loadUrl && (tab.networkProfile != null || tab.burnerId != null)) TabRouting.reserve(session)
+        if (tab.networkProfile != null || tab.burnerId != null) TabRouting.reserve(session)
         Engines.current.open(context, session)
         bindOpenedSession(session)
 
@@ -813,7 +835,7 @@ object TabManager {
 
             val target = tab.url
             val epoch = tab.navigationEpoch
-            TabRouting.prepare(tab,session,restored != null) {
+            TabRouting.prepare(tab, session) {
                 if(restored != null && tab.url == target && tab.navigationEpoch == epoch) session.restoreState(restored) else session.loadUrl(tab.url)
             }
         } else if(tab.networkProfile != null || tab.burnerId != null) {
@@ -846,9 +868,9 @@ object TabManager {
         if (openerIndex >= 0) tabs.add(openerIndex + 1, tab) else tabs += tab
 
         val session = newSession(tab)
+        if (tab.networkProfile != null || tab.burnerId != null) TabRouting.reserve(session)
         listener?.onTabCountChanged(tabs.size)
         switchTo(tab.id, loadUrl = false)
-        if(tab.networkProfile != null || tab.burnerId != null) TabRouting.reserve(session)
         whenOpen(session) {
             bindOpenedSession(it)
             if(tab.networkProfile != null || tab.burnerId != null) {
@@ -889,7 +911,7 @@ object TabManager {
         }
 
         override fun onTitle(session: EngineSession, title: String?) {
-            if (TabRouting.synthetic(session)) return
+            if (TabRouting.preparing(session)) return
             if (!title.isNullOrBlank()) {
                 tab.title = title
                 BrowserMediaController.updateTabTitle(tab.id, title)
@@ -899,48 +921,38 @@ object TabManager {
         }
 
         override fun onContextMenu(session: EngineSession, element: EngineContextElement) {
-            listener?.onContextElement(element)
+            if (tab.session === session && tab.id == activeId) listener?.onContextElement(tab, element)
+        }
+
+        override fun allowDownload(session: EngineSession, uri: String, name: String?, mimeType: String?): Boolean {
+            if (tab.session !== session || TabRouting.preparing(session)) return false
+            if (ExtensionManager.isRemoteExtensionPackage(uri)) {
+                if (tab.burnerId != null || tab.networkProfile?.type?.let { it != "direct" } == true) {
+                    listener?.onMessage("La instalación de extensiones usa una conexión independiente.")
+                    return false
+                }
+                listener?.onMessage("Preparando instalación de extensión…")
+                ExtensionManager.installUrl(requireContext(), uri) { _, message -> listener?.onMessage(message) }
+                return false
+            }
+
+            val ctx = requireContext()
+            if (com.nexo.browser.shield.MalwareScan.blocksDownload(ctx, tab, uri, name, mimeType)) {
+                listener?.onMessage("Descarga bloqueada: el origen parece fraudulento y el archivo instala programas.")
+                return false
+            }
+            if (com.nexo.browser.shield.MalwareScan.warnsDownload(ctx, tab, uri, name, mimeType)) {
+                listener?.onMessage("Atención: estás descargando un instalador desde un origen con señales sospechosas.")
+            }
+            return true
         }
 
         override fun onDownload(session: EngineSession, download: EngineDownload) {
-            if (ExtensionManager.isRemoteExtensionPackage(download.uri)) {
+            if (tab.session !== session) {
                 download.discard()
-                if(tab.networkProfile?.type?.let { it != "direct" } == true) {
-                    listener?.onMessage("La instalación requiere una conexión independiente. Desactiva la ruta para instalarla.")
-                    return
-                }
-                listener?.onMessage("Preparando instalación de extensión…")
-                ExtensionManager.installUrl(
-                    requireContext(),
-                    download.uri
-                ) { _, message ->
-                    listener?.onMessage(message)
-                }
                 return
             }
-
-            // Ejecutable desde una página fraudulenta o servidor malicioso: no se descarga.
-            val ctx = requireContext()
-            if (com.nexo.browser.shield.MalwareScan.blocksDownload(ctx, tab, download.uri, download.suggestedName, download.mimeType)) {
-                download.discard()
-                listener?.onMessage("Descarga bloqueada: el origen parece fraudulento y el archivo instala programas.")
-                return
-            }
-            if (com.nexo.browser.shield.MalwareScan.warnsDownload(ctx, tab, download.uri, download.suggestedName, download.mimeType)) {
-                listener?.onMessage("Atención: estás descargando un instalador desde una página o enlace con señales sospechosas.")
-            }
-
-            // Sin proxy ni Burner, un archivo grande puede repartirse en varias conexiones
-            // y reanudarse si se corta (misma sesión: cookies y modo privado).
-            val source = if (tab.networkProfile == null && tab.burnerId == null) {
-                DownloadSource(tab.isPrivate, tab.url.takeIf { UrlSafety.isWebUrl(it) }, BrowserPrefs.parallelDownloads(requireContext()))
-            } else null
-            listener?.onMessage("Descargando…")
-            DownloadStore.saveDownload(
-                requireContext(),
-                download,
-                source
-            ) { _, message ->
+            DownloadStore.saveDownload(requireContext(), download, SitePermissionStore.scope(tab)) { _, message ->
                 listener?.onMessage(message)
             }
         }
@@ -972,7 +984,7 @@ object TabManager {
         }
 
         override fun onLocationChange(session: EngineSession, url: String?, hasUserGesture: Boolean) {
-            if (tab.session !== session || TabRouting.synthetic(session) || url == null || !isSafeAppNavigationUrl(url)) return
+            if (tab.session !== session || TabRouting.preparing(session) || url == null || !isSafeAppNavigationUrl(url)) return
             if (tab.url != url) {
                 // Un cambio solo de "#…" (reproductores, pestañas internas) no es otra página:
                 // los subtítulos y la captura de Android siguen.
@@ -1007,7 +1019,7 @@ object TabManager {
             decide: (Boolean) -> Unit
         ): LoadDecision {
             if (tab.session !== session || tabs.none { it.id == tab.id }) return LoadDecision.DENY
-            if (TabRouting.preparing(session)) return if (TabRouting.bootstrap(session, request.uri)) LoadDecision.ALLOW else LoadDecision.DENY
+            if (TabRouting.preparing(session)) return LoadDecision.DENY
             // tel:, mailto:, intent://, market:… los abre otra app.
             if (UrlSafety.isExternalAppUrl(request.uri)) {
                 ExternalApps.open(
@@ -1094,20 +1106,20 @@ object TabManager {
         }
 
         override fun onCanGoBack(session: EngineSession, canGoBack: Boolean) {
-            if(TabRouting.synthetic(session)) return
+            if(TabRouting.preparing(session)) return
             tab.canGoBack = canGoBack
             listener?.onTabChanged(tab)
         }
 
         override fun onCanGoForward(session: EngineSession, canGoForward: Boolean) {
-            if(TabRouting.synthetic(session)) return
+            if(TabRouting.preparing(session)) return
             tab.canGoForward = canGoForward
             listener?.onTabChanged(tab)
         }
 
         override fun onStateChange(session: EngineSession, state: EngineSessionState) {
             if (
-                tab.session === session && !TabRouting.synthetic(session) && !tab.isPrivate &&
+                tab.session === session && !TabRouting.preparing(session) && !tab.isPrivate &&
                 TabNavigation.canRestore(tab.url, state.currentUri) &&
                 !BrowserMediaController.isPlaying(tab.id)
             ) {
@@ -1118,8 +1130,7 @@ object TabManager {
 
         override fun onPageStart(session: EngineSession, url: String) {
             if (tab.session !== session) return
-            if (TabRouting.bootstrap(session,url) || TabRouting.preparing(session)) return
-            TabRouting.targetStarted(session)
+            if (TabRouting.preparing(session)) return
             PerfLog.onPageStart(session)
             windowPrompt?.dismiss()
             // Una página nueva no hereda los subtítulos (ni su consumo de Deepgram).
@@ -1134,6 +1145,7 @@ object TabManager {
             tab.url = url
             tab.lastScrollY = 0
             tab.isLoading = true
+            tab.loadProgress = 0
             tab.lastUsed = System.currentTimeMillis()
             com.nexo.browser.shield.MalwareScan.onNavigationStart(requireContext(), tab, url)
             persist()
@@ -1143,20 +1155,18 @@ object TabManager {
 
         override fun onProgress(session: EngineSession, progress: Int) {
             if (tab.session !== session) return
-            if(TabRouting.synthetic(session)) return
-            listener?.onProgress(
-                tab,
-                progress.coerceIn(0, 100),
-                true
-            )
+            if(TabRouting.preparing(session)) return
+            if (!tab.isLoading) return
+            tab.loadProgress = progress.coerceIn(0, 100)
+            listener?.onProgress(tab, tab.loadProgress, true)
         }
 
         override fun onPageStop(session: EngineSession, success: Boolean) {
             if (tab.session !== session) return
-            if(TabRouting.synthetic(session)) return
-            if(success) TabRouting.targetFinished(session)
+            if(TabRouting.preparing(session)) return
             PerfLog.onPageStop(requireContext(), session, success)
             tab.isLoading = false
+            tab.loadProgress = 100
             val recovery = tab.recoverScroll
             if (recovery != null) {
                 tab.recoverScroll = null
@@ -1192,6 +1202,8 @@ object TabManager {
         val currentUrl = tab.url
 
         tab.session = null
+        tab.canGoBack = false
+        tab.canGoForward = false
         // Un "kill" lo decide Android (no es culpa de la página): conservar el
         // historial y la posición. Tras un fallo real se carga la URL limpia.
         if (reason != "kill") {
@@ -1291,17 +1303,27 @@ object TabManager {
         for (tab in tabs) {
             if (!canFreeze(tab) || now - requireNotNull(tab.inactiveSince) < TabFreezeManager.IDLE_MS ||
                 isBusyForFreeze(tab)) continue
-            val session = tab.session ?: continue
-            session.flushState()
-            if (tab.session !== session || tab.id == activeId) continue
-            closeSession(session)
-            tab.session = null
-            tab.isFrozen = true
-            discarded = true
-            listener?.onTabChanged(tab)
+            if (discardSession(tab)) discarded = true
         }
         if (discarded) persist()
         return nextFreezeDeadline(now)
+    }
+
+    private fun discardSession(tab: BrowserTab): Boolean {
+        val session = tab.session ?: return false
+        if (tab.id == activeId) return false
+        if (!tab.isPrivate && !tab.isLoading) session.flushState()
+        if (tab.session !== session || tab.id == activeId) return false
+        if (tab.isLoading) tab.sessionState = null
+        closeSession(session)
+        tab.session = null
+        tab.isLoading = false
+        tab.loadProgress = 0
+        tab.canGoBack = false
+        tab.canGoForward = false
+        tab.isFrozen = true
+        listener?.onTabChanged(tab)
+        return true
     }
 
     private fun trimSessions() {
@@ -1316,12 +1338,8 @@ object TabManager {
             }
             .sortedByDescending { it.lastUsed }
 
-        background
-            .drop((maxLive - 1).coerceAtLeast(0))
-            .forEach { tab ->
-                tab.session?.let { closeSession(it) }
-                tab.session = null
-            }
+        val discarded = background.drop((maxLive - 1).coerceAtLeast(0)).count(::discardSession)
+        if (discarded > 0) persist()
     }
 
     private fun restoreOrCreate() {
@@ -1423,9 +1441,11 @@ object TabManager {
     )
 
     /** Escritura inmediata: al ir a segundo plano o cerrar sesiones. */
-    fun persistNow() {
+    fun persistNow() { persistWithResult() }
+
+    internal fun persistWithResult(): java.util.concurrent.Future<Boolean>? {
         persistHandler.removeCallbacks(persistTask)
-        val context = appContext ?: return
+        val context = appContext ?: return null
 
         // Copia barata en el hilo principal; el JSON se arma en segundo plano.
         val snapshot = tabs.filterNot { it.isPrivate }.map { tab ->
@@ -1435,7 +1455,7 @@ object TabManager {
             )
         }
 
-        TabStore.write(context) {
+        val saved = TabStore.write(context) {
             val array = JSONArray()
             snapshot.forEach { tab ->
                 array.put(
@@ -1460,6 +1480,7 @@ object TabManager {
         if (BrowserPrefs.activeTabId(context) != activeTabId) {
             BrowserPrefs.setActiveTabId(context, activeTabId)
         }
+        return saved
     }
 
     /**
@@ -1477,16 +1498,11 @@ object TabManager {
         TabPreviewStore.trimMemory(level)
         val critical = level == 15 /* RUNNING_CRITICAL */ || level >= 80 /* COMPLETE */
         if (!critical) return
-        tabs.filter {
+        val discarded = tabs.filter {
             it.id != activeId && it.session != null && !it.isPrivate &&
                 !BrowserMediaController.isPlaying(it.id)
-        }
-            .sortedByDescending { it.lastUsed }
-            .drop(2)
-            .forEach { tab ->
-                tab.session?.let { closeSession(it) }
-                tab.session = null
-            }
+        }.sortedByDescending { it.lastUsed }.drop(2).count(::discardSession)
+        if (discarded > 0) persist()
     }
 
     private fun notifyActive() {

@@ -144,6 +144,7 @@ object NexoAiSheet {
         var isExpanded = initialExpanded
         var lastRenderedKey = ""
         var lastStructureKey = ""
+        var railKey = ""
         var activeStreamingMsgId: String? = null
         var activeStreamingRichBox: LinearLayout? = null
         var activeStreamingStepsBox: LinearLayout? = null
@@ -344,6 +345,7 @@ object NexoAiSheet {
         footer.addView(composerRow)
 
         fun updateSendButton(generating: Boolean) {
+            sendOrStopBtn.isEnabled = generating || !NexoAiController.isPreparing(NexoAiController.snapshot().activeConversationId)
             if (generating) {
                 sendOrStopBtn.setImageResource(R.drawable.ic_ai_stop)
                 sendOrStopBtn.contentDescription = "Detener generación actual"
@@ -473,7 +475,7 @@ object NexoAiSheet {
         }
 
         // Ejecutar consulta contextual, agente multi-paso, tarea larga o libre delegando al controlador persistente
-        fun dispatchPrompt(userTask: String, logLabel: String, forceScope: String? = null) {
+        fun dispatchPrompt(userTask: String, logLabel: String, forceScope: String? = null, clearInput: Boolean = false) {
             val s = NexoAiConfig.read(activity)
             val apiKey = NexoAiConfig.apiKey(activity)
             if (!s.enabled) {
@@ -495,9 +497,26 @@ object NexoAiSheet {
                 showConsentSheet(activity) {
                     NexoAiConfig.setConsentAccepted(activity, true)
                     refreshHeader()
-                    dispatchPrompt(userTask, logLabel, forceScope)
+                    dispatchPrompt(userTask, logLabel, forceScope, clearInput)
                 }
                 return
+            }
+
+            val submission = NexoAiController.reserveSubmission() ?: run {
+                Toastish.show(activity, "La conversación está cargando o ya tiene una consulta en curso.")
+                return
+            }
+            if (clearInput && promptField.text.toString().trim() == userTask) promptField.text?.clear()
+            updateSendButton(false)
+            fun acceptCapture(): Boolean {
+                val accepted = NexoAiController.finishSubmission(submission)
+                if (!activity.isDestroyed) updateSendButton(
+                    NexoAiController.snapshot().activeRequestForCurrentConversation != null
+                )
+                return accepted && !activity.isDestroyed
+            }
+            fun scrollIfCurrent() {
+                if (NexoAiController.snapshot().activeConversationId == submission.conversationId) scrollToBottom()
             }
 
             val chosenScope = forceScope ?: scope
@@ -508,6 +527,7 @@ object NexoAiSheet {
                     val isLongTask = chosenScope == "long_agent"
                     val executor = NexoAiPageAgent.createBrowserToolExecutor(activity, s.allowPrivateTabs, s.maxContextChars)
                     NexoAiPageAgent.captureActiveSnapshot(activity, s.maxContextChars, s.allowPrivateTabs) { snap, _ ->
+                        if (!acceptCapture()) return@captureActiveSnapshot
                         val initialCtx = snap?.toContextText(chosenScope)
                             ?: "Pestaña actual en Inicio de Nexo. Puedes usar web_search, navigate, list_tabs, search_bookmarks, search_history, set_volume, media_control, set_theme o task_checkpoint."
                         NexoAiController.sendAgentPrompt(
@@ -519,14 +539,16 @@ object NexoAiSheet {
                             pageBinding = snap?.binding ?: currentBinding,
                             reasoningEffort = reasoningEffort,
                             preferStreaming = true,
+                            conversationId = submission.conversationId,
                             logLabel = logLabel,
                             maxSteps = if (isLongTask) NexoAiAgent.MAX_LONG_TASK_STEPS else NexoAiAgent.MAX_AGENT_STEPS,
                             longTask = isLongTask
                         )
-                        scrollToBottom()
+                        scrollIfCurrent()
                     }
                 }
                 "free" -> {
+                    if (!acceptCapture()) return
                     NexoAiController.sendPrompt(
                         settings = s,
                         apiKey = apiKey,
@@ -536,12 +558,14 @@ object NexoAiSheet {
                         pageBinding = null,
                         reasoningEffort = reasoningEffort,
                         preferStreaming = true,
-                        logLabel = logLabel
+                        conversationId = submission.conversationId,
+                            logLabel = logLabel
                     )
-                    scrollToBottom()
+                    scrollIfCurrent()
                 }
                 "tabs" -> {
                     NexoAiPageAgent.captureOpenTabsContext(activity, s.maxContextChars, s.allowPrivateTabs) { ctx ->
+                        if (!acceptCapture()) return@captureOpenTabsContext
                         NexoAiController.sendPrompt(
                             settings = s,
                             apiKey = apiKey,
@@ -551,13 +575,15 @@ object NexoAiSheet {
                             pageBinding = currentBinding,
                             reasoningEffort = reasoningEffort,
                             preferStreaming = true,
+                            conversationId = submission.conversationId,
                             logLabel = logLabel
                         )
-                        scrollToBottom()
+                        scrollIfCurrent()
                     }
                 }
                 else -> {
                     NexoAiPageAgent.captureActiveSnapshot(activity, s.maxContextChars, s.allowPrivateTabs) { snap, err ->
+                        if (!acceptCapture()) return@captureActiveSnapshot
                         if (err != null) {
                             if (chosenScope == "page" && pageHost.isBlank()) {
                                 // En página de inicio, permite conversar sin contexto de página
@@ -570,9 +596,10 @@ object NexoAiSheet {
                                     pageBinding = null,
                                     reasoningEffort = reasoningEffort,
                                     preferStreaming = true,
-                                    logLabel = logLabel
+                                    conversationId = submission.conversationId,
+                            logLabel = logLabel
                                 )
-                                scrollToBottom()
+                                scrollIfCurrent()
                                 return@captureActiveSnapshot
                             }
                             Toastish.show(activity, err)
@@ -591,9 +618,10 @@ object NexoAiSheet {
                             pageBinding = snap?.binding ?: currentBinding,
                             reasoningEffort = reasoningEffort,
                             preferStreaming = true,
+                            conversationId = submission.conversationId,
                             logLabel = logLabel
                         )
-                        scrollToBottom()
+                        scrollIfCurrent()
                     }
                 }
             }
@@ -948,42 +976,58 @@ object NexoAiSheet {
 
             val conv = snap.activeConversation
             headerTitle.text = if (conv != null && conv.messages.isNotEmpty()) conv.title else "Nexo AI"
-            sidebarDrawer.render(snap, activeTab, scope)
-
-            // Carril de conversaciones persistentes (acceso rápido + botón para abrir panel lateral izquierdo)
-            threadRail.removeAllViews()
-            threadRail.addView(NexoUi.chip(activity, "+ Nuevo", false) {
-                NexoAiController.newConversation(pageHost)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6f)
-            })
             val savedCount = snap.conversations.count { it.messages.isNotEmpty() }
-            threadRail.addView(NexoUi.chip(activity, if (savedCount > 0) "Panel ($savedCount)" else "Panel", false) {
-                sheetHandle.openDrawer()
-            }.apply { contentDescription = "Abrir panel lateral de historial y modos" }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6f)
-            })
-            val orderedChats = snap.conversations
-                .filter { it.messages.isNotEmpty() || it.id == snap.activeConversationId }
-                .sortedWith(compareByDescending<NexoAiModels.AiConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
-                .take(10)
-            for (c in orderedChats) {
-                val selected = c.id == snap.activeConversationId
-                val prefix = buildString {
-                    if (c.pinned) append("★ ")
-                    if (c.hasInFlight) append("● ")
+            val nextRailKey = buildString {
+                append(snap.activeConversationId).append('|').append(activeTab).append('|').append(scope)
+                snap.activeAgentRequest?.let { request ->
+                    append('|').append(request.requestId).append(':')
+                        .append(request.currentStepLabel).append(':').append(request.progressPercent)
                 }
-                val title = (prefix + c.title).take(22)
-                val chip = NexoUi.chip(activity, title, selected) {
-                    NexoAiController.selectConversation(c.id)
+                append('|').append(snap.activeTasks.count { !it.completed })
+                for (chat in snap.conversations) {
+                    append('|').append(chat.id).append(':').append(chat.title).append(':')
+                        .append(chat.updatedAtMs).append(':').append(chat.pinned).append(':')
+                        .append(chat.hasInFlight).append(':').append(chat.messages.size)
                 }
-                chip.setOnLongClickListener {
-                    if (c.messages.isNotEmpty()) NexoAiHistorySheet.options(activity, c)
-                    true
-                }
-                threadRail.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            }
+            if (railKey != nextRailKey) {
+                railKey = nextRailKey
+                sidebarDrawer.render(snap, activeTab, scope)
+
+                // Carril de conversaciones persistentes (acceso rápido + botón para abrir panel lateral izquierdo)
+                threadRail.removeAllViews()
+                threadRail.addView(NexoUi.chip(activity, "+ Nuevo", false) {
+                    NexoAiController.newConversation(pageHost)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     marginEnd = dp(6f)
                 })
+                threadRail.addView(NexoUi.chip(activity, if (savedCount > 0) "Panel ($savedCount)" else "Panel", false) {
+                    sheetHandle.openDrawer()
+                }.apply { contentDescription = "Abrir panel lateral de historial y modos" }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = dp(6f)
+                })
+                val orderedChats = snap.conversations
+                    .filter { it.messages.isNotEmpty() || it.id == snap.activeConversationId }
+                    .sortedWith(compareByDescending<NexoAiModels.AiConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
+                    .take(10)
+                for (c in orderedChats) {
+                    val selected = c.id == snap.activeConversationId
+                    val prefix = buildString {
+                        if (c.pinned) append("★ ")
+                        if (c.hasInFlight) append("● ")
+                    }
+                    val title = (prefix + c.title).take(22)
+                    val chip = NexoUi.chip(activity, title, selected) {
+                        NexoAiController.selectConversation(c.id)
+                    }
+                    chip.setOnLongClickListener {
+                        if (c.messages.isNotEmpty()) NexoAiHistorySheet.options(activity, c)
+                        true
+                    }
+                    threadRail.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        marginEnd = dp(6f)
+                    })
+                }
             }
 
             val generating = snap.activeRequestForCurrentConversation != null
@@ -1076,8 +1120,7 @@ object NexoAiSheet {
                 Toastish.show(activity, "Escribe una pregunta o elige una acción rápida.")
                 return
             }
-            promptField.setText("")
-            dispatchPrompt(q, "consulta")
+            dispatchPrompt(q, "consulta", clearInput = true)
         }
 
         sendOrStopBtn.setOnClickListener { submitOrStop() }

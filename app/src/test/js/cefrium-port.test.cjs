@@ -351,8 +351,9 @@ test('media details: https artwork, position, site handlers drive next/previous 
   assert.equal(state.next, true);
   assert.equal(state.prev, false);
   assert.equal(state.seek, true);
-  native.push(JSON.stringify({ event: 'bridge', message: { type: 'media_session_command', action: 'nexttrack' } }));
-  native.push(JSON.stringify({ event: 'bridge', message: { type: 'media_session_command', action: 'seekto', time: 90 } }));
+  native.push(JSON.stringify({ event: 'bridge', to: 'another-frame', message: { type: 'media_session_command', action: 'seekto', time: 25 } }));
+  native.push(JSON.stringify({ event: 'bridge', to: 'top', message: { type: 'media_session_command', action: 'nexttrack' } }));
+  native.push(JSON.stringify({ event: 'bridge', to: 'top', message: { type: 'media_session_command', action: 'seekto', time: 90 } }));
   await flush();
   assert.deepEqual(calls, ['next', ['seekto', 90]]);
 });

@@ -70,7 +70,9 @@ object CefriumEngine : BrowserEngine {
         // Antes de abrir ningún perfil: los Burner de la sesión anterior.
         CefriumProfiles.purgeStale()
         // Actualización desde una versión anterior de Nexo: sus cookies antes de abrir la primera pestaña.
-        UpgradeImport.runOnce(appContext)
+        if (ready) UpgradeImport.runOnce(appContext) {
+            TabManager.liveSessions().filterIsInstance<CefriumEngineSession>().forEach { it.ensureBrowser() }
+        }
         PhantomShield.initialize(appContext)
         applySettings(appContext)
     }
@@ -122,11 +124,30 @@ object CefriumEngine : BrowserEngine {
     override fun speculativeConnect(context: Context, url: String) = Unit
 
     override fun clearAllData(context: Context, onDone: (Boolean, String?) -> Unit) {
-        val profiles = listOf(CefriumProfile.getDefault(), CefriumProfile.incognito())
-        var pending = profiles.size
-        val finished = { if (--pending == 0) onDone(true, null) }
-        TabManager.liveSessions().forEach { (it as? CefriumEngineSession)?.clearCache() }
-        profiles.forEach { profile -> CefriumProfiles.wipe(profile, finished) }
+        if (!started) {
+            onDone(true, null)
+            return
+        }
+        val profiles = runCatching {
+            val all = listOf(CefriumProfile.getDefault(), CefriumProfile.incognito())
+            all + TabManager.allTabs().mapNotNull { it.burnerId }.distinct()
+                .map { CefriumProfile.get(CefriumProfiles.burnerName(it)) }
+        }
+        val cacheCleared = TabManager.liveSessions().filterIsInstance<CefriumEngineSession>()
+            .map { it.clearCache() }.all { it }
+        TabManager.closeAllSessionsKeepingState()
+        val targets = profiles.getOrElse {
+            onDone(false, "No se pudieron consultar los perfiles del navegador")
+            return
+        }
+        var pending = targets.size
+        var success = cacheCleared
+        targets.forEach { profile ->
+            CefriumProfiles.wipe(profile) { cleared ->
+                success = success && cleared
+                if (--pending == 0) onDone(success, if (success) null else "No se pudieron borrar todos los datos del motor")
+            }
+        }
     }
 
     override fun clearContextData(context: Context, contextId: String) = CefriumProfiles.wipeContext(contextId)

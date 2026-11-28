@@ -121,8 +121,9 @@ class GestureDock @JvmOverloads constructor(
             return super.onTouchEvent(event)
         }
         if (event.actionMasked == MotionEvent.ACTION_POINTER_DOWN || event.pointerCount > 1) {
+            restorePosition()
             recycle()
-            return false
+            return true
         }
         tracker?.addMovement(event)
         when (event.actionMasked) {
@@ -132,7 +133,7 @@ class GestureDock @JvmOverloads constructor(
                 if (abs(dx) > abs(event.rawY - startY)) translationX = (dx * 0.22f).coerceIn(-distance * 0.6f, distance * 0.6f)
             }
             MotionEvent.ACTION_UP -> {
-                if (translationX != 0f) NexoMotion.spring(this, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, 0f)
+                restorePosition()
                 val dx = event.rawX - startX
                 val dy = event.rawY - startY
                 val velocity = tracker?.let { it.computeCurrentVelocity(1000); it.xVelocity to it.yVelocity } ?: (0f to 0f)
@@ -152,7 +153,7 @@ class GestureDock @JvmOverloads constructor(
                 recycle()
             }
             MotionEvent.ACTION_CANCEL -> {
-                if (translationX != 0f) NexoMotion.spring(this, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, 0f)
+                restorePosition()
                 recycle()
             }
         }
@@ -161,7 +162,14 @@ class GestureDock @JvmOverloads constructor(
 
     override fun performClick(): Boolean = super.performClick()
 
+    private fun restorePosition() {
+        if (translationX != 0f) {
+            NexoMotion.spring(this, androidx.dynamicanimation.animation.DynamicAnimation.TRANSLATION_X, 0f)
+        }
+    }
+
     private fun recycle() {
+        if (intercepted) parent?.requestDisallowInterceptTouchEvent(false)
         tracker?.recycle()
         tracker = null
         tracking = false

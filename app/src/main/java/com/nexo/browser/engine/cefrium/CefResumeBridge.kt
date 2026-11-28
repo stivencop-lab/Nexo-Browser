@@ -28,6 +28,7 @@ internal class CefResumeBridge(
     private val resolveSurface: () -> SurfaceView?,
     private val isMediaActive: () -> Boolean,
     private val onRecoveryChanged: (Boolean) -> Unit,
+    private val onRecoveryFailed: () -> Unit,
     private val recreateBrowser: (CefriumBrowser) -> Boolean
 ) : SurfaceHolder.Callback {
     private val main = Handler(Looper.getMainLooper())
@@ -50,12 +51,12 @@ internal class CefResumeBridge(
     private var wakeTime = 0L
 
     private val watchdog = Runnable {
-        if (!canProbe()) {
-            // Si perdió condiciones transitorias con cubierta activa, revelar en lugar de quedar bloqueado.
-            if (recovering && resumed && !pip) revealNow()
+        if (!resumed || !recovering || pip) return@Runnable
+        val target = browser?.takeUnless { it.isClosed } ?: run {
+            onRecoveryFailed()
+            revealNow()
             return@Runnable
         }
-        val target = browser ?: run { revealNow(); return@Runnable }
         val elapsed = SystemClock.uptimeMillis() - wakeTime
         val media = isMediaActive()
         val action = CefResumePolicy.watchdogAction(
@@ -75,7 +76,10 @@ internal class CefResumeBridge(
                 cancelProbe()
                 if (!recreateBrowser(target)) {
                     Log.w(TAG, "Cefrium browser recreation failed; revealing live surface.")
+                    onRecoveryFailed()
                     revealNow()
+                } else {
+                    wakeIfReady()
                 }
             }
             CefResumePolicy.WatchdogAction.REVEAL -> {
@@ -84,6 +88,7 @@ internal class CefResumeBridge(
                         "(rebuilt=$rebuilt, media=$media, copyOk=$copyEverSucceeded)"
                 )
                 Log.w(TAG, "Watchdog revealing live surface (rebuilt=$rebuilt, media=$media, copyOk=$copyEverSucceeded).")
+                if (!canProbe()) onRecoveryFailed()
                 revealNow()
             }
         }
@@ -202,6 +207,7 @@ internal class CefResumeBridge(
         } else {
             cover()
             runCatching { browser?.takeUnless { it.isClosed }?.setPageVisible(false) }
+            wakeIfReady()
         }
     }
 
@@ -269,8 +275,17 @@ internal class CefResumeBridge(
     )
 
     private fun wakeIfReady() {
-        if (armed || !canProbe()) return
-        val target = browser?.takeUnless { it.isClosed } ?: return
+        if (armed || !resumed || !recovering || pip) return
+        val timeout = CefResumePolicy.watchdogTimeoutMs(isMediaActive())
+        val target = browser?.takeUnless { it.isClosed }
+        if (target == null || !canProbe()) {
+            if (!main.hasCallbacks(watchdog)) {
+                wakeTime = SystemClock.uptimeMillis()
+                main.postDelayed(watchdog, timeout)
+            }
+            return
+        }
+        main.removeCallbacks(watchdog)
         runCatching {
             target.onResume()
             target.setPageVisible(true)
@@ -280,7 +295,6 @@ internal class CefResumeBridge(
         wakeTime = SystemClock.uptimeMillis()
         copyEverSucceeded = false
         armed = true
-        val timeout = CefResumePolicy.watchdogTimeoutMs(isMediaActive())
         main.postDelayed(watchdog, timeout)
         main.postDelayed(probe, PROBE_INTERVAL_MS)
     }

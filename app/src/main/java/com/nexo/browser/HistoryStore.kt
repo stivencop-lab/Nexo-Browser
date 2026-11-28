@@ -26,8 +26,10 @@ object HistoryStore {
     @Volatile var version = 0L
         private set
     @Volatile private var index: Pair<Long, SuggestionIndex>? = null
+    private var clearGeneration = 0L
 
     /** Índice en memoria de las mismas entradas; se reconstruye al cambiar el historial. */
+    @Synchronized
     fun index(context: Context): SuggestionIndex {
         val entries = list(context)
         val current = version
@@ -44,13 +46,16 @@ object HistoryStore {
     }
 
     /** Se llama al terminar cada carga: no bloquear el hilo principal. */
+    @Synchronized
     fun add(context: Context, rawUrl: String, title: String) {
         val app = context.applicationContext
-        io.execute { addNow(app, rawUrl, title) }
+        val generation = clearGeneration
+        io.execute { addNow(app, rawUrl, title, generation) }
     }
 
     @Synchronized
-    private fun addNow(context: Context, rawUrl: String, title: String) {
+    private fun addNow(context: Context, rawUrl: String, title: String, generation: Long) {
+        if (clearGeneration != generation) return
         // Pages belonging to Nexo/extensions are tools, not browsing history.
         if (!UrlSafety.isWebUrl(rawUrl)) return
 
@@ -97,22 +102,34 @@ object HistoryStore {
 
     /** Sustituye el historial completo (al traer los datos de la app anterior). */
     @Synchronized
-    fun replaceAll(context: Context, entries: JSONArray) {
+    fun replaceAll(context: Context, entries: JSONArray): Boolean {
         val items = (0 until entries.length()).mapNotNull { i ->
             // Mismo saneamiento que al navegar: el historial importado no trae credenciales.
             entries.optJSONObject(i)?.let { HistoryEntry(UrlSafety.forHistory(it.optString("url")), it.optString("title"), it.optLong("timestamp")) }
         }.filter { UrlSafety.isWebUrl(it.url) }.distinctBy { it.url }.take(MAX)
-        cache = items; version++
-        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(KEY, JSONArray().apply {
+        val written = context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(KEY, JSONArray().apply {
             items.forEach { put(JSONObject().put("url", it.url).put("title", it.title).put("timestamp", it.timestamp)) }
         }.toString()).commit()
+        if (written) { cache = items; version++ }
+        return written
     }
 
     @Synchronized
-    fun clear(context: Context) {
-        cache = emptyList(); version++
-        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-            .edit().putString(KEY, "[]").apply()
+    fun clear(context: Context, onDone: (Boolean) -> Unit = {}) {
+        clearGeneration++
+        cache = emptyList()
+        version++
+        val clearedVersion = version
+        val app = context.applicationContext
+        io.execute {
+            val ok = synchronized(this) {
+                version != clearedVersion || runCatching {
+                    app.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+                        .edit().putString(KEY, "[]").commit()
+                }.getOrDefault(false)
+            }
+            onDone(ok)
+        }
     }
 
     /** Borra una sola entrada (mantener pulsado en Historial). */

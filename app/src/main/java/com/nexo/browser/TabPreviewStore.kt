@@ -52,6 +52,7 @@ object TabPreviewStore {
     }
     private val main = Handler(Looper.getMainLooper())
     private val listeners = CopyOnWriteArrayList<(String) -> Unit>()
+    private var generation = 0L
 
     private val memoryBytes: Int =
         (Runtime.getRuntime().maxMemory() / 10L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -64,12 +65,15 @@ object TabPreviewStore {
     fun addListener(listener: (String) -> Unit) { listeners += listener }
     fun removeListener(listener: (String) -> Unit) { listeners -= listener }
 
+    @Synchronized
     fun save(context: Context, id: String, bitmap: Bitmap) {
         val app = context.applicationContext
-        writeIo.execute { saveNow(app, id, bitmap) }
+        val requested = generation
+        writeIo.execute { saveNow(app, id, bitmap, requested) }
     }
 
     /** Vuelve a poner una miniatura conocida (p. ej. al deshacer el cierre de una pestaña). */
+    @Synchronized
     fun restore(context: Context, id: String, bitmap: Bitmap) {
         memory.put(id, bitmap)
         val app = context.applicationContext
@@ -79,7 +83,7 @@ object TabPreviewStore {
         notify(id)
     }
 
-    private fun saveNow(context: Context, id: String, bitmap: Bitmap) {
+    private fun saveNow(context: Context, id: String, bitmap: Bitmap, requested: Long) {
         var working: Bitmap = bitmap
         try {
             if (working.isRecycled) return
@@ -97,8 +101,14 @@ object TabPreviewStore {
             val thumbnail = thumbnail(working)
             if (thumbnail !== working) working.recycle()
             // Publicar en memoria y notificar a la UI de inmediato, antes de comprimir WebP a disco.
-            memory.put(id, thumbnail)
-            notify(id)
+            synchronized(this) {
+                if (requested != generation) {
+                    thumbnail.recycle()
+                    return
+                }
+                memory.put(id, thumbnail)
+                notify(id)
+            }
             write(context, id, thumbnail)
         } catch (t: Throwable) {
             Log.w(TAG, "Failed to save tab preview for $id", t)
@@ -168,9 +178,10 @@ object TabPreviewStore {
             return
         }
         val app = context.applicationContext
+        val requested = synchronized(this) { generation }
         readIo.execute {
-            val bitmap = load(app, id)
-            main.post { onLoaded(bitmap) }
+            val bitmap = load(app, id, requested)
+            main.post { onLoaded(if (synchronized(this) { requested == generation }) bitmap else null) }
         }
     }
 
@@ -179,10 +190,11 @@ object TabPreviewStore {
         val app = context.applicationContext
         val missing = ids.filter { cached(it) == null }.take(12)
         if (missing.isEmpty()) return
-        readIo.execute { missing.forEach { if (cached(it) == null) load(app, it) } }
+        val requested = synchronized(this) { generation }
+        readIo.execute { missing.forEach { if (cached(it) == null) load(app, it, requested) } }
     }
 
-    private fun load(context: Context, id: String): Bitmap? =
+    private fun load(context: Context, id: String, requested: Long): Bitmap? =
         runCatching {
             (file(context, id).takeIf { it.exists() } ?: legacyFile(context, id).takeIf { it.exists() })?.let {
                 BitmapFactory.decodeFile(
@@ -191,7 +203,17 @@ object TabPreviewStore {
                     BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
                 )
             }
-        }.getOrNull()?.also { memory.put(id, it) }
+        }.getOrNull()?.let { bitmap ->
+            synchronized(this) {
+                if (requested != generation) {
+                    bitmap.recycle()
+                    null
+                } else {
+                    memory.put(id, bitmap)
+                    bitmap
+                }
+            }
+        }
 
     fun remove(context: Context, id: String) {
         memory.remove(id)
@@ -205,9 +227,14 @@ object TabPreviewStore {
         }
     }
 
-    fun clear(context: Context) {
+    @Synchronized
+    fun clear(context: Context, onDone: (Boolean) -> Unit) {
+        generation++
         memory.evictAll()
-        runCatching { dir(context).deleteRecursively() }
+        val app = context.applicationContext
+        writeIo.execute {
+            onDone(runCatching { dir(app).deleteRecursively() }.getOrDefault(false))
+        }
     }
 
     /**

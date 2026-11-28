@@ -63,13 +63,39 @@ class TabRoutingTest {
         TabRouting.prepare(tab, burner) { loaded = true }
         assertTrue(loaded)
         assertFalse(TabRouting.preparing(burner))
-        assertFalse(TabRouting.synthetic(burner))
-        assertFalse(TabRouting.bootstrap(burner, "https://example.com/"))
+        assertFalse(TabRouting.blocked(burner))
         assertEquals("Burner aislado", tab.networkState)
 
         var plain = false
         TabRouting.prepare(BrowserTab(url = "https://example.org/"), FakeEngineSession()) { plain = true }
         assertTrue(plain)
+    }
+
+    @Test fun gateRemainsClosedUntilTheEngineAcceptsTheRoute() {
+        val session = FakeEngineSession()
+        val burner = BrowserTab(url = "https://example.com/", isPrivate = true, burnerId = "burner-1")
+        TabRouting.reserve(session)
+        TabRouting.applyBurnerRoute = { _, _ ->
+            assertTrue(TabRouting.preparing(session))
+            true
+        }
+        TabRouting.prepare(burner, session) { assertFalse(TabRouting.preparing(session)) }
+    }
+
+    @Test fun rejectedRouteStaysBlockedUntilAnExplicitSuccessfulRetry() {
+        val session = FakeEngineSession()
+        val tab = BrowserTab(url = "https://example.com/", isPrivate = true, burnerId = "burner-9")
+        var loads = 0
+        TabRouting.reserve(session)
+        routeAccepted = false
+        TabRouting.prepare(tab, session) { loads++ }
+        assertEquals(0, loads)
+        assertTrue(TabRouting.blocked(session))
+
+        routeAccepted = true
+        TabRouting.prepare(tab, session) { loads++ }
+        assertEquals(1, loads)
+        assertFalse(TabRouting.preparing(session))
     }
 
     @Test fun userAgentsHideWebViewMarkersAndOfferDesktop() {

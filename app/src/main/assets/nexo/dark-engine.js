@@ -217,6 +217,9 @@
     };
     let themeObserver = null;
     let themeTimer = 0;
+    let configRevision = 0;
+    let darkReaderLoad = null;
+    let scheduledRevision = -1;
 
     function removeStyle(id) {
       try {
@@ -302,6 +305,7 @@
     }
 
     function disable() {
+      configRevision++;
       state.want = false;
       state.activeEngine = "none";
       state.assessed = false;
@@ -356,16 +360,23 @@
       if (typeof loadDarkReader === "function") {
         // Mientras llega Dark Reader, la capa CSS mantiene la página oscura (sin destello).
         if (state.activeEngine === "none") applyCssLayer();
-        Promise.resolve(loadDarkReader()).then(ok => {
-          if (!state.want || state.excluded || state.activeEngine === "native") return;
+        const revision = configRevision;
+        if (scheduledRevision === revision) return;
+        scheduledRevision = revision;
+        if (!darkReaderLoad) {
+          darkReaderLoad = Promise.resolve().then(loadDarkReader).catch(() => false)
+            .finally(() => { darkReaderLoad = null; });
+        }
+        darkReaderLoad.then(ok => {
+          if (scheduledRevision === revision) scheduledRevision = -1;
+          if (revision !== configRevision || !state.want || state.excluded || state.activeEngine === "native" ||
+              !(state.strategy === "dark_reader" || (state.strategy === "hybrid" && state.deep))) return;
           const loaded = getDarkReader();
           if (ok && loaded && typeof loaded.enable === "function") {
             if (!runEnable(loaded)) applyCssLayer();
           } else if (state.activeEngine !== "css") {
             applyCssLayer();
           }
-        }, () => {
-          if (state.want && !state.excluded && state.activeEngine !== "native") applyCssLayer();
         });
       } else {
         applyCssLayer();
@@ -499,7 +510,13 @@
       const same = signature === state.signature && state.activeEngine !== "none";
       state.signature = signature;
       hookLifecycle();
+      if (domReady()) watchTheme();
       if (same && (state.assessed || !domReady())) return state.activeEngine;
+      if (!same) {
+        configRevision++;
+        state.deep = false;
+        state.reassessments = 0;
+      }
       if (!same && darkReaderActive()) {
         // Otros colores o estrategia: Dark Reader se reinicia con ellos.
         disableDarkReader();

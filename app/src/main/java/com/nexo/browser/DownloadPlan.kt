@@ -68,14 +68,19 @@ object DownloadPlan {
         return bounds[1] to ranges
     }
 
-    /** El tramo pedido corresponde al mismo archivo (mismas validaciones si las hay). */
-    fun sameEntity(original: Map<String, String>, part: Map<String, String>): Boolean {
-        for (name in listOf("ETag", "Last-Modified")) {
-            val a = header(original, name)?.trim()?.removePrefix("W/")
-            val b = header(part, name)?.trim()?.removePrefix("W/")
-            if (!a.isNullOrEmpty() && !b.isNullOrEmpty() && a != b) return false
+    fun strongEtag(headers: Map<String, String>): String? =
+        header(headers, "ETag")?.trim()?.takeIf {
+            it.length >= 2 && it.first() == '"' && it.last() == '"' && '"' !in it.substring(1, it.lastIndex)
         }
-        return true
+
+    fun matchesRange(
+        original: Map<String, String>, part: Map<String, String>, start: Long, end: Long, total: Long
+    ): Boolean {
+        val validator = strongEtag(original) ?: return false
+        val range = parseContentRange(header(part, "Content-Range")) ?: return false
+        val encoding = header(part, "Content-Encoding")?.trim().orEmpty()
+        return range.start == start && range.end == end - 1 && range.total == total &&
+            strongEtag(part) == validator && (encoding.isEmpty() || encoding.equals("identity", true))
     }
 
     fun header(headers: Map<String, String>, name: String): String? =

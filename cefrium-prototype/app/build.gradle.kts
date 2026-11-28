@@ -4,7 +4,9 @@ plugins {
 }
 android {
     namespace = "com.nexo.cefriumprototype"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         applicationId = "com.nexo.cefriumprototype"
         minSdk = 29
@@ -16,6 +18,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    lint { lintConfig = rootProject.file("../app/lint.xml") }
     packaging { jniLibs { useLegacyPackaging = true } }
     splits {
         abi { isEnable = true; reset(); include("arm64-v8a"); isUniversalApk = false }
@@ -23,6 +26,7 @@ android {
 
 }
 dependencies {
+    implementation("androidx.activity:activity:1.8.0")
     implementation("com.cefrium:cefrium-sdk-core:0.22.0")
     implementation("com.cefrium:cefrium-native-codecs-arm64-v8a:0.22.0")
     implementation("androidx.appcompat:appcompat:1.7.0")

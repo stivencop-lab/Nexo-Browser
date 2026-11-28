@@ -26,7 +26,7 @@ import org.json.JSONObject
  * Sin Android: se prueba en la JVM.
  */
 class PageChannel {
-    private class Waiter(val since: Long, val deliver: (String) -> Unit)
+    private class Waiter(val since: Long, val mainFrame: Boolean, val parkedAt: Long, val deliver: (String) -> Unit)
 
     private val lock = Any()
     private val events = ArrayDeque<Pair<Long, String>>()
@@ -95,27 +95,31 @@ class PageChannel {
      * - Si ya existen eventos con `n > since`, los entrega de inmediato.
      * - En caso contrario, aparca [deliver] hasta el siguiente [push].
      */
-    fun awaitEvents(since: Long, waiterKey: String?, deliver: (String) -> Unit) {
+    fun awaitEvents(since: Long, waiterKey: String?, mainFrame: Boolean = false, deliver: (String) -> Unit) {
         connected = true
-        val immediate: String? = synchronized(lock) {
+        var displaced: Waiter? = null
+        val immediate = synchronized(lock) {
             when {
                 since < 0L -> JSONObject().put("seq", seq).toString()
                 since < seq -> buildEnvelopeLocked(null, since, Long.MAX_VALUE)
                 else -> {
-                    val key = waiterKey ?: "anon:${++nextAnonWaiter}"
+                    val rawKey = waiterKey ?: "anon:${++nextAnonWaiter}"
+                    val key = if (mainFrame) "main:$rawKey" else "sub:$rawKey"
                     waiters.remove(key)
-                    while (waiters.size >= MAX_WAITERS) {
-                        val oldest = waiters.entries.iterator()
-                        if (oldest.hasNext()) {
-                            oldest.next()
-                            oldest.remove()
-                        } else break
+                    val now = System.nanoTime()
+                    if (waiters.size >= MAX_WAITERS) {
+                        val candidate = waiters.entries.firstOrNull {
+                            !it.value.mainFrame && (mainFrame || now - it.value.parkedAt >= WAITER_LEASE_NS)
+                        }
+                        if (candidate == null) return@synchronized RETRY
+                        displaced = waiters.remove(candidate.key)
                     }
-                    waiters[key] = Waiter(since, deliver)
+                    waiters[key] = Waiter(since, mainFrame, now, deliver)
                     null
                 }
             }
         }
+        displaced?.let { runCatching { it.deliver(RETRY) } }
         if (immediate != null) runCatching { deliver(immediate) }
     }
 
@@ -171,6 +175,8 @@ class PageChannel {
     companion object {
         const val MAX_EVENTS = 64
         const val MAX_WAITERS = 32
+        private const val WAITER_LEASE_NS = 45_000_000_000L
+        private const val RETRY = "{\"retryAfter\":1500}"
         const val MAX_REQUEST = 512 * 1024
     }
 }

@@ -591,10 +591,17 @@ test('quiet speech under the old byte threshold is still detected as signal', as
 function subtitleExtra(files, extra = {}) {
   const fetched = [];
   return { fetched, extra: Object.assign({
-    URL, location: { href: 'https://video.test/watch/1' },
+    URL, AbortController, TextDecoder, location: { href: 'https://video.test/watch/1' },
     performance: { getEntriesByType: type => type === 'resource' ? Object.keys(files).map(name => ({ name })) : [] },
-    fetch: async url => { fetched.push(url); const body = files[url];
-      return { ok: body !== undefined, headers: { get: () => null }, text: async () => body }; }
+    fetch: async url => {
+      fetched.push(url);
+      const text = files[url];
+      const body = new ReadableStream({ start(controller) {
+        if (text !== undefined) controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      } });
+      return { ok: text !== undefined, headers: { get: () => null }, body };
+    }
   }, extra) };
 }
 

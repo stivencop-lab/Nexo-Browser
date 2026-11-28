@@ -206,7 +206,7 @@ internal object ShieldAiHost {
                     if (answered.compareAndSet(false, true)) runCatching { callback.success(response) }
                 }
                 if (parsed.message == null) {
-                    if (parsed.wait) pageChannel.awaitEvents(parsed.since, parsed.waiterKey, deliver)
+                    if (parsed.wait) pageChannel.awaitEvents(parsed.since, parsed.waiterKey, isMainFrame, deliver)
                     else deliver(pageChannel.envelope(null, parsed.since))
                     return true
                 }

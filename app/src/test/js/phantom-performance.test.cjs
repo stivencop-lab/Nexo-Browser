@@ -203,11 +203,15 @@ function cosmeticPage() {
     setAttribute() {} appendChild() {} remove() {}
   }
   const document = new EventTarget();
-  Object.assign(document, { visibilityState: 'visible', documentElement: new Element(), createElement: () => new Element(), head: null });
+  Object.assign(document, {
+    visibilityState: 'visible', documentElement: new Element(), createElement: () => new Element(), head: null,
+    createTreeWalker() { queries++; return { nextNode: () => null }; }
+  });
   document.documentElement.appendChild = () => {};
   const schedule = (fn, delay) => { timers.set(++id, { fn, at: time + delay }); return id; };
   const context = vm.createContext({
-    document, location: { hostname: 'news.example.com' }, Element, Node: { ELEMENT_NODE: 1 }, Date: { now: () => time },
+    document, location: { hostname: 'news.example.com' }, Element, Node: { ELEMENT_NODE: 1 },
+    NodeFilter: { SHOW_ELEMENT: 1 }, Date: { now: () => time }, performance: { now: () => time },
     getComputedStyle: () => ({ display: 'none' }), globalThis: {},
     browser: { runtime: { sendMessage: message => { sent.push(message); return Promise.resolve(message.type === 'GET_COSMETIC' ? { enabled: true, generic: true, injected: true } : { enabled: true, injected: true }); } },
       storage: { onChanged: { addListener() {} } } },

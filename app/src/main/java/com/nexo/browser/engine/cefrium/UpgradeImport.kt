@@ -7,7 +7,9 @@ import android.os.Looper
 import com.cefrium.CefriumProfile
 import com.nexo.browser.TabManager
 import java.io.File
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Paso de Nexo con Gecko a Nexo con Chromium en el mismo paquete.
@@ -35,37 +37,40 @@ internal object UpgradeImport {
     private const val KEEP_MILLIS = 30L * 24 * 3600 * 1000
     private const val MAX_COOKIES = 20_000
 
-    /** Llamar en el hilo principal al iniciar el motor, antes de restaurar pestañas. */
-    fun runOnce(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private val io = Executors.newSingleThreadExecutor { Thread(it, "NexoUpgradeImport").apply { isDaemon = true } }
+    var pending = false
+        private set
+
+    /** Las pestañas normales esperan el lote sin bloquear la interfaz. */
+    fun runOnce(context: Context, onReady: () -> Unit) {
+        val app = context.applicationContext
+        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val doneAt = prefs.getLong(KEY_DONE_AT, 0L)
         if (doneAt == 0L) {
-            val home = File(context.filesDir, "mozilla")
-            if (!home.isDirectory) {
-                markDone(prefs, 0)
-                notice(0)
-                return
+            pending = true
+            io.execute {
+                runCatching {
+                    val legacy = File(app.filesDir, "mozilla").isDirectory
+                    val imported = if (legacy) importCookies(app) else 0
+                    check(prefs.edit().putLong(KEY_DONE_AT, System.currentTimeMillis())
+                        .putInt(KEY_IMPORTED, imported).commit()) { "No se pudo confirmar la migración" }
+                    if (legacy) notice(imported)
+                }.onFailure { error ->
+                    EngineDiagnostics.log("No se pudo completar la importación de cookies de Gecko", error)
+                    main.post { TabManager.notifyMessage("No se pudo completar la importación de sesiones. Se volverá a intentar al reiniciar.") }
+                }
+                main.post {
+                    pending = false
+                    onReady()
+                }
             }
-            val imported = try {
-                importCookies(context)
-            } catch (_: Exception) {
-                return
-            }
-            markDone(prefs, imported)
-            notice(imported)
-            return
-        }
-        if (!prefs.getBoolean(KEY_CLEANED, false) && System.currentTimeMillis() - doneAt > KEEP_MILLIS) {
-            val app = context.applicationContext
-            Executors.newSingleThreadExecutor().execute {
+        } else if (!prefs.getBoolean(KEY_CLEANED, false) && System.currentTimeMillis() - doneAt > KEEP_MILLIS) {
+            io.execute {
                 val ok = runCatching { removeLegacyProfile(app) }.getOrDefault(false)
                 if (ok) prefs.edit().putBoolean(KEY_CLEANED, true).apply()
             }
         }
-    }
-
-    private fun markDone(prefs: android.content.SharedPreferences, imported: Int) {
-        prefs.edit().putLong(KEY_DONE_AT, System.currentTimeMillis()).putInt(KEY_IMPORTED, imported).apply()
     }
 
     private fun notice(imported: Int) {
@@ -75,7 +80,7 @@ internal object UpgradeImport {
         }
         val message = "Nexo ahora usa Chromium. Se conservaron tu historial, accesos, pestañas, ajustes$cookies. " +
             "Las extensiones y los datos guardados por los sitios no se pueden trasladar."
-        Handler(Looper.getMainLooper()).postDelayed({ TabManager.notifyMessage(message) }, 1500)
+        main.postDelayed({ TabManager.notifyMessage(message) }, 1500)
     }
 
     /** Copia cookies.sqlite (con su WAL) y pasa al perfil normal de Chromium las cookies vigentes. */
@@ -88,17 +93,27 @@ internal object UpgradeImport {
             val copy = File(work, "cookies.sqlite")
             source.copyTo(copy)
             File(profile, "cookies.sqlite-wal").takeIf { it.isFile }?.copyTo(File(work, "cookies.sqlite-wal"))
-            val rows = readCookies(copy)
-            // Cefrium encola cada cookie en el hilo principal, antes que la primera pestaña.
-            val manager = CefriumProfile.getDefault().cookieManager
             val now = System.currentTimeMillis()
-            var count = 0
-            for (row in rows) {
-                val (url, header) = row.toSetCookie(now) ?: continue
-                if (runCatching { manager.setCookie(url, header, null) }.isSuccess) count++
+            val cookies = readCookies(copy).mapNotNull { it.toSetCookie(now) }
+            if (cookies.isEmpty()) return 0
+            val manager = CefriumProfile.getDefault().cookieManager
+            val deadline = android.os.SystemClock.elapsedRealtime() + 30_000
+            var imported = 0
+            for (batch in cookies.chunked(128)) {
+                val results = batch.map { (url, header) ->
+                    CompletableFuture<Boolean>().also { result ->
+                        manager.setCookie(url, header) { result.complete(it == true) }
+                    }
+                }
+                CompletableFuture.allOf(*results.toTypedArray())
+                    .get((deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(1), TimeUnit.MILLISECONDS)
+                imported += results.count { it.join() }
             }
-            manager.flush(null)
-            return count
+            val flushed = CompletableFuture<Unit>()
+            manager.flush { flushed.complete(Unit) }
+            flushed.get(5, TimeUnit.SECONDS)
+            check(imported == cookies.size) { "Chromium rechazó ${cookies.size - imported} cookies" }
+            return imported
         } finally {
             work.deleteRecursively()
         }

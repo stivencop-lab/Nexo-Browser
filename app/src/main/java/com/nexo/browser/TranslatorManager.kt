@@ -22,7 +22,10 @@ import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.FutureTask
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -44,7 +47,13 @@ object TranslatorManager {
     private const val MAX_RESPONSE_BYTES = 512 * 1024
 
     private val main by lazy { Handler(Looper.getMainLooper()) }
-    private val io by lazy { Executors.newSingleThreadExecutor() }
+    private fun worker(name: String, queued: Int) = ThreadPoolExecutor(
+        1, 1, 15, TimeUnit.SECONDS, ArrayBlockingQueue(queued),
+        { task -> Thread(task, name).apply { isDaemon = true } }
+    ).apply { allowCoreThreadTimeOut(true) }
+
+    private val pages by lazy { worker("NexoPageTranslation", 2) }
+    private val selections by lazy { worker("NexoSelectionTranslation", 2) }
     private val translatorDns = object : Dns {
         override fun lookup(hostname: String): List<java.net.InetAddress> {
             val clean = hostname.lowercase().trim('[', ']')
@@ -91,8 +100,29 @@ object TranslatorManager {
 
     internal class ActiveTranslation(
         val docGen: Long,
-        val targetLang: String
+        val targetLang: String,
+        timeoutMs: Long = 70_000
     ) {
+        private val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        @Volatile private var worker: ThreadPoolExecutor? = null
+        @Volatile private var task: FutureTask<Unit>? = null
+        var extractionTimeout: Runnable? = null
+
+        fun remainingMillis(): Long = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+
+        fun submit(executor: ThreadPoolExecutor, work: () -> Unit): Boolean {
+            val pending = FutureTask { work() }
+            worker = executor
+            task = pending
+            if (cancelled.get()) return false
+            return try {
+                executor.execute(pending)
+                if (cancelled.get()) executor.remove(pending)
+                true
+            } catch (_: RejectedExecutionException) {
+                false
+            }
+        }
         private val cancelled = AtomicBoolean(false)
         @Volatile private var call: Call? = null
 
@@ -100,12 +130,20 @@ object TranslatorManager {
 
         fun attach(activeCall: Call) {
             call = activeCall
-            if (cancelled.get()) activeCall.cancel()
+            val remaining = remainingMillis()
+            if (cancelled.get() || remaining <= 0) activeCall.cancel()
+            else activeCall.timeout().timeout(remaining.coerceAtMost(25_000), TimeUnit.MILLISECONDS)
         }
 
         fun cancel() {
             cancelled.set(true)
+            extractionTimeout?.let { main.removeCallbacks(it) }
+            extractionTimeout = null
             call?.cancel()
+            task?.let {
+                it.cancel(true)
+                worker?.remove(it)
+            }
         }
     }
 
@@ -260,12 +298,14 @@ object TranslatorManager {
                 callback(false, "Tiempo agotado al leer el contenido de la página.")
             }
         }
+        job.extractionTimeout = timeout
         main.postDelayed(timeout, EXTRACT_TIMEOUT_MS)
 
         session.evaluateJsonInMainFrame(extractScript) { raw ->
             main.post {
                 if (!settled.compareAndSet(false, true)) return@post
                 main.removeCallbacks(timeout)
+                job.extractionTimeout = null
                 if (job.isCancelled || session.documentGeneration() != job.docGen) {
                     activeJobs.remove(session, job)
                     return@post
@@ -306,39 +346,57 @@ object TranslatorManager {
     ) {
         val batches = chunkSegments(extracted.segments)
         val jsGen = extracted.generation
-        io.execute {
+        val accepted = job.submit(pages) {
             var appliedSegments = 0
             var failures = 0
             for (batch in batches) {
                 if (job.isCancelled || session.documentGeneration() != job.docGen) {
                     activeJobs.remove(session, job)
-                    return@execute
+                    return@submit
+                }
+                if (job.remainingMillis() <= 0) {
+                    failures += batches.size
+                    break
                 }
                 val lines = batch.map { it.text }
                 val translated = translateBatch(appContext, lines, job.targetLang, job)
                 if (job.isCancelled || session.documentGeneration() != job.docGen) {
                     activeJobs.remove(session, job)
-                    return@execute
+                    return@submit
                 }
                 if (translated != null && translated.size == batch.size) {
                     val batchJson = JSONArray()
                     batch.forEachIndexed { idx, seg ->
                         batchJson.put(JSONObject().put("i", seg.id).put("t", translated[idx]))
                     }
-                    appliedSegments += batch.size
                     val payload = batchJson.toString()
+                    val applied = java.util.concurrent.CompletableFuture<Int>()
                     main.post {
-                        if (job.isCancelled || session.documentGeneration() != job.docGen) return@post
-                        val applyScript = "(function(){try{if(window.__nexoPageTranslator)window.__nexoPageTranslator.applyTranslations($payload,$jsGen);}catch(_){}})();"
-                        session.evaluateInMainFrame(applyScript) {}
-                        synchronized(translatedTargets) { translatedTargets[session] = job.targetLang }
+                        if (applied.isCancelled || job.isCancelled || session.documentGeneration() != job.docGen) {
+                            applied.complete(0)
+                            return@post
+                        }
+                        val script = "(function(){return window.__nexoPageTranslator?.applyTranslations($payload,$jsGen) || 0;})();"
+                        session.evaluateJsonInMainFrame(script) { raw ->
+                            val count = raw?.toIntOrNull()?.coerceIn(0, extracted.segments.size) ?: 0
+                            if (count > 0 && !applied.isCancelled && !job.isCancelled && session.documentGeneration() == job.docGen) {
+                                synchronized(translatedTargets) { translatedTargets[session] = job.targetLang }
+                            }
+                            applied.complete(count)
+                        }
+                    }
+                    val ms = job.remainingMillis().coerceIn(1L, 4000L)
+                    appliedSegments += runCatching { applied.get(ms, TimeUnit.MILLISECONDS) }.getOrElse {
+                        applied.cancel(false)
+                        failures++
+                        0
                     }
                 } else {
                     failures++
                 }
             }
             activeJobs.remove(session, job)
-            if (job.isCancelled || session.documentGeneration() != job.docGen) return@execute
+            if (job.isCancelled || session.documentGeneration() != job.docGen) return@submit
 
             main.post {
                 if (job.isCancelled || session.documentGeneration() != job.docGen) return@post
@@ -350,7 +408,8 @@ object TranslatorManager {
                 val label = CaptionProtocol.languageLabel(job.targetLang)
                 val omitted = (extracted.totalEligible - extracted.segments.size).coerceAtLeast(0)
                 val msg = when {
-                    failures > 0 -> "Página traducida parcialmente a $label ($appliedSegments bloques)."
+                    failures > 0 || appliedSegments < extracted.segments.size ->
+                        "Página traducida parcialmente a $label ($appliedSegments bloques)."
                     extracted.truncated && omitted > 0 ->
                         "Página traducida a $label ($appliedSegments bloques; $omitted omitidos por límite)."
                     else -> "Página traducida a $label (toca Traducir otra vez para restaurar)."
@@ -358,6 +417,7 @@ object TranslatorManager {
                 callback(true, msg)
             }
         }
+        if (!accepted && activeJobs.remove(session, job)) callback(false, "Hay otras traducciones en curso. Intenta de nuevo.")
     }
 
     private fun translateBatch(
@@ -403,9 +463,9 @@ object TranslatorManager {
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .ifEmpty { listOf(text) }
-        val job = ActiveTranslation(docGen = 0L, targetLang = target)
-        io.execute {
-            if (job.isCancelled) return@execute
+        val job = ActiveTranslation(docGen = 0L, targetLang = target, timeoutMs = 25_000)
+        val accepted = job.submit(selections) {
+            if (job.isCancelled) return@submit
             val translated = translateBatch(appContext, paragraphs, target, job)
             main.post {
                 if (job.isCancelled) return@post
@@ -416,6 +476,7 @@ object TranslatorManager {
                 }
             }
         }
+        if (!accepted) main.post { onResult(null, "Hay otras selecciones pendientes. Intenta de nuevo.") }
         return job
     }
 

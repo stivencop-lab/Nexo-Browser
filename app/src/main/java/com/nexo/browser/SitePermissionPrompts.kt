@@ -62,6 +62,7 @@ object SitePermissionPrompts {
             }
             .setOnDismissListener { pending.remove(entry); if (!answered) { answered = true; onDeny() } }
             .create()
+        WindowPrivacy.protect(dialog.window, tab.isPrivate)
         entry = Pending(session, epoch, origin, dialog)
         pending += entry
         return runCatching { dialog.show() }.isSuccess.also { shown -> if (!shown) pending.remove(entry) }
