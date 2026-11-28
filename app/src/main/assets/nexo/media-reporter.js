@@ -25,8 +25,10 @@
   const port = globalThis.__nexoShield;
   if (!port || typeof port.postMessage !== "function") return;
   const isTop = window === window.top;
-  const send = payload => { try { port.postMessage(JSON.stringify({ id: 0, kind: "bridge", payload })); } catch (_) {} };
-  let last = "", hadMedia = false, scheduled = 0;
+  const frame = typeof nexoBridge !== "undefined" && nexoBridge ? nexoBridge.frame : (isTop ? "top" : null);
+  if (!frame) return;
+  const send = payload => { try { port.postMessage(JSON.stringify({ id: 0, kind: "bridge", frame, payload })); } catch (_) {} };
+  let last = "", hadMedia = false, scheduled = 0, poll = 0;
 
   // Manejadores que registra la página (para siguiente/anterior y búsquedas propias).
   const handlers = new Map();
@@ -101,12 +103,8 @@
   const finite = (value, fallback) => (Number.isFinite(value) ? value : fallback);
 
   function mediaState() {
-    let present = false, playing = false;
-    for (const m of document.querySelectorAll("video,audio")) {
-      if (!audible(m)) continue;
-      present = true;
-      if (!m.paused && !m.ended) playing = true;
-    }
+    const el = primary();
+    let present = !!el, playing = !!(el && !el.paused && !el.ended);
     let title = "", artist = "", album = "", artwork = "";
     try {
       const session = navigator.mediaSession;
@@ -121,7 +119,6 @@
         }
       }
     } catch (_) {}
-    const el = present ? primary() : null;
     let duration = 0, position = 0, rate = 1;
     if (el) {
       duration = finite(Number(el.duration), 0);
@@ -151,6 +148,8 @@
 
   function report(force) {
     const s = mediaState();
+    clearTimeout(poll);
+    poll = s.present ? setTimeout(() => report(false), 2000) : 0;
     if (!s.present && !isTop && !hadMedia) return;
     hadMedia = s.present;
     // La posición avanza sola: no cuenta como cambio.
@@ -214,13 +213,16 @@
       const m = JSON.parse(e.data);
       if (m.event !== "bridge" || !m.message) return;
       if (m.message.type === "lifecycle" && m.message.state === "foreground") report(true);
-      else if (m.message.type === "media_session_command") command(m.message);
+      else if (m.message.type === "media_session_command" && (m.to === frame || (isTop && m.to === "top"))) command(m.message);
     } catch (_) {}
   });
   ["play", "pause", "playing", "ended", "emptied", "volumechange", "loadedmetadata", "durationchange", "ratechange"]
     .forEach(e => document.addEventListener(e, () => soon(false), true));
   // Tras saltar, Android necesita la posición nueva aunque nada más cambie.
   document.addEventListener("seeked", () => soon(true), true);
-  setInterval(() => report(false), 2000);
+  // A metadata-only Media Session can start without a DOM playback event.
+  if (isTop) setInterval(() => {
+    if (!hadMedia && navigator.mediaSession && navigator.mediaSession.playbackState === "playing") report(false);
+  }, 2000);
   report(false);
 })();

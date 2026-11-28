@@ -84,6 +84,20 @@ object NxrRuntime {
     private val actionNonces = ConcurrentHashMap<Pair<Int, String>, Pair<Long, String>>()
     private val injectedStages = ConcurrentHashMap<Int, Pair<Long, MutableSet<String>>>()
     private val rateWindows = ConcurrentHashMap<Pair<Int, String>, RateWindow>()
+    private val documentStages = ConcurrentHashMap<Int, Pair<Long, Boolean>>()
+    private val injectionIo = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task, "NexoExtensionScripts").apply { isDaemon = true }
+    }
+    private data class InjectionEntry(
+        val ext: NxrPackageInstaller.InstalledExtension,
+        val policy: NxrPermissions.Policy,
+        val manifest: ExtensionManifest,
+        val localeMap: JSONObject
+    )
+    private data class InjectionCatalog(val dir: File, val revision: Long, val entries: List<InjectionEntry>)
+    private var injectionCatalog: InjectionCatalog? = null
+    private const val MAX_INJECTION_CHARS = 32 * 1024 * 1024
+    private var initializedDir: File? = null
     private val random = java.security.SecureRandom()
     private val main by lazy { Handler(Looper.getMainLooper()) }
 
@@ -93,8 +107,10 @@ object NxrRuntime {
         return buf.joinToString("") { "%02x".format(it) }
     }
 
+    @Synchronized
     fun initialize(context: Context) {
         val dir = File(context.applicationContext.filesDir, ROOT_FOLDER)
+        if (initializedDir == dir) return
         dir.mkdirs()
         NxrPackageInstaller.cleanupOrphanDirs(dir)
         rootDir = dir
@@ -105,6 +121,7 @@ object NxrRuntime {
                 context.applicationContext.assets.open(SHIM_ASSET).use { it.readBytes().toString(Charsets.UTF_8) }
             }.getOrNull()
         }
+        initializedDir = dir
     }
 
     /** Inicializa con un directorio personalizado (usado en pruebas JVM). */
@@ -120,6 +137,8 @@ object NxrRuntime {
         panelTokens.clear()
         actionNonces.clear()
         injectedStages.clear()
+        documentStages.clear()
+        NxrPackageInstaller.catalogRevision.incrementAndGet()
         rateWindows.clear()
     }
 
@@ -187,8 +206,12 @@ object NxrRuntime {
         val dir = rootDirectory(context)
         val extDir = NxrPackageInstaller.extensionDir(dir, extId)
         if (!extDir.isDirectory) return false
-        val updated = NxrPermissions.readPolicy(extDir).copy(enabled = enabled)
-        NxrPermissions.writePolicy(extDir, updated)
+        synchronized(NxrPackageInstaller.mutationLock) {
+            if (!extDir.isDirectory) return false
+            val updated = NxrPermissions.readPolicy(extDir).copy(enabled = enabled)
+            NxrPermissions.writePolicy(extDir, updated)
+            NxrPackageInstaller.catalogRevision.incrementAndGet()
+        }
         DnrBridge.refresh(dir, extId)
         if (!enabled) {
             revokeGrantsForExtension(extId)
@@ -201,8 +224,12 @@ object NxrRuntime {
         val dir = rootDirectory(context)
         val extDir = NxrPackageInstaller.extensionDir(dir, extId)
         if (!extDir.isDirectory) return false
-        val updated = NxrPermissions.readPolicy(extDir).copy(allowInPrivate = allow)
-        NxrPermissions.writePolicy(extDir, updated)
+        synchronized(NxrPackageInstaller.mutationLock) {
+            if (!extDir.isDirectory) return false
+            val updated = NxrPermissions.readPolicy(extDir).copy(allowInPrivate = allow)
+            NxrPermissions.writePolicy(extDir, updated)
+            NxrPackageInstaller.catalogRevision.incrementAndGet()
+        }
         DnrBridge.refresh(dir, extId)
         if (!allow) revokeGrantsForExtension(extId, onlyPrivate = true)
         return true
@@ -214,19 +241,23 @@ object NxrRuntime {
         if (!extDir.isDirectory) return false
         val normalized = host.lowercase().removePrefix("www.").trim()
         if (normalized.isEmpty()) return false
-        val current = NxrPermissions.readPolicy(extDir)
-        val next = if (allowed) {
-            current.copy(
-                deniedHosts = current.deniedHosts - normalized,
-                allowedHostsOverride = current.allowedHostsOverride + normalized
-            )
-        } else {
-            current.copy(
-                deniedHosts = current.deniedHosts + normalized,
-                allowedHostsOverride = current.allowedHostsOverride - normalized
-            )
+        synchronized(NxrPackageInstaller.mutationLock) {
+            if (!extDir.isDirectory) return false
+            val current = NxrPermissions.readPolicy(extDir)
+            val next = if (allowed) {
+                current.copy(
+                    deniedHosts = current.deniedHosts - normalized,
+                    allowedHostsOverride = current.allowedHostsOverride + normalized
+                )
+            } else {
+                current.copy(
+                    deniedHosts = current.deniedHosts + normalized,
+                    allowedHostsOverride = current.allowedHostsOverride - normalized
+                )
+            }
+            NxrPermissions.writePolicy(extDir, next)
+            NxrPackageInstaller.catalogRevision.incrementAndGet()
         }
-        NxrPermissions.writePolicy(extDir, next)
         DnrBridge.refresh(dir, extId)
         if (!allowed) revokeGrantsForExtension(extId, originHost = normalized)
         return true
@@ -234,12 +265,12 @@ object NxrRuntime {
 
     fun uninstall(context: Context, extId: String): Boolean {
         val dir = rootDirectory(context)
+        if (!NxrPackageInstaller.uninstall(dir, extId)) return false
         revokeGrantsForExtension(extId)
         errors.remove(extId)
         runtimeStatsMap.remove(extId)
-        return NxrPackageInstaller.uninstall(dir, extId).also {
-            if (it) DnrBridge.refresh(dir, extId)
-        }
+        DnrBridge.refresh(dir, extId)
+        return true
     }
 
     /** Revoca inmediatamente las capacidades activas de [extId] (total, privadas o de un host). */
@@ -260,6 +291,28 @@ object NxrRuntime {
         if (cleanHost == null && !onlyPrivate) {
             actionNonces.keys.removeIf { it.second == extId }
             panelTokens.entries.removeIf { it.value == extId }
+        }
+        val prefix = "$extId:"
+        if (injectedStages.values.none { (_, marks) -> synchronized(marks) { marks.any { it.startsWith(prefix) } } }) return
+        main.post {
+            val id = JSONObject.quote(extId)
+            var requiresReload = false
+            for (session in TabManager.liveSessions().filterIsInstance<CefriumEngineSession>()) {
+                if (onlyPrivate && !session.isPrivate) continue
+                if (cleanHost != null && NxrPermissions.extractHost(session.currentLocationUrl().orEmpty()) != cleanHost) continue
+                val key = session.sessionUid.toInt()
+                val markers = injectedStages[key]?.takeIf { it.first == session.documentGeneration() }?.second ?: continue
+                synchronized(markers) {
+                    if (markers.any { it.startsWith(prefix) && it.endsWith(":js") }) requiresReload = true
+                    markers.removeIf { it.startsWith(prefix) && it.endsWith(":css") }
+                }
+                actionNonces.remove(key to extId)
+                session.evaluateInMainFrame(
+                    "document.querySelectorAll('style[data-nxr-extension]').forEach(function(el) {" +
+                        "if (el.getAttribute('data-nxr-extension') === $id) el.remove(); });"
+                ) {}
+            }
+            if (requiresReload) TabManager.notifyMessage("Recarga las páginas afectadas para reiniciar los scripts de la extensión.")
         }
     }
 
@@ -299,6 +352,7 @@ object NxrRuntime {
         grants.entries.removeIf { it.value.sessionKey == sessionKey }
         actionNonces.keys.removeIf { it.first == sessionKey }
         injectedStages.remove(sessionKey)
+        documentStages.remove(sessionKey)
         rateWindows.keys.removeIf { it.first == sessionKey }
     }
 
@@ -341,43 +395,31 @@ object NxrRuntime {
     // --- Inyección de content scripts en pestañas Cefrium ---
 
     fun onDocumentAvailable(session: CefriumEngineSession, url: String?) {
-        if (url.isNullOrBlank()) return
-        // Orden estricto: primero document_start y después document_end, deduplicados por generación.
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START)
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END)
+        val key = session.sessionUid.toInt()
+        val generation = session.documentGeneration()
+        documentStages.compute(key) { _, previous -> previous?.takeIf { it.first == generation } ?: (generation to false) }
+        if (!url.isNullOrBlank()) queueInjection(session, url, idle = false, documentStart = true)
     }
 
     fun onDocumentIdle(session: CefriumEngineSession, url: String?) {
         if (url.isNullOrBlank()) return
-        // Cubrir también document_start/end si la página llegó desde caché sin disparar onDocumentAvailable.
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START)
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END)
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_IDLE)
+        documentStages[session.sessionUid.toInt()] = session.documentGeneration() to true
+        queueInjection(session, url, idle = true)
     }
 
-    /**
-     * Navegación SPA (`history.pushState` / cambios de ruta sin recarga completa, p. ej. YouTube `/watch`):
-     * inyecta scripts cuyos patrones ahora coinciden con [url] sin duplicar los ya ejecutados.
-     */
+    /** Los cambios de ruta SPA pueden ampliar coincidencias dentro de un documento listo. */
     fun onUrlChanged(session: CefriumEngineSession, url: String?) {
         if (url.isNullOrBlank()) return
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START)
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END)
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_IDLE)
+        val stage = documentStages[session.sessionUid.toInt()] ?: return
+        if (stage.first == session.documentGeneration()) queueInjection(session, url, idle = stage.second)
     }
 
-    /**
-     * Inyecta inmediatamente [extId] en la pestaña activa si la página actual coincide y está autorizada
-     * (tras instalar o activar la extensión sin obligar al usuario a recargar manualmente).
-     */
     fun injectActiveTabIfMatching(extId: String) {
         val tab = TabManager.activeTab() ?: return
         val session = tab.session as? CefriumEngineSession ?: return
         val url = session.currentLocationUrl() ?: tab.url
-        if (url.isBlank() || !NxrPermissions.isWebHttpUrl(url)) return
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_START, onlyExtId = extId)
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_END, onlyExtId = extId)
-        injectForStage(session, url, ExtensionManifest.RunAt.DOCUMENT_IDLE, onlyExtId = extId)
+        val stage = documentStages[session.sessionUid.toInt()] ?: return
+        if (stage.first == session.documentGeneration()) queueInjection(session, url, stage.second, extId)
     }
 
     /** Marca `(sessionKey, docGen, marker)` como inyectado; devuelve false si ya se ejecutó en este documento. */
@@ -390,81 +432,100 @@ object NxrRuntime {
         return current.second.add(marker)
     }
 
-    private fun injectForStage(
+    private fun catalog(dir: File, revision: Long): List<InjectionEntry> {
+        injectionCatalog?.takeIf { it.dir == dir && it.revision == revision }?.let { return it.entries }
+        val entries = NxrPackageInstaller.listInstalled(dir).mapNotNull { ext ->
+            val policy = NxrPermissions.readPolicy(NxrPackageInstaller.extensionDir(dir, ext.id))
+            if (!policy.enabled) return@mapNotNull null
+            val manifest = NxrPackageInstaller.readManifest(dir, ext.id) ?: return@mapNotNull null
+            InjectionEntry(ext, policy, manifest, buildLocaleJson(dir, ext.id, manifest))
+        }
+        injectionCatalog = InjectionCatalog(dir, revision, entries)
+        return entries
+    }
+
+    private fun queueInjection(
         session: CefriumEngineSession,
         url: String,
-        stage: ExtensionManifest.RunAt,
-        onlyExtId: String? = null
+        idle: Boolean,
+        onlyExtId: String? = null,
+        documentStart: Boolean = false
     ) {
         val dir = rootDir ?: return
         val shim = shimSource ?: return
         if (!NxrPermissions.isWebHttpUrl(url)) return
-        val installed = NxrPackageInstaller.listInstalled(dir)
-        if (installed.isEmpty()) return
         val sessionKey = session.sessionUid.toInt()
-        val docGen = session.documentGeneration()
-
-        for (ext in installed) {
-            if (onlyExtId != null && ext.id != onlyExtId) continue
-            val extDir = NxrPackageInstaller.extensionDir(dir, ext.id)
-            val policy = NxrPermissions.readPolicy(extDir)
-            if (!NxrPermissions.isAuthorizedForUrl(policy, url, session.isPrivate)) continue
-            val manifest = NxrPackageInstaller.readManifest(dir, ext.id) ?: continue
-            val matching = manifest.contentScripts.mapIndexedNotNull { idx, cs ->
-                if (cs.runAt == stage && cs.matcher.matches(url)) idx to cs else null
-            }
-            if (matching.isEmpty()) continue
-
-            val localeMap = buildLocaleJson(dir, ext.id, manifest)
-            val manifestSummary = JSONObject()
-                .put("manifest_version", manifest.manifestVersion)
-                .put("name", ext.name)
-                .put("version", manifest.version)
-                .put("description", ext.description)
-                .put("permissions", JSONArray(manifest.permissions))
-                .put("host_permissions", JSONArray(manifest.hostPermissions))
-            val hasStoragePerm = "storage" in manifest.permissions || "unlimitedStorage" in manifest.permissions
-
+        val generation = session.documentGeneration()
+        val revision = NxrPackageInstaller.catalogRevision.get()
+        injectionIo.execute {
+            if (session.documentGeneration() != generation || revision != NxrPackageInstaller.catalogRevision.get()) return@execute
             val host = NxrPermissions.extractHost(url)
-            for ((idx, cs) in matching) {
-                if (!markStageInjected(sessionKey, docGen, "${ext.id}:${stage.name}:$idx")) continue
-                var injectedAny = false
-                for (cssPath in cs.css) {
-                    val cssText = NxrPackageInstaller.readPackagedText(dir, ext.id, cssPath) ?: continue
-                    val cssScript = buildCssInjectionScript(ext.id, cssPath, cssText)
-                    session.evaluateInMainFrame(cssScript) {}
-                    injectedAny = true
-                }
-                if (cs.js.isNotEmpty()) {
-                    val sources = cs.js.mapNotNull { path ->
-                        NxrPackageInstaller.readPackagedText(dir, ext.id, path)?.let { path to it }
+            val expectedUrl = JSONObject.quote(url)
+            val stageLimit = if (idle) ExtensionManifest.RunAt.DOCUMENT_IDLE else ExtensionManifest.RunAt.DOCUMENT_END
+
+            for (stage in ExtensionManifest.RunAt.entries.takeWhile { it <= stageLimit }) {
+                if (stage == ExtensionManifest.RunAt.DOCUMENT_START && !documentStart) continue
+                var budget = MAX_INJECTION_CHARS
+                for ((ext, policy, manifest, localeMap) in catalog(dir, revision)) {
+                    if (onlyExtId != null && ext.id != onlyExtId) continue
+                    if (!NxrPermissions.isAuthorizedForUrl(policy, url, session.isPrivate)) continue
+                    val hasStorage = "storage" in manifest.permissions || "unlimitedStorage" in manifest.permissions
+                    val manifestSummary = JSONObject()
+                        .put("manifest_version", manifest.manifestVersion)
+                        .put("name", ext.name)
+                        .put("version", manifest.version)
+                        .put("description", ext.description)
+                        .put("permissions", JSONArray(manifest.permissions))
+                        .put("host_permissions", JSONArray(manifest.hostPermissions))
+                    manifest.contentScripts.forEachIndexed { index, script ->
+                        if (script.runAt != stage || !script.matcher.matches(url)) return@forEachIndexed
+                        if (budget <= 0 || session.documentGeneration() != generation) return@forEachIndexed
+                        val marker = "${ext.id}:${stage.name}:$index"
+                        val marks = injectedStages[sessionKey]?.takeIf { it.first == generation }?.second
+                        val cssPaths = script.css.takeUnless { marks?.contains("$marker:css") == true }.orEmpty()
+                        val jsPaths = script.js.takeUnless { marks?.contains("$marker:js") == true }.orEmpty()
+                        val sources = mutableMapOf<String, String>()
+                        for (path in (cssPaths + jsPaths).distinct()) {
+                            val text = NxrPackageInstaller.readPackagedText(dir, ext.id, path) ?: continue
+                            budget -= text.length
+                            if (budget < 0) {
+                                recordError(ext.id, "content_scripts", "Límite de contenido por documento superado.")
+                                return@forEachIndexed
+                            }
+                            sources[path] = text
+                        }
+                        if (sources.isEmpty()) return@forEachIndexed
+                        val css = cssPaths.mapNotNull { path ->
+                            sources[path]?.let { buildCssInjectionScript(ext.id, path, it) }
+                        }
+                        val js = jsPaths.mapNotNull { path -> sources[path]?.let { path to it } }
+                        val grant = if (js.isNotEmpty()) issueGrant(sessionKey, ext.id, url, generation, session.isPrivate, hasStorage) else null
+                        val bundle = grant?.let {
+                            val nonce = actionNonces.compute(sessionKey to ext.id) { _, previous ->
+                                previous?.takeIf { it.first == generation } ?: (generation to nextSecretHex(16))
+                            }!!.second
+                            buildJsBundleScript(shim, ext.id, it.token, nonce, manifestSummary, localeMap, js)
+                        }
+                        main.post {
+                            if (session.documentGeneration() != generation || session.currentLocationUrl() != url ||
+                                revision != NxrPackageInstaller.catalogRevision.get()
+                            ) {
+                                grant?.let { grants.remove(it.token) }
+                                return@post
+                            }
+                            val styles = css.takeIf {
+                                it.isNotEmpty() && markStageInjected(sessionKey, generation, "$marker:css")
+                            }.orEmpty()
+                            val runJs = bundle != null && markStageInjected(sessionKey, generation, "$marker:js")
+                            if (!runJs && grant != null) grants.remove(grant.token)
+                            val payloads = if (runJs) styles + requireNotNull(bundle) else styles
+                            for (payload in payloads) {
+                                session.evaluateInMainFrame("if (location.href === new URL($expectedUrl).href) {\n$payload\n}") {}
+                            }
+                            if (payloads.isNotEmpty()) recordInjection(ext.id, host)
+                        }
                     }
-                    if (sources.isNotEmpty()) {
-                        val grant = issueGrant(
-                            sessionKey = sessionKey,
-                            extId = ext.id,
-                            url = url,
-                            docGen = docGen,
-                            isPrivate = session.isPrivate,
-                            hasStoragePermission = hasStoragePerm
-                        )
-                        val actionNonce = actionNonces.compute(sessionKey to ext.id) { _, prev ->
-                            if (prev != null && prev.first == docGen) prev else docGen to nextSecretHex(16)
-                        }!!.second
-                        val jsBundle = buildJsBundleScript(
-                            shim = shim,
-                            extId = ext.id,
-                            token = grant.token,
-                            actionNonce = actionNonce,
-                            manifestSummary = manifestSummary,
-                            localeMap = localeMap,
-                            scripts = sources
-                        )
-                        session.evaluateInMainFrame(jsBundle) {}
-                        injectedAny = true
-                    }
                 }
-                if (injectedAny) recordInjection(ext.id, host)
             }
         }
     }
@@ -472,14 +533,18 @@ object NxrRuntime {
     /** Construye el script seguro que inyecta CSS de una extensión mediante `textContent`. */
     internal fun buildCssInjectionScript(extId: String, cssPath: String, cssText: String): String {
         val key = JSONObject.quote("$extId:$cssPath")
+        val owner = JSONObject.quote(extId)
         val content = JSONObject.quote(cssText)
         return """
             (function(){
               try {
                 var key = $key;
-                if (document.querySelector('style[data-nxr-css="' + key.replace(/"/g, '') + '"]')) return;
+                for (var style of document.querySelectorAll('style[data-nxr-css]')) {
+                  if (style.getAttribute('data-nxr-css') === key) return;
+                }
                 var el = document.createElement('style');
-                el.setAttribute('data-nxr-css', key.replace(/"/g, ''));
+                el.setAttribute('data-nxr-css', key);
+                el.setAttribute('data-nxr-extension', $owner);
                 el.textContent = $content;
                 (document.head || document.documentElement).appendChild(el);
               } catch (_) {}

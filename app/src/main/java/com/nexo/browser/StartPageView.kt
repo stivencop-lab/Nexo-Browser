@@ -244,6 +244,8 @@ class StartPageView(
         override fun getOpacity(): Int = android.graphics.PixelFormat.OPAQUE
     }
 
+    private var offlineRequested = false
+
     fun render(isPrivate: Boolean) {
         renderedPrivate = isPrivate
         renderedShieldToken = shieldToken()
@@ -385,12 +387,22 @@ class StartPageView(
                     compactCard(bm.title, host.ifBlank { bm.url }) { onOpen(bm.url) }
                 }), params())
             }
-            val offline = if (cfg.showOfflineReader) OfflineArticleStore.list(OfflineArticleStore.directory(activity)) else emptyList()
+            val offline = if (cfg.showOfflineReader) {
+                val snapshot = OfflineArticleStore.cached(OfflineArticleStore.directory(activity))
+                if (snapshot == null && !offlineRequested) {
+                    offlineRequested = true
+                    NexoReader.loadSavedArticles(activity) {
+                        offlineRequested = false
+                        if (isAttachedToWindow && isShown && !renderedPrivate) render(false)
+                    }
+                }
+                snapshot?.articles.orEmpty()
+            } else emptyList()
             if (offline.isNotEmpty()) {
                 content.addView(sectionHeading("Para leer", "Ver todos") { onAction("reader_offline") }, params().apply { topMargin = dp(16f) })
                 content.addView(horizontalCards(offline.take(6).map { art ->
                     compactCard(art.title, listOf(art.siteName, "${art.readingMinutes} min").filter { it.isNotBlank() }.joinToString(" · ")) {
-                        NexoReader.showArticleDialog(activity, art, openedOffline = true, onOpenUrl = onOpen)
+                        NexoReader.openSavedArticle(activity, art.id, onOpenUrl = onOpen)
                     }
                 }), params())
             }

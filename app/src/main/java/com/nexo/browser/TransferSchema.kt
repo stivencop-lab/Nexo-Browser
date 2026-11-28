@@ -11,12 +11,21 @@ import java.util.UUID
  */
 object TransferSchema {
     val secretNames = setOf("deepgram_key", "deepl_key", "ai_translate_key")
-    val settingsKeys = setOf(
-        "accent", "ai_translate_endpoint", "ai_translate_model", "ai_translate_provider", "auto_hide_bars", "autoplay", "background_media", "caption_daily_limit", "caption_audio_auto", "caption_language", "caption_mode", "caption_size", "caption_translate", "caption_usage_day", "caption_usage_seconds", "captions_enabled", "clear_on_exit", "cookie_mode", "desktop_default", "dns_custom", "dns_provider", "dns_strict", "fingerprinting", "force_zoom", "free_search", "gpc", "https_only", "javascript", "max_live", "nav_actions", "nav_mode", "nexo_home", "pull_to_refresh", "dock_gestures", "parallel_downloads", "query_stripping", "remote_debugging", "restore_tabs", "safe_browsing", "search", "smart_pip", "strict_tracking", "tab_view_mode", "text_scale", "theme", "tracking", "translation_provider", "translator_target"
-    )
     val settingsTypes = mapOf("accent" to "string", "ai_translate_endpoint" to "string", "ai_translate_model" to "string", "ai_translate_provider" to "string", "auto_hide_bars" to "boolean", "autoplay" to "string", "background_media" to "boolean", "caption_daily_limit" to "int", "caption_audio_auto" to "boolean", "caption_language" to "string", "caption_mode" to "string", "caption_size" to "int", "caption_translate" to "string", "caption_usage_day" to "string", "caption_usage_seconds" to "int", "captions_enabled" to "boolean", "clear_on_exit" to "boolean", "cookie_mode" to "string", "desktop_default" to "boolean", "dns_custom" to "string", "dns_provider" to "string", "dns_strict" to "boolean", "fingerprinting" to "boolean", "force_zoom" to "boolean", "free_search" to "boolean", "gpc" to "boolean", "https_only" to "boolean", "javascript" to "boolean", "max_live" to "int", "nav_actions" to "string", "nav_mode" to "string", "nexo_home" to "boolean", "pull_to_refresh" to "boolean", "dock_gestures" to "boolean", "parallel_downloads" to "boolean", "query_stripping" to "boolean", "remote_debugging" to "boolean", "restore_tabs" to "boolean", "safe_browsing" to "boolean", "search" to "string", "smart_pip" to "boolean", "strict_tracking" to "boolean", "tab_view_mode" to "string", "text_scale" to "int", "theme" to "string", "tracking" to "boolean", "translation_provider" to "string", "translator_target" to "string")
+    val settingsKeys: Set<String> get() = settingsTypes.keys
+    internal const val MAX_NATIVE_BYTES = 8 * 1024 * 1024
+    internal const val MAX_PREFERENCE_CHARS = 2 * 1024 * 1024
+    internal const val MAX_ITEMS = 500
+    internal const val MAX_SECRET_CHARS = 16384
+
+    internal val typesByFile = mapOf(
+        "nexo_browser_settings" to settingsTypes,
+        "nexo_history" to mapOf("entries" to "string"),
+        "nexo_quick_access" to mapOf("custom" to "string", "hidden" to "set")
+    )
+
     fun tabs(raw: String): String {
-        val input = JSONArray(raw); require(input.length() <= 500)
+        val input = JSONArray(raw); require(input.length() <= MAX_ITEMS)
         val result = JSONArray()
         for (i in 0 until input.length()) {
             val t = input.getJSONObject(i)

@@ -53,5 +53,42 @@ const root=require('node:path').resolve(__dirname,'../app/src/main/assets/extens
   const manual=await page.evaluate(()=>manualScan({type:'AI_SCAN'},{id:'phantom'}));assert.equal(manual.ok,true);assert.equal(manual.hidden,2);
   assert.equal(await page.evaluate(()=>requests),2);assert.deepEqual(errors,[]);
   console.log('Real DOM + real classifier/memory: opt-in learns, memory reuses without network, forget restores and pauses, manual scan resumes; media, player sibling frames, CAPTCHA, OAuth, captions and PiP protected. Provider and iframe documents are mocked.');
+
+  const cosmetic = await browser.newPage();
+  cosmetic.on('pageerror', e => errors.push(e.message));
+  await cosmetic.setContent('<main><div id="generic-probe" class="generic-match">Advertisement</div></main>');
+  await cosmetic.evaluate(() => {
+    let enabled = true;
+    window.cosmeticLookupCount = 0;
+    window.cosmeticListeners = [];
+    window.changeCosmetic = value => {
+      enabled = value;
+      for (const listener of cosmeticListeners) listener({ adblockEnabled: { newValue: value } }, 'local');
+    };
+    window.browser = {
+      storage: { onChanged: { addListener: listener => cosmeticListeners.push(listener) } },
+      runtime: {
+        onMessage: { addListener() {} },
+        sendMessage: async message => {
+          if (message.type === 'GET_COSMETIC') return { enabled, generic: enabled, injected: false, selectors: [] };
+          if (message.type === 'COSMETIC_LOOKUP' && message.classes.includes('generic-match')) {
+            cosmeticLookupCount++;
+            return { enabled, injected: false, selectors: ['.generic-match'] };
+          }
+          return {};
+        }
+      }
+    };
+  });
+  await cosmetic.addScriptTag({path:root+'content/cosmetic-filter.js'});
+  const probe = cosmetic.locator('#generic-probe');
+  await probe.waitFor({state:'hidden'});
+  await cosmetic.evaluate(() => changeCosmetic(false));
+  await probe.waitFor({state:'visible'});
+  await cosmetic.evaluate(() => changeCosmetic(true));
+  await probe.waitFor({state:'hidden'});
+  assert.equal(await cosmetic.evaluate(() => cosmeticLookupCount), 2);
+  assert.deepEqual(errors, []);
+  console.log('Cosmetic DOM: generic class rules are rediscovered and reapplied after toggling protection.');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exit(1)});

@@ -103,7 +103,9 @@ internal object FilterLists {
         return out
     }
 
-    fun loadRulesText(text: String, engine: NetworkEngine, limit: Int, cosmetic: CosmeticEngine?): Int {
+    fun loadRulesText(
+        text: String, engine: NetworkEngine, limit: Int, cosmetic: CosmeticEngine?, tracking: Boolean = false
+    ): Int {
         if (text.isEmpty()) return 0
         val maxRules = limit.coerceAtLeast(0)
         var count = 0
@@ -111,7 +113,7 @@ internal object FilterLists {
             val parsed = parseRule(line) ?: continue
             when (parsed.kind) {
                 Kind.BADFILTER -> engine.addBadFilter(parsed.rule)
-                Kind.NETWORK -> if (count < maxRules && engine.addRule(engine.createRule(parsed.rule))) count++
+                Kind.NETWORK -> if (count < maxRules && engine.addRule(engine.createRule(parsed.rule), tracking)) count++
                 Kind.COSMETIC -> cosmetic?.addLine(parsed.rule)
                 Kind.HIDE_EXCEPTION -> cosmetic?.addHideException(parsed.rule)
             }
@@ -123,15 +125,18 @@ internal object FilterLists {
     fun build(bundled: Bundled, texts: Map<String, String>): Result {
         val engine = NetworkEngine()
         val cosmetic = CosmeticEngine()
-        val ordered = LISTS.mapNotNull { list -> texts[list.id]?.takeIf { it.isNotEmpty() } }
+        val ordered = LISTS.mapNotNull { list -> texts[list.id]?.takeIf { it.isNotEmpty() }?.let { list.id to it } }
         // Primero los `$badfilter` de todas las listas: la regla anulada no llega a entrar.
-        for (text in ordered) {
+        for ((_, text) in ordered) {
             for (line in text.lineSequence()) if (FIRST_PASS_BADFILTER.matches(line.trimEnd('\r'))) engine.addBadFilter(line.trim())
         }
         engine.init(bundled.adDomains, bundled.trackerDomains, bundled.popupDomains)
         bundled.cosmeticRules.forEach { cosmetic.addLine(it) }
         var total = 0
-        for (text in ordered) total += loadRulesText(text, engine, MAX_DYNAMIC_RULES - total, cosmetic)
+        for ((id, text) in ordered) {
+            total += loadRulesText(text, engine, MAX_DYNAMIC_RULES - total, cosmetic,
+                tracking = id == "easyprivacy" || id == "ubo-privacy")
+        }
         engine.finalizeRules()
         val threats = extractPlainDomains(texts["ubo-badware"])
         val miners = extractPlainDomains(texts["nocoin-miners"])

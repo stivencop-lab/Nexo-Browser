@@ -67,28 +67,44 @@ class MailTmClient {
         } finally { connection.disconnect() }
     }
 
-    fun create(): Account {
+    internal class Registration(val address: String, private val password: String) {
+        var accountId: String? = null
+        var attempted = false
+        fun credentials(): JSONObject = JSONObject().put("address", address).put("password", password)
+        override fun toString() = "MailboxRegistration(redacted)"
+    }
+
+    internal fun newRegistration(): Registration {
         val domain = members(request("GET", "/domains")).let { domains ->
             (0 until domains.length()).mapNotNull { domains.optJSONObject(it) }
                 .firstOrNull { it.optBoolean("isActive", true) && !it.optBoolean("isPrivate", false) }
                 ?.optString("domain")?.takeIf { it.isNotBlank() }
         } ?: error("mail.tm no tiene dominios disponibles.")
-        var lastError: Exception? = null
-        // Una dirección ya usada devuelve 422: se prueba otra al azar.
-        repeat(3) {
-            val entropy = ByteArray(24).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
-            val address = "nexo${entropy.take(20)}@$domain"
-            val credentials = JSONObject().put("address", address).put("password", entropy)
+        val entropy = ByteArray(24).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
+        return Registration("nexo${entropy.take(20)}@$domain", entropy)
+    }
+
+    internal fun completeRegistration(registration: Registration): Account {
+        if (registration.accountId != null) return authorize(registration)
+        if (registration.attempted) {
             try {
-                val account = request("POST", "/accounts", body = credentials)
-                val token = request("POST", "/token", body = credentials).getString("token")
-                return Account(account.getString("id"), address, token)
+                return authorize(registration)
             } catch (error: ApiException) {
-                lastError = error
-                if (error.status != 422) throw error
+                if (error.status !in setOf(401, 404, 422)) throw error
             }
         }
-        throw lastError ?: IllegalStateException("No se pudo crear el buzón.")
+        registration.attempted = true
+        registration.accountId = request("POST", "/accounts", body = registration.credentials()).getString("id")
+        return authorize(registration)
+    }
+
+    internal fun authorize(registration: Registration): Account {
+        val token = request("POST", "/token", body = registration.credentials()).getString("token")
+        require(token.isNotBlank()) { "mail.tm devolvió una sesión vacía." }
+        val id = registration.accountId ?: request("GET", "/me", token).getString("id").also {
+            registration.accountId = it
+        }
+        return Account(id, registration.address, token)
     }
 
     fun list(account: Account): List<Message> {

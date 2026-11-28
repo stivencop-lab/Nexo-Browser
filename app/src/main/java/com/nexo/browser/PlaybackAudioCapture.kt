@@ -409,7 +409,10 @@ class PlaybackCaptureService : Service() {
         runCatching { audio?.stop() }; runCatching { audio?.release() }
         val consent = projection; projection = null
         runCatching { consent?.unregisterCallback(callback) }; runCatching { consent?.stop() }
-        if (PlaybackAudioCapture.service === this) PlaybackAudioCapture.service = null
+        if (PlaybackAudioCapture.service === this) {
+            PlaybackAudioCapture.service = null
+            WindowPrivacy.applyAudioCapture(this, TabManager.activeTab()?.isPrivate == true)
+        }
         stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
     }
 

@@ -96,6 +96,7 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.activity:activity:1.8.0")
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.10"))
     // Motor web: Chromium 158 embebido (Cefrium, LGPL-3.0). Hashes verificados
     // en gradle/cefrium-0.22.0.sha256. Un módulo nativo por ABI publicada.

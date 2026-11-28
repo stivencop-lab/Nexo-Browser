@@ -45,6 +45,12 @@ object NexoAiRichRenderer {
      * En streaming activo ([isStreaming] = true) oculta bloques de protocolo incompletos y muestra
      * un aviso sutil si la IA está construyendo un gráfico o ejecutando una herramienta.
      */
+    private data class RenderedBlocks(
+        val blocks: List<NexoAiRichContent.Block>,
+        val textSizeSp: Float,
+        val palette: BrowserPalette
+    )
+
     fun renderInto(
         activity: Activity,
         container: LinearLayout,
@@ -52,7 +58,6 @@ object NexoAiRichRenderer {
         isStreaming: Boolean = false,
         textSizeSp: Float = 15f
     ) {
-        container.removeAllViews()
         val p = ThemeManager.palette(activity)
         val dp = { v: Float -> NexoUi.dp(activity, v) }
 
@@ -63,7 +68,16 @@ object NexoAiRichRenderer {
         }
 
         val blocks = NexoAiRichContent.parse(displayRaw)
-        blocks.forEachIndexed { idx, block ->
+        val previous = (container.tag as? RenderedBlocks)?.takeIf { it.textSizeSp == textSizeSp && it.palette == p }
+        var unchanged = 0
+        if (previous != null) {
+            val limit = minOf(blocks.size, previous.blocks.size, container.childCount)
+            while (unchanged < limit && blocks[unchanged] == previous.blocks[unchanged]) unchanged++
+        }
+        if (unchanged < container.childCount) container.removeViews(unchanged, container.childCount - unchanged)
+        container.tag = RenderedBlocks(blocks, textSizeSp, p)
+        for (idx in unchanged until blocks.size) {
+            val block = blocks[idx]
             val topGap = if (idx == 0) 0 else when (block) {
                 is NexoAiRichContent.Block.Heading -> dp(12f)
                 is NexoAiRichContent.Block.Chart,

@@ -183,6 +183,7 @@ interface EngineObserver {
     fun onFirstContentfulPaint(session: EngineSession) = Unit
     fun onProcessExit(session: EngineSession, exit: ProcessExit) = Unit
     fun onContextMenu(session: EngineSession, element: EngineContextElement) = Unit
+    fun allowDownload(session: EngineSession, uri: String, name: String?, mimeType: String?): Boolean = true
     fun onDownload(session: EngineSession, download: EngineDownload) = Unit
     fun onCloseRequest(session: EngineSession) = Unit
     fun onFullScreen(session: EngineSession, fullScreen: Boolean) = Unit

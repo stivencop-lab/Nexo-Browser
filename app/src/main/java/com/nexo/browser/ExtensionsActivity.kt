@@ -41,7 +41,7 @@ import java.util.concurrent.Executors
  * Muestra de forma honesta el ciclo de vida de 4 estados (Descargada / Instalada /
  * Habilitada / Funcionando) y la matriz real de 20 APIs sobre Cefrium 0.22.0.
  */
-class ExtensionsActivity : Activity() {
+class ExtensionsActivity : androidx.activity.ComponentActivity() {
     private enum class Filter(val label: String) {
         ALL("Todas"),
         INSTALLED("Instaladas"),

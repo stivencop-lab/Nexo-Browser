@@ -80,8 +80,8 @@ internal class ShieldStore(private val dir: File) {
     }
 
     private fun persist() {
-        val text = synchronized(this) { data.toString() }
         writer.execute {
+            val text = synchronized(this) { data.toString() }
             runCatching {
                 val tmp = File(dir, "storage.json.tmp")
                 tmp.writeText(text)

@@ -26,6 +26,7 @@ internal class NetworkEngine {
         val simpleDomain: String?
     ) {
         var raw: String? = null
+        var trackingOnly = false
         @Volatile var regex: Pattern? = null
         @Volatile var dead = false
         val important: Boolean get() = "important" in flags
@@ -43,6 +44,7 @@ internal class NetworkEngine {
     private val exceptionTokenIndex = HashMap<String, MutableList<Rule>>()
     private val globalExceptionRules = ArrayList<Rule>()
     internal val plainDomains = HashSet<String>()
+    private val plainTrackers = HashSet<String>()
     private val popupRules = ArrayList<Rule>()
     private val popupExceptions = ArrayList<Rule>()
     private val importantRules = ArrayList<Rule>()
@@ -79,11 +81,17 @@ internal class NetworkEngine {
 
     fun init(adDomains: List<String>, trackerDomains: List<String>, popupDomains: List<String>): Int {
         var added = 0
-        for (entry in adDomains + trackerDomains + popupDomains) {
-            if (entry.isBlank()) continue
-            val source = entry.trim()
-            if (addRule(createRule(if (source.startsWith("@@")) source else "||$source^"))) added++
+        fun addDomains(domains: List<String>, tracking: Boolean) {
+            for (entry in domains) {
+                if (entry.isBlank()) continue
+                val source = entry.trim()
+                val rule = createRule(if (source.startsWith("@@")) source else "||$source^")
+                if (addRule(rule, tracking)) added++
+            }
         }
+        addDomains(adDomains, false)
+        addDomains(trackerDomains, true)
+        addDomains(popupDomains, false)
         return added
     }
 
@@ -217,10 +225,12 @@ internal class NetworkEngine {
         return Pattern.compile(expression, Pattern.CASE_INSENSITIVE)
     }
 
-    fun addRule(rule: Rule?): Boolean {
+    fun addRule(rule: Rule?, tracking: Boolean = false): Boolean {
         if (rule == null || rule.pattern.isEmpty()) return false
         if (badFilters.isNotEmpty() && rule.key in badFilters) return false
-        val key = (rule.raw ?: return false).lowercase()
+        rule.trackingOnly = tracking && !rule.isException
+        val raw = (rule.raw ?: return false).lowercase()
+        val key = if (rule.trackingOnly) "tracker:$raw" else raw
         val keys = ruleKeys ?: HashSet<String>().also { ruleKeys = it }
         if (!keys.add(key)) return false
         rule.raw = null
@@ -238,7 +248,7 @@ internal class NetworkEngine {
             return true
         }
         if (!rule.isException && rule.simpleDomain != null && rule.plain) {
-            plainDomains.add(rule.simpleDomain)
+            (if (rule.trackingOnly) plainTrackers else plainDomains).add(rule.simpleDomain)
             ruleTotal++
             return true
         }
@@ -337,11 +347,11 @@ internal class NetworkEngine {
         return matches ?: emptyList()
     }
 
-    private fun matchesPlainDomain(hostname: String): Boolean {
-        if (plainDomains.isEmpty()) return false
+    private fun matchesPlainDomain(hostname: String, tracking: Boolean): Boolean {
+        if (plainDomains.isEmpty() && (!tracking || plainTrackers.isEmpty())) return false
         var candidate = hostname
         while (candidate.isNotEmpty()) {
-            if (candidate in plainDomains) return true
+            if (candidate in plainDomains || (tracking && candidate in plainTrackers)) return true
             val dot = candidate.indexOf('.')
             if (dot == -1) return false
             candidate = candidate.substring(dot + 1)
@@ -359,7 +369,10 @@ internal class NetworkEngine {
         return candidates
     }
 
-    fun shouldBlock(url: String?, requestType: String, documentUrl: String?, countBlocked: Boolean = true): Boolean {
+    fun shouldBlock(
+        url: String?, requestType: String, documentUrl: String?, countBlocked: Boolean = true,
+        tracking: Boolean = true
+    ): Boolean {
         if (url.isNullOrEmpty()) return false
         val hostname = UrlParts.host(url) ?: return false
         val documentDomain = if (documentUrl.isNullOrEmpty()) "" else UrlParts.host(documentUrl) ?: return false
@@ -367,6 +380,7 @@ internal class NetworkEngine {
 
         if (requestType == "popup") {
             val matches = { rule: Rule ->
+                (tracking || !rule.trackingOnly) &&
                 (if (rule.simpleDomain != null) hostnameMatches(hostname, rule.simpleDomain) else test(rule, url)) &&
                     matchOptions(rule, "popup", isThirdParty, documentDomain)
             }
@@ -376,6 +390,7 @@ internal class NetworkEngine {
 
         // `$important` gana a cualquier excepción.
         for (rule in findDomainRules(hostname, importantTrie) + importantRules) {
+            if (!tracking && rule.trackingOnly) continue
             val hit = rule.simpleDomain != null || test(rule, url)
             if (hit && matchOptions(rule, requestType, isThirdParty, documentDomain)) {
                 if (countBlocked) recordBlocked()
@@ -390,13 +405,13 @@ internal class NetworkEngine {
             }
         }
 
-        if (matchesPlainDomain(hostname)) {
+        if (matchesPlainDomain(hostname, tracking)) {
             if (countBlocked) recordBlocked()
             return true
         }
 
         for (rule in findDomainRules(hostname, domainTrie)) {
-            if (matchOptions(rule, requestType, isThirdParty, documentDomain)) {
+            if ((tracking || !rule.trackingOnly) && matchOptions(rule, requestType, isThirdParty, documentDomain)) {
                 if (countBlocked) recordBlocked()
                 return true
             }
@@ -405,7 +420,8 @@ internal class NetworkEngine {
         for (token in tokens) {
             val rules = tokenIndex[token] ?: continue
             for (rule in rules) {
-                if (test(rule, url) && matchOptions(rule, requestType, isThirdParty, documentDomain)) {
+                if ((tracking || !rule.trackingOnly) && test(rule, url) &&
+                    matchOptions(rule, requestType, isThirdParty, documentDomain)) {
                     if (countBlocked) recordBlocked()
                     return true
                 }
@@ -424,7 +440,7 @@ internal class NetworkEngine {
     fun isDomainBlocked(hostname: String?): Boolean {
         val normalized = hostname.orEmpty().lowercase().removeSuffix(".")
         if (!isValidHostname(normalized)) return false
-        return matchesPlainDomain(normalized) || findDomainRules(normalized, domainTrie).isNotEmpty()
+        return matchesPlainDomain(normalized, tracking = true) || findDomainRules(normalized, domainTrie).isNotEmpty()
     }
 
     fun recordBlocked(amount: Long = 1) { blocked.addAndGet(amount.coerceAtLeast(1)) }
@@ -476,6 +492,21 @@ internal class NetworkEngine {
 
 /** Partes de una URL sin `java.net.URI`, que rechaza muchas URL reales. */
 internal object UrlParts {
+    private val sites = object : LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 512
+    }
+
+    fun siteOf(host: String): String {
+        val value = host.lowercase().trimEnd('.').trim('[', ']')
+        if (value.isEmpty() || ':' in value || value.all { it == '.' || it.isDigit() }) return value
+        return synchronized(sites) {
+            sites.getOrPut(value) {
+                runCatching { okhttp3.HttpUrl.Builder().scheme("https").host(value).build().topPrivateDomain() }
+                    .getOrNull() ?: value
+            }
+        }
+    }
+
     /** Host en minúsculas (`null` si no es una URL con autoridad). */
     fun host(url: String): String? {
         val scheme = url.indexOf("://")

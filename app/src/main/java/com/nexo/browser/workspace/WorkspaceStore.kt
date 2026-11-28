@@ -351,13 +351,7 @@ object WorkspaceStore {
                 .put("activeIndex", ws.activeIndex)
                 .put("tabs", tabsArr))
         }
-        val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(arr.toString(), Charsets.UTF_8)
-        if (file.exists()) file.delete()
-        if (!tmp.renameTo(file)) {
-            file.writeText(arr.toString(), Charsets.UTF_8)
-            tmp.delete()
-        }
+        com.nexo.browser.writeAtomicFile(file, arr.toString().toByteArray(Charsets.UTF_8))
     }
 
     private fun sanitizeName(raw: String?): String =

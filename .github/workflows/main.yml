@@ -153,7 +153,7 @@ jobs:
           set -euo pipefail
           ./gradlew :app:testDebugUnitTest -PnexoScreenshots \
             -PnexoShotsDir="$PWD/app/build/reports/ui-previews" \
-            --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest' --no-daemon --max-workers=4
+            --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest' --tests '*NexoFlowV4RegressionTest' --no-daemon --max-workers=4
           mkdir -p app/build/reports/ui-tests
           cp app/build/test-results/testDebugUnitTest/TEST-*.xml app/build/reports/ui-tests/
 
@@ -295,8 +295,11 @@ jobs:
           test -n "$VERSION_NAME"
           test -n "$VERSION_CODE"
 
-          TAG="${INPUT_TAG:-}"
-          if [ -z "$TAG" ]; then TAG="v${VERSION_NAME}"; fi
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="${INPUT_TAG:-v${VERSION_NAME}}"
+          fi
 
           if ! printf '%s' "$TAG" | grep -Eq '^v?[0-9A-Za-z._-]+$'; then
             echo "::error::Tag inválido: $TAG"
@@ -367,7 +370,7 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew :app:testDebugUnitTest -PnexoScreenshots \
-            --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest' --no-daemon --max-workers=4
+            --tests '*UiThemeRegressionTest' --tests '*SkillPracticeRegressionTest' --tests '*NexoFlowV4RegressionTest' --no-daemon --max-workers=4
 
       # La compilación corre SIN acceso a los secretos de firma.
       - name: Build release from committed source

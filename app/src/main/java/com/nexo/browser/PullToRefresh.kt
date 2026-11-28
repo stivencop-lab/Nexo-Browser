@@ -41,6 +41,7 @@ class PullRefreshLayout @JvmOverloads constructor(
     private var pulling = false
     private var refreshing = false
     private var animator: ValueAnimator? = null
+    private val refreshTimeout = Runnable { finishRefresh() }
 
     private val indicator = ImageView(context).apply {
         setImageResource(R.drawable.ic_nav_reload)
@@ -80,6 +81,7 @@ class PullRefreshLayout @JvmOverloads constructor(
 
     /** La página terminó de cargar: oculta el indicador si estaba girando. */
     fun finishRefresh() {
+        removeCallbacks(refreshTimeout)
         if (!refreshing) return
         refreshing = false
         hideIndicator()
@@ -168,9 +170,21 @@ class PullRefreshLayout @JvmOverloads constructor(
             android.view.HapticFeedbackConstants.VIRTUAL_KEY
         }
         performHapticFeedback(haptic)
+        removeCallbacks(refreshTimeout)
+        postDelayed(refreshTimeout, 2500L)
         onRefresh()
-        // Si la carga no avisa (página en caché), no dejar el indicador girando.
-        postDelayed({ finishRefresh() }, 2500L)
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(refreshTimeout)
+        refreshing = false
+        pulling = false
+        animator?.cancel()
+        animator = null
+        indicator.animate().cancel()
+        indicator.visibility = GONE
+        indicator.translationY = -size.toFloat()
+        super.onDetachedFromWindow()
     }
 
     private fun hideIndicator() {

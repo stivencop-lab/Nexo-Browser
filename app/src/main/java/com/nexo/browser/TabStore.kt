@@ -35,30 +35,30 @@ object TabStore {
 
         val legacy = BrowserPrefs.tabsJson(context) ?: return null
         writeNow(context.applicationContext, legacy)
-        BrowserPrefs.clearTabsJson(context)
+        val migrated = runCatching { String(file(context).readFully(), Charsets.UTF_8) == legacy }.getOrDefault(false)
+        if (migrated) BrowserPrefs.clearTabsJson(context) else lastWritten = null
         return legacy
     }
 
     fun flush() { io.submit {}.get() }
 
     /** [serialize] se ejecuta fuera del hilo principal. */
-    fun write(context: Context, serialize: () -> String) {
+    fun write(context: Context, serialize: () -> String): java.util.concurrent.Future<Boolean> {
         val app = context.applicationContext
-        io.execute {
-            val json = runCatching(serialize).getOrNull() ?: return@execute
-            if (json == lastWritten) return@execute
-            writeNow(app, json)
+        return io.submit<Boolean> {
+            val json = runCatching(serialize).getOrNull() ?: return@submit false
+            json == lastWritten || writeNow(app, json)
         }
     }
 
     @Synchronized
-    private fun writeNow(context: Context, json: String) {
+    private fun writeNow(context: Context, json: String): Boolean {
         val target = file(context)
-        val stream = runCatching { target.startWrite() }.getOrNull() ?: return
-        runCatching {
+        val stream = runCatching { target.startWrite() }.getOrNull() ?: return false
+        return runCatching {
             stream.write(json.toByteArray(Charsets.UTF_8))
             target.finishWrite(stream)
             lastWritten = json
-        }.onFailure { target.failWrite(stream) }
+        }.onFailure { target.failWrite(stream) }.isSuccess
     }
 }

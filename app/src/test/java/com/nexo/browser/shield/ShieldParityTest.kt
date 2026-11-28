@@ -70,6 +70,21 @@ class ShieldParityTest {
         assertEquals(listOf(".adsbygoogle"), cosmetic.lookup("example.org", listOf("adsbygoogle"), emptyList()))
     }
 
+    @Test fun trackingPreferencePreservesAdsAndUsesRegistrableSites() {
+        val network = build(mapOf(
+            "easyprivacy" to "||measurement.example^",
+            "easylist" to "||banner.example^"
+        )).network
+        val document = "https://news.example/"
+        assertTrue(network.shouldBlock("https://measurement.example/pixel", "image", document))
+        assertFalse(network.shouldBlock("https://measurement.example/pixel", "image", document, tracking = false))
+        assertTrue(network.shouldBlock("https://banner.example/pixel", "image", document, tracking = false))
+        assertEquals("example.co.uk", ShieldPolicy.siteOfHost("news.example.co.uk"))
+        assertEquals("a.github.io", ShieldPolicy.siteOfHost("news.a.github.io"))
+        assertEquals("10.0.1.2", ShieldPolicy.siteOfHost("10.0.1.2"))
+        assertEquals("127.0.1.2", ShieldPolicy.siteOfHost("127.0.1.2"))
+    }
+
     @Test fun downloadedListsFeedBothEnginesAndPlainDomainsNeedNoRuleObjects() {
         val text = listOf("[Adblock Plus 2.0]", "! comment", "||ads.tracker-one.example^", "||cdn.example.com/banners/\$image,third-party",
             "@@||cdn.example.com/banners/logo.png", "##.sidebar-ad", "news.example.org##.native-ad", "@@||fragile.example^\$generichide",

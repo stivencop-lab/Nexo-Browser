@@ -603,8 +603,7 @@ object CaptionsUi {
             "Si el video no trae subtítulos de texto, enviar su audio a Deepgram directamente. Apagado: Nexo pregunta antes.", audioAuto) {
             audioAuto = it
         })
-        val previousSpeakerDetection = BrowserPrefs.captionSpeakerDetection(activity)
-        var separateSpeakers = previousSpeakerDetection
+        var separateSpeakers = BrowserPrefs.captionSpeakerDetection(activity)
         body.addView(NexoUi.switchRow(activity, "Detectar cambios de hablante",
             "Marca los cambios de voz en el audio transcrito. Deepgram puede cobrar un suplemento.", separateSpeakers) {
             separateSpeakers = it
@@ -728,7 +727,7 @@ object CaptionsUi {
             BrowserPrefs.setAiTranslate2Model(activity, ai2ModelField.text.toString())
             BrowserPrefs.setAiTranslate2Endpoint(activity, if (ai2Provider == "custom") ai2EndpointField.text.toString() else "")
             BrowserPrefs.setAiTranslate2Key(activity, ai2KeyField.text.toString())
-            if (separateSpeakers != previousSpeakerDetection) LiveCaptions.reapply(activity)
+            LiveCaptions.reapply(activity)
             sheet.dismiss()
             onSaved()
         }, NexoUi.buttonParams(activity, 14f))

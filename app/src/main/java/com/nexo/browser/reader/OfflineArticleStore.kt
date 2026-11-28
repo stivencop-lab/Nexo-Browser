@@ -59,10 +59,53 @@ object OfflineArticleStore {
         }.take(maxChars).trim()
     }
 
+    data class ArticleInfo(val id: String, val url: String, val title: String, val siteName: String,
+        val readingMinutes: Int, val savedAtMs: Long)
+
+    data class SavedArticles(val articles: List<ArticleInfo>, val totalBytes: Long)
+    @Volatile private var cachedMetadata: Pair<File, SavedArticles>? = null
+
     private val ALLOWED_BLOCK_TYPES = setOf("h2", "h3", "p", "quote", "li", "code")
 
     fun directory(context: Context): File =
-        File(context.applicationContext.filesDir, FOLDER).apply { mkdirs() }
+        File(context.applicationContext.filesDir, FOLDER)
+
+    fun cached(dir: File): SavedArticles? = cachedMetadata?.takeIf { it.first == dir }?.second
+
+    @Synchronized
+    fun metadata(dir: File): SavedArticles {
+        cached(dir)?.let { return it }
+        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }.orEmpty()
+        val info = files.mapNotNull(::readInfo).sortedByDescending { it.savedAtMs }
+        return SavedArticles(info, files.sumOf { it.length() }).also { cachedMetadata = dir to it }
+    }
+
+    private fun readInfo(file: File): ArticleInfo? = runCatching {
+        if (file.length() > MAX_SINGLE_ARTICLE_BYTES) return null
+        var id = ""
+        var url = ""
+        var title = ""
+        var site = ""
+        var minutes = 1
+        var time = 0L
+        android.util.JsonReader(file.reader(Charsets.UTF_8)).use { reader ->
+            reader.beginObject()
+            while (reader.hasNext()) when (reader.nextName()) {
+                "id" -> id = reader.nextString()
+                "url" -> url = reader.nextString()
+                "title" -> title = reader.nextString()
+                "siteName" -> site = reader.nextString()
+                "readingMinutes" -> minutes = reader.nextInt()
+                "savedAtMs" -> time = reader.nextLong()
+                else -> reader.skipValue()
+            }
+            reader.endObject()
+        }
+        if (id.isBlank() || title.isBlank()) null else ArticleInfo(
+            id, url.takeIf(UrlSafety::isWebUrl).orEmpty(), sanitizeText(title, 200),
+            sanitizeText(site, 80), minutes.coerceAtLeast(1), time
+        )
+    }.getOrNull()
 
     fun idForUrl(url: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(url.trim().toByteArray(Charsets.UTF_8))
@@ -100,6 +143,7 @@ object OfflineArticleStore {
         )
     }
 
+    @Synchronized
     fun save(
         dir: File,
         article: ReaderArticle,
@@ -113,13 +157,8 @@ object OfflineArticleStore {
 
         val safeId = article.id.filter { it.isLetterOrDigit() }.take(32).ifBlank { idForUrl(article.title) }
         val target = File(dir, "$safeId.json")
-        val tmp = File(dir, "$safeId.json.tmp")
-        tmp.writeBytes(payload)
-        if (target.exists()) target.delete()
-        if (!tmp.renameTo(target)) {
-            target.writeBytes(payload)
-            tmp.delete()
-        }
+        com.nexo.browser.writeAtomicFile(target, payload)
+        cachedMetadata = null
         enforceQuota(dir, maxArticles, maxTotalBytes, protectedName = target.name)
         return true
     }
@@ -146,16 +185,20 @@ object OfflineArticleStore {
         return get(dir, idForUrl(clean)) ?: list(dir).firstOrNull { it.url == clean }
     }
 
+    @Synchronized
     fun delete(dir: File, id: String): Boolean {
         val safeId = id.filter { it.isLetterOrDigit() }.take(32)
         if (safeId.isEmpty()) return false
-        return File(dir, "$safeId.json").delete()
+        return File(dir, "$safeId.json").delete().also { if (it) cachedMetadata = null }
     }
 
-    fun clear(dir: File) {
-        if (!dir.isDirectory) return
-        dir.listFiles { f -> f.isFile && (f.name.endsWith(".json") || f.name.endsWith(".tmp")) }
-            ?.forEach { it.delete() }
+    @Synchronized
+    fun clear(dir: File): Boolean {
+        if (!dir.isDirectory) return true
+        val files = dir.listFiles { f -> f.isFile && (f.name.endsWith(".json") || f.name.endsWith(".tmp")) }
+            ?: return false
+        cachedMetadata = null
+        return files.map { it.delete() }.all { it }
     }
 
     fun totalBytes(dir: File): Long {
@@ -167,6 +210,7 @@ object OfflineArticleStore {
     private fun enforceQuota(dir: File, maxArticles: Int, maxTotalBytes: Long, protectedName: String) {
         val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.toMutableList() ?: return
         // Ordenar por fecha savedAtMs ascendente (más antiguos primero) para expulsión determinista.
+        if (files.size <= maxArticles && files.sumOf { it.length() } <= maxTotalBytes) return
         val timestamps = files.associateWith { file ->
             runCatching { JSONObject(file.readText(Charsets.UTF_8)).optLong("savedAtMs", file.lastModified()) }
                 .getOrDefault(file.lastModified())

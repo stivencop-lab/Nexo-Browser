@@ -38,6 +38,22 @@ object UrlSafety {
         return schemePattern.find(cleaned)?.groupValues?.get(1)?.lowercase()
     }
 
+    /** URI keys for suggestions and persisted links keep path and query case sensitive. */
+    fun navigationKey(url: String, suggestion: Boolean = false): String {
+        val clean = url.trim()
+        val uri = runCatching { URI(clean) }.getOrNull() ?: return clean.trimEnd('/')
+        val scheme = uri.scheme?.lowercase()
+        val authority = uri.rawAuthority
+        if (scheme !in externalSchemes || authority == null) return clean.trimEnd('/')
+        val host = authority.substringAfterLast('@').lowercase()
+        val path = uri.rawPath.orEmpty().trimEnd('/')
+        val query = uri.rawQuery?.let { "?$it" }.orEmpty()
+        if (suggestion) return host.removePrefix("www.") + path + query
+        val userInfo = uri.rawUserInfo?.let { "$it@" }.orEmpty()
+        val fragment = uri.rawFragment?.let { "#$it" }.orEmpty()
+        return "$scheme://$userInfo$host$path$query$fragment"
+    }
+
     fun isAppNavigable(url: String): Boolean = scheme(url) in appSchemes
 
     fun isExternallyOpenable(url: String): Boolean = scheme(url) in externalSchemes

@@ -26,7 +26,16 @@ object SiteIconStore {
     private val worker = Executors.newFixedThreadPool(3)
     private val main = Handler(Looper.getMainLooper())
     private val attempted = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val inFlight = java.util.concurrent.ConcurrentHashMap<String, MutableList<(Bitmap) -> Unit>>()
+    private class Lookup {
+        val budget = NativeImageNetwork.Budget(9_000)
+        val listeners = java.util.concurrent.CopyOnWriteArrayList<Subscriber>()
+    }
+
+    private class Subscriber(val deliver: (Bitmap) -> Unit) {
+        @Volatile var cancelled = false
+    }
+
+    private val inFlight = java.util.concurrent.ConcurrentHashMap<String, Lookup>()
     private val memory = object : LruCache<String, Bitmap>(3 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
@@ -58,65 +67,71 @@ object SiteIconStore {
     /** Icono ya cargado en memoria (para pintar sin esperas al reciclar tarjetas). */
     fun cached(origin: String): Bitmap? = key(origin)?.let { memory.get(it) }
 
-    fun load(context: Context, origin: String, onIcon: (Bitmap) -> Unit) {
-        val page = key(origin) ?: return
-        memory.get(page)?.let { onIcon(it); return }
-        // Varias tarjetas del mismo sitio comparten una sola búsqueda.
+    fun load(context: Context, origin: String, onIcon: (Bitmap) -> Unit): () -> Unit {
+        val page = key(origin) ?: return {}
+        memory.get(page)?.let { onIcon(it); return {} }
+        val listener = Subscriber(onIcon)
         var first = false
-        inFlight.compute(page) { _, list ->
-            (list ?: mutableListOf<(Bitmap) -> Unit>().also { first = true }).apply { add(onIcon) }
+        val flight = inFlight.compute(page) { _, existing ->
+            (existing ?: Lookup().also { first = true }).apply { listeners.add(listener) }
+        } ?: return {}
+        if (first) {
+            val dir = File(context.applicationContext.cacheDir, "site-icons")
+            worker.execute {
+                val icon = runCatching { find(dir, page, flight.budget) }.getOrNull()
+                if (!flight.budget.cancelled) {
+                    if (icon != null) memory.put(page, icon)
+                }
+                val listeners = if (inFlight.remove(page, flight)) flight.listeners.toList() else emptyList()
+                if (icon != null) main.post {
+                    listeners.forEach { if (!it.cancelled) runCatching { it.deliver(icon) } }
+                }
+            }
         }
-        if (!first) return
-        val dir = File(context.applicationContext.cacheDir, "site-icons")
-        val name = MessageDigest.getInstance("SHA-256").digest(page.toByteArray()).joinToString("") { "%02x".format(it) }
-        worker.execute {
-            val icon = runCatching { find(dir, name, page) }.getOrNull()
-            if (icon != null) memory.put(page, icon)
-            val callbacks = inFlight.remove(page).orEmpty()
-            if (icon != null) {
-                main.post { callbacks.forEach { runCatching { it(icon) } } }
+        return {
+            listener.cancelled = true
+            inFlight.computeIfPresent(page) { _, current ->
+                if (current !== flight || !current.listeners.remove(listener) || current.listeners.isNotEmpty()) current
+                else {
+                    current.budget.cancel()
+                    null
+                }
             }
         }
     }
 
-    private fun find(dir: File, name: String, page: String): Bitmap? {
+    private fun find(dir: File, page: String, budget: NativeImageNetwork.Budget): Bitmap? {
+        if (budget.exhausted) return null
         dir.mkdirs()
+        val name = MessageDigest.getInstance("SHA-256").digest(page.toByteArray()).joinToString("") { "%02x".format(it) }
         val cached = File(dir, "$name.png")
         if (cached.isFile && cached.length() <= MAX_ICON_BYTES) {
-            decode(cached.readBytes())?.let { return it }
+            runCatching { decode(cached.readBytes()) }.getOrNull()?.let { return it }
         }
         val now = System.currentTimeMillis()
-        val previous = attempted.putIfAbsent(page, now)
-        if (previous != null) {
-            if (now - previous < 3_600_000L || !attempted.replace(page, previous, now)) return null
-        }
+        if (now - (attempted[page] ?: 0L) < 3_600_000L) return null
         if (attempted.size > 250) attempted.entries.removeIf { now - it.value > 3_600_000L }
 
-        val (finalUrl, html) = fetchPage(page) ?: (page to "")
+        val resource = runCatching {
+            NativeImageNetwork.fetch(page, MAX_PAGE_BYTES, "text/html",
+                sameSiteOnly = true, truncate = true, budget = budget)
+        }.getOrNull()
+        val finalUrl = resource?.url ?: page
+        val html = resource?.bytes?.let { String(it, Charsets.UTF_8) }.orEmpty()
         for (candidate in SiteIconDiscovery.candidates(html, finalUrl)) {
-            val bytes = fetch(candidate, MAX_ICON_BYTES, accept = "image/*", sameSiteOnly = false) ?: continue
-            val bitmap = decode(bytes.second) ?: continue
-            if (bitmap.width < 8 || bitmap.height < 8) continue
-            val scaled = Bitmap.createScaledBitmap(bitmap, ICON_PX, ICON_PX, true)
+            if (budget.exhausted) break
+            val icon = runCatching {
+                NativeImageNetwork.fetch(candidate, MAX_ICON_BYTES, "image/*", budget = budget)?.let { decode(it.bytes) }
+            }.getOrNull() ?: continue
+            if (icon.width < 8 || icon.height < 8) continue
+            val scaled = Bitmap.createScaledBitmap(icon, ICON_PX, ICON_PX, true)
             runCatching { cached.outputStream().use { scaled.compress(Bitmap.CompressFormat.PNG, 100, it) } }
             dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(200)?.forEach { it.delete() }
             return scaled
         }
+        if (!budget.cancelled) attempted[page] = now
         return null
     }
-
-    /** Página principal del sitio (solo su cabecera importa), siguiendo redirecciones del mismo sitio. */
-    private fun fetchPage(page: String): Pair<String, String>? {
-        val (url, bytes) = fetch(page, MAX_PAGE_BYTES, accept = "text/html", sameSiteOnly = true, truncate = true) ?: return null
-        return url to String(bytes, Charsets.UTF_8)
-    }
-
-    /**
-     * GET anónimo con límite de tamaño. Sigue hasta 3 redirecciones HTTPS
-     * (del mismo sitio si [sameSiteOnly]). [truncate]: lee solo el principio.
-     */
-    private fun fetch(start: String, limit: Int, accept: String, sameSiteOnly: Boolean, truncate: Boolean = false): Pair<String, ByteArray>? =
-        NativeImageNetwork.fetch(start, limit, accept, sameSiteOnly, truncate)?.let { it.url to it.bytes }
 
     private fun decode(bytes: ByteArray): Bitmap? {
         val payload = IconPayload.pngOrImage(bytes) ?: return null

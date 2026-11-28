@@ -46,7 +46,7 @@ import com.nexo.browser.engine.EngineSession
 import com.nexo.browser.engine.EngineView
 
 class MainActivity :
-    Activity(),
+    androidx.activity.ComponentActivity(),
     TabManager.Listener,
     BrowserMediaController.Listener,
     LiveCaptions.Listener,
@@ -176,6 +176,9 @@ class MainActivity :
     private lateinit var findBar: View
     private lateinit var findInput: EditText
     private lateinit var findCount: TextView
+    private var findGeneration = 0L
+    private var findDocument = -1L
+    private var findPrivacyScope = ""
 
     /** Última miniatura automática por pestaña: dirección y momento. */
     private val lastAutoPreview = mutableMapOf<String, Pair<String, Long>>()
@@ -779,6 +782,7 @@ class MainActivity :
         }
         setDockScrollHidden(false)
         setChromeCompact(false)
+        findDocument = TabManager.activeTab()?.navigationEpoch ?: -1L
         findBar.visibility = View.VISIBLE
         findCount.text = ""
         if (findInput.hasFocus()) showKeyboard(findInput) else findInput.requestFocus()
@@ -790,7 +794,8 @@ class MainActivity :
     private fun hideFindBar() {
         if (findBar.visibility != View.VISIBLE) return
         findBar.visibility = View.GONE
-        runCatching { TabManager.activeSession()?.finder?.clear() }
+        findGeneration++
+        runCatching { attachedSession?.finder?.clear() }
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(findInput.windowToken, 0)
         findInput.clearFocus()
@@ -798,7 +803,10 @@ class MainActivity :
     }
 
     private fun findInPage(backwards: Boolean = false, restart: Boolean = false) {
-        val finder = TabManager.activeSession()?.finder ?: return
+        if (findBar.visibility != View.VISIBLE) return
+        val session = attachedSession ?: return
+        val finder = session.finder
+        val generation = ++findGeneration
         val term = findInput.text?.toString().orEmpty()
         if (term.isEmpty()) {
             runCatching { finder.clear() }
@@ -809,6 +817,8 @@ class MainActivity :
             // Repetir el mismo texto avanza al siguiente resultado.
             if (restart) finder.clear()
             finder.find(term, backwards) { result ->
+                if (generation != findGeneration || attachedSession !== session ||
+                    findBar.visibility != View.VISIBLE || isDestroyed) return@find
                 val p = ThemeManager.palette(this)
                 findCount.text = when {
                     result == null -> ""
@@ -834,7 +844,7 @@ class MainActivity :
     private fun navigateOmnibox() {
         val raw = omnibox.text?.toString().orEmpty().trim()
         if (raw.startsWith("@")) {
-            val localPick = suggestions.firstLocalAction()
+            val localPick = suggestions.firstLocalAction(raw)
             if (localPick != null) {
                 handleCommandSuggestion(localPick)
             } else {
@@ -969,7 +979,7 @@ class MainActivity :
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            if (onPage && resources.configuration.screenWidthDp < 400) {
+            if (onPage && !pillReloadButton.isShown && !reloadButton.isShown) {
                 val touchTarget = resources.getDimensionPixelSize(R.dimen.touch_target)
                 addView(ImageButton(this@MainActivity).apply {
                     setImageResource(R.drawable.ic_nav_reload)
@@ -1260,7 +1270,7 @@ class MainActivity :
             if (bitmap == null) {
                 Toast.makeText(this, "No se pudo capturar la página", Toast.LENGTH_SHORT).show()
             } else {
-                DownloadStore.saveBitmap(this, bitmap, "Captura ${displayUrl(tab.url)}") { _, message ->
+                DownloadStore.saveBitmap(this, bitmap, "Captura ${displayUrl(tab.url)}", SitePermissionStore.scope(tab)) { _, message ->
                     Toast.makeText(this, message, Toast.LENGTH_LONG).show()
                 }
             }
@@ -1283,7 +1293,7 @@ class MainActivity :
         Toast.makeText(this, "Generando PDF…", Toast.LENGTH_SHORT).show()
         session.saveAsPdf { stream, error ->
             when {
-                stream != null -> DownloadStore.saveStream(this, stream, name, "application/pdf", tab.url) { _, message ->
+                stream != null -> DownloadStore.saveStream(this, stream, name, "application/pdf", tab.url, SitePermissionStore.scope(tab)) { _, message ->
                     Toast.makeText(this, message, Toast.LENGTH_LONG).show()
                 }
                 error != null -> Toast.makeText(this, "No se pudo generar el PDF: ${error.message ?: "error"}", Toast.LENGTH_LONG).show()
@@ -1305,7 +1315,13 @@ class MainActivity :
 
     private fun openScreen(screen: Class<out Activity>) {
         suppressAutoPipOnce = true
-        startActivity(Intent(this, screen))
+        val intent = Intent(this, screen)
+        if (screen == DownloadsActivity::class.java) {
+            SitePermissionStore.scope(TabManager.activeTab())?.let {
+                intent.putExtra(DownloadsActivity.EXTRA_PRIVATE_SCOPE, it)
+            }
+        }
+        startActivity(intent)
     }
 
     /**
@@ -1334,6 +1350,7 @@ class MainActivity :
         }
         val tabId = tab.id
         val url = tab.url
+        val epoch = tab.navigationEpoch
         val settled = java.util.concurrent.atomic.AtomicBoolean(false)
         val timeout = if (onCaptured != null) {
             Runnable { if (settled.compareAndSet(false, true)) onCaptured() }.also {
@@ -1342,7 +1359,8 @@ class MainActivity :
         } else null
         engineView.capture { bitmap ->
             if (bitmap != null) {
-                if (attachedSession === session && tab.session === session && tab.id == tabId) {
+                if (attachedSession === session && tab.session === session && tab.url == url &&
+                    tab.navigationEpoch == epoch && !isDestroyed) {
                     TabPreviewStore.save(applicationContext, tabId, bitmap)
                     lastAutoPreview[tabId] = url to android.os.SystemClock.elapsedRealtime()
                 } else {
@@ -1376,7 +1394,12 @@ class MainActivity :
     }
 
     /** Mantener pulsado un enlace o imagen: hoja con las acciones disponibles. */
-    override fun onContextElement(element: EngineContextElement) {
+    override fun onContextElement(tab: BrowserTab, element: EngineContextElement) {
+        val origin = tab.session ?: return
+        fun openInSameContext(url: String) {
+            if (tab.session !== origin || TabManager.activeTab() !== tab) return
+            TabManager.createTab(url, tab.isPrivate, groupName = tab.groupName, burnerId = tab.burnerId, networkProfile = tab.networkProfile)
+        }
         val link = element.linkUri.orEmpty()
         val image = element.srcUri.orEmpty()
         if (link.isBlank() && image.isBlank()) return
@@ -1387,24 +1410,28 @@ class MainActivity :
 
         if (link.isNotBlank()) {
             actions += SheetAction(R.drawable.ic_menu_open, "Abrir en nueva pestaña") {
-                TabManager.createTab(link)
+                openInSameContext(link)
             }
-            actions += SheetAction(R.drawable.ic_menu_private, "Abrir en pestaña privada") {
-                TabManager.createTab(link, isPrivate = true)
+            if (!tab.isPrivate) {
+                actions += SheetAction(R.drawable.ic_menu_private, "Abrir en pestaña privada") {
+                    if (TabManager.activeSession() === origin) TabManager.createTab(link, isPrivate = true)
+                }
             }
-            actions += SheetAction(R.drawable.ic_menu_link, "Abrir aquí") { TabManager.navigate(link) }
+            actions += SheetAction(R.drawable.ic_menu_link, "Abrir aquí") {
+                if (TabManager.activeSession() === origin) TabManager.navigate(link)
+            }
             actions += SheetAction(R.drawable.ic_menu_copy, "Copiar enlace") { copyText("Enlace", link) }
             actions += SheetAction(R.drawable.ic_menu_share, "Compartir enlace") { shareText(link) }
-            actions += SheetAction(R.drawable.ic_menu_download, "Descargar enlace") { downloadUrl(link) }
+            actions += SheetAction(R.drawable.ic_menu_download, "Descargar enlace") { if (TabManager.activeSession() === origin) downloadUrl(tab, link) }
         }
         if (image.isNotBlank()) {
             actions += SheetAction(R.drawable.ic_menu_image, "Abrir imagen en nueva pestaña") {
-                TabManager.createTab(image)
+                openInSameContext(image)
             }
             actions += SheetAction(R.drawable.ic_menu_copy, "Copiar dirección de la imagen") {
                 copyText("Imagen", image)
             }
-            actions += SheetAction(R.drawable.ic_menu_download, "Descargar imagen") { downloadUrl(image) }
+            actions += SheetAction(R.drawable.ic_menu_download, "Descargar imagen") { if (TabManager.activeSession() === origin) downloadUrl(tab, image) }
         }
 
         val title = element.title?.takeIf { it.isNotBlank() }
@@ -1446,8 +1473,13 @@ class MainActivity :
         Toast.makeText(this, "Copiado", Toast.LENGTH_SHORT).show()
     }
 
-    private fun downloadUrl(url: String) {
+    private fun downloadUrl(tab: BrowserTab, url: String) {
+        val routed = tab.burnerId != null || tab.networkProfile?.type?.let { it != "direct" } == true
         if (ExtensionManager.isRemoteExtensionPackage(url)) {
+            if (routed) {
+                Toastish.show(this, "La instalación usa una conexión independiente de la identidad Burner.")
+                return
+            }
             Toast.makeText(this, "Abriendo instalador de extensión…", Toast.LENGTH_SHORT).show()
             ExtensionManager.installUrl(this, url) { _, message ->
                 runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
@@ -1462,28 +1494,25 @@ class MainActivity :
 
         // Descargar con el gestor de Nexo (cookies del perfil, modo privado) en lugar de
         // DownloadManager, que no tiene acceso a la sesión del navegador.
-        val tab = TabManager.activeTab()
-        if (tab != null) {
-            if (com.nexo.browser.shield.MalwareScan.blocksDownload(this, tab, url)) {
-                Toast.makeText(this, "Descarga bloqueada: el sitio o el archivo instalador presenta riesgo alto.", Toast.LENGTH_LONG).show()
-                return
-            }
-            if (com.nexo.browser.shield.MalwareScan.warnsDownload(this, tab, url)) {
-                Toast.makeText(this, "Atención: estás descargando un instalador desde un origen con señales sospechosas.", Toast.LENGTH_LONG).show()
-            }
+        if (routed) {
+            val session = tab.session as? com.nexo.browser.engine.cefrium.CefriumEngineSession
+            if (session?.startDownload(url) != true) Toastish.show(this, "No se pudo iniciar la descarga con la ruta de esta pestaña.")
+            return
         }
-        if(tab?.networkProfile?.type?.let { it != "direct" } == true) {
-            Toast.makeText(this,"Esta descarga requiere una conexión independiente. Ábrela directamente en la pestaña para conservar su ruta.",Toast.LENGTH_LONG).show();return
+        if (com.nexo.browser.shield.MalwareScan.blocksDownload(this, tab, url)) {
+            Toast.makeText(this, "Descarga bloqueada: el sitio o el archivo instalador presenta riesgo alto.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (com.nexo.browser.shield.MalwareScan.warnsDownload(this, tab, url)) {
+            Toast.makeText(this, "Atención: estás descargando un instalador desde un origen con señales sospechosas.", Toast.LENGTH_LONG).show()
         }
         Toast.makeText(this, "Descarga iniciada", Toast.LENGTH_SHORT).show()
         DownloadStore.download(
             this,
             url,
-            isPrivate = tab?.isPrivate == true,
-            referrer = tab?.url,
-            parallel = tab?.burnerId == null,
-            split = BrowserPrefs.parallelDownloads(this),
-            burnerId = tab?.burnerId
+            isPrivate = tab.isPrivate,
+            referrer = tab.url,
+            split = BrowserPrefs.parallelDownloads(this)
         ) { _, message ->
             runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
         }
@@ -1960,6 +1989,12 @@ class MainActivity :
     }
 
     override fun onActiveTabChanged(tab: BrowserTab, session: EngineSession) {
+        val scope = tab.burnerId?.let { "burner:$it" } ?: if (tab.isPrivate) "private" else "normal"
+        if (findPrivacyScope != scope) {
+            hideFindBar()
+            findInput.text?.clear()
+            findPrivacyScope = scope
+        }
         if (attachedSession !== session) {
             hideFindBar()
             setDockScrollHidden(false)
@@ -1980,6 +2015,8 @@ class MainActivity :
             applyChromeVisibility()
         }
         renderTab(tab)
+        renderPageProgress(tab.loadProgress, tab.isLoading)
+        if (!tab.isLoading) browserFrame.finishRefresh()
         // Si esta pestaña fue marcada como peligrosa mientras cargaba en segundo plano, mostrar el aviso ahora.
         com.nexo.browser.shield.MalwareScan.resultFor(tab)?.takeIf {
             it.decision.block && !com.nexo.browser.shield.MalwareScan.isBypassed(it.origin)
@@ -2063,6 +2100,7 @@ class MainActivity :
 
     override fun onTabChanged(tab: BrowserTab) {
         if (tab.id == TabManager.activeTab()?.id) {
+            if (findDocument != tab.navigationEpoch) hideFindBar()
             renderTab(tab)
             if (!tab.isLoading && !BrowserPrefs.isNexoHome(tab.url)) {
                 scheduleIdlePreview(tab, delayMs = 950L)
@@ -2073,12 +2111,16 @@ class MainActivity :
     override fun onProgress(tab: BrowserTab, progress: Int, loading: Boolean) {
         if (tab.id != TabManager.activeTab()?.id) return
         webBackdrop?.markDirty()
-        this.progress.progress = progress
-        this.progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
+        renderPageProgress(progress, loading)
         if (!loading) {
             browserFrame.finishRefresh()
             scheduleIdlePreview(tab)
         }
+    }
+
+    private fun renderPageProgress(value: Int, loading: Boolean) {
+        progress.progress = value
+        progress.visibility = if (loading && !immersive) View.VISIBLE else View.GONE
     }
 
     override fun onTabCountChanged(count: Int) {
@@ -2341,6 +2383,10 @@ class MainActivity :
         super.onPause()
     }
 
+    private fun stopDeviceCaptions(session: EngineSession?) {
+        if (session != null && LiveCaptions.usingDeviceAudio(session)) LiveCaptions.stop(session)
+    }
+
     override fun onStop() {
         if (MigrationMode.enabled(this)) { super.onStop(); return }
         (engineView as? com.nexo.browser.engine.cefrium.CefriumPageView)?.onHostStop()
@@ -2349,7 +2395,7 @@ class MainActivity :
 
         if (!isInPictureInPictureMode) {
             val tab = TabManager.activeTab()
-            tab?.session?.takeIf { LiveCaptions.usingDeviceAudio(it) }?.let { LiveCaptions.stop(it) }
+            stopDeviceCaptions(tab?.session)
 
             ExtensionManager.sendLifecycle(tab?.session, false)
             wasBackgrounded = true
@@ -2920,6 +2966,7 @@ class MainActivity :
             activityStopped -> {
                 // El usuario cerró la ventana mini (la X o arrastrándola).
                 pipPlaybackWasActive = false
+                stopDeviceCaptions(tab?.session)
                 ExtensionManager.sendLifecycle(tab?.session, false)
                 wasBackgrounded = true
                 if (tab != null && BrowserPrefs.backgroundMedia(this) &&
@@ -2996,8 +3043,7 @@ class MainActivity :
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == PlaybackAudioCapture.REQUEST) { PlaybackAudioCapture.result(this,resultCode,data); return }
-        // Intents que abrió Chromium (cámara, documentos, selector nativo de archivos): MainActivity no es una ComponentActivity.
-        com.nexo.browser.engine.Engines.current.onActivityResult(requestCode, resultCode, data)
+        // El registro de ComponentActivity entrega los resultados del selector de Cefrium.
     }
 
     /** Aplica un cambio de tema en vivo (desde el agente de Nexo AI o el cambio de modo del sistema). */
@@ -3036,13 +3082,18 @@ class MainActivity :
         val nextKey = ThemeManager.themeKey(this, newConfig)
         if (themeKey.isNotBlank() && themeKey != nextKey) {
             syncLiveTheme(newConfig)
-        } else if (BrowserPrefs.isNexoHome(TabManager.activeTab()?.url)) {
-            startPage.render(TabManager.activeTab()?.isPrivate == true)
+        } else {
+            styleChromeGlass()
+            if (BrowserPrefs.isNexoHome(TabManager.activeTab()?.url)) {
+                startPage.render(TabManager.activeTab()?.isPrivate == true)
+            }
         }
     }
 
     override fun onDestroy() {
         if (MigrationMode.enabled(this)) { super.onDestroy(); return }
+        findGeneration++
+        runCatching { attachedSession?.finder?.clear() }
         aiControllerObserver?.let { com.nexo.browser.ai.NexoAiController.unobserve(it) }
         aiControllerObserver = null
         com.nexo.browser.shield.MalwareScan.removeObserver(malwareObserver)
@@ -3054,6 +3105,7 @@ class MainActivity :
         webBackdrop?.setRunning(false)
         if (::omnibox.isInitialized) omniboxKeyboard.cancel()
         if (::findInput.isInitialized) findKeyboard.cancel()
+        if (::suggestions.isInitialized) suggestions.dispose()
         PageBridge.onScrollDirection = null
         unregisterPredictiveBack()
         PerfLog.detach(this)

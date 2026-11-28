@@ -86,17 +86,36 @@ internal object CefriumProfiles {
     }
 
     /** Cookies, almacenamiento de cada sitio y service workers de [profile]. */
-    fun wipe(profile: CefriumProfile, done: () -> Unit) {
-        val result = runCatching {
-            profile.cookieManager.removeAllCookies {
-                profile.listSiteData { sites ->
-                    if (sites.isEmpty()) { done(); return@listSiteData }
-                    var left = sites.size
-                    sites.forEach { site -> profile.clearSiteData(site.site) { if (--left == 0) done() } }
-                }
-            }
+    fun wipe(profile: CefriumProfile, done: (Boolean) -> Unit) {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val settled = java.util.concurrent.atomic.AtomicBoolean()
+        val timeout = Runnable { if (settled.compareAndSet(false, true)) done(false) }
+        fun finish(ok: Boolean) {
+            if (!settled.compareAndSet(false, true)) return
+            main.removeCallbacks(timeout)
+            main.post { done(ok) }
         }
-        if (result.isFailure) done()
+        main.postDelayed(timeout, 15_000L)
+        runCatching {
+            profile.cookieManager.removeAllCookies {
+                runCatching {
+                    profile.listSiteData { sites ->
+                        if (sites.isEmpty()) {
+                            finish(true)
+                            return@listSiteData
+                        }
+                        val remaining = java.util.concurrent.atomic.AtomicInteger(sites.size)
+                        sites.forEach { site ->
+                            runCatching {
+                                profile.clearSiteData(site.site) {
+                                    if (remaining.decrementAndGet() == 0) finish(true)
+                                }
+                            }.onFailure { finish(false) }
+                        }
+                    }
+                }.onFailure { finish(false) }
+            }
+        }.onFailure { finish(false) }
     }
 
     /**

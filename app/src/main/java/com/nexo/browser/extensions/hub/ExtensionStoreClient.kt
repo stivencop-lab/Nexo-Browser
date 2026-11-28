@@ -62,6 +62,7 @@ object ExtensionStoreClient {
             .followRedirects(false)
             .followSslRedirects(false)
             .connectTimeout(15, TimeUnit.SECONDS)
+            .callTimeout(120, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .build()

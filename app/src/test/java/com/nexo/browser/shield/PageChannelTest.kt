@@ -161,4 +161,20 @@ class PageChannelTest {
     @Test fun maxRequestAccommodatesAudioChunks() {
         assertTrue(PageChannel.MAX_REQUEST >= 512 * 1024)
     }
+    @Test fun mainFrameKeepsItsWaiterWhenSecondaryFramesFillTheChannel() {
+        val channel = PageChannel()
+        var mainReply: String? = null
+        val retries = mutableListOf<String>()
+        repeat(PageChannel.MAX_WAITERS) { index ->
+            channel.awaitEvents(0, "frame_$index") { retries += it }
+        }
+        channel.awaitEvents(0, "main", mainFrame = true) { mainReply = it }
+        assertEquals(1500, JSONObject(retries.single()).optInt("retryAfter"))
+        retries.clear()
+        channel.awaitEvents(0, "new_subframe") { retries += it }
+        assertEquals(1500, JSONObject(retries.single()).optInt("retryAfter"))
+        channel.push("update")
+        assertEquals(listOf("update"), events(requireNotNull(mainReply)))
+    }
+
 }

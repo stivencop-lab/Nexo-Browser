@@ -26,6 +26,7 @@ data class BrowserTab(
 ) {
     internal var inactiveSince: Long? = null
     internal var isFrozen: Boolean = false
+    internal var loadProgress: Int = 0
     internal var lastScrollY: Int = 0
     internal var recoverScroll: Pair<String, Int>? = null
 

@@ -1,6 +1,7 @@
 package com.nexo.browser
 
 import com.nexo.browser.engine.EngineSession
+import java.util.Collections
 import java.util.WeakHashMap
 
 /**
@@ -15,10 +16,8 @@ import java.util.WeakHashMap
  * huella llegan con el puente de páginas.
  */
 object TabRouting {
-    private val pending = WeakHashMap<EngineSession, Boolean>()
-    private val failed = WeakHashMap<EngineSession, Boolean>()
-    private val awaiting = WeakHashMap<EngineSession, Boolean>()
-    private val purge = WeakHashMap<EngineSession, Boolean>()
+    private enum class State { PREPARING, BLOCKED }
+    private val states = Collections.synchronizedMap(WeakHashMap<EngineSession, State>())
 
     /** Avisos al usuario (sustituible en pruebas JVM, sin Android). */
     internal var notify: (String) -> Unit = { TabManager.notifyMessage(it) }
@@ -28,27 +27,23 @@ object TabRouting {
         com.nexo.browser.engine.cefrium.CefriumProfiles.applyRoute(id, route)
     }
 
-    fun initialize() = Unit
+    fun blocked(session: EngineSession) = states[session] == State.BLOCKED
+    fun preparing(session: EngineSession) = states.containsKey(session)
+    fun reserve(session: EngineSession) { states[session] = State.PREPARING }
+    fun forget(session: EngineSession) { states.remove(session) }
 
-    fun blocked(session: EngineSession) = failed.containsKey(session)
-    fun preparing(session: EngineSession) = pending.containsKey(session) || failed.containsKey(session)
-    fun synthetic(session: EngineSession) = preparing(session) || awaiting.containsKey(session)
-    fun reserve(session: EngineSession) { pending[session] = true; awaiting[session] = true }
-
-    /** Sin página de arranque: Chromium no necesita preparar la pestaña. */
-    fun bootstrap(session: EngineSession, url: String) = false
-    fun targetStarted(session: EngineSession) { awaiting.remove(session) }
-    fun targetFinished(session: EngineSession) { if (purge.remove(session) == true) session.purgeHistory() }
-    fun forget(session: EngineSession) { pending.remove(session); failed.remove(session); awaiting.remove(session); purge.remove(session) }
-
-    fun prepare(tab: BrowserTab, session: EngineSession, preserveHistory: Boolean = false, ready: () -> Unit) {
+    fun prepare(tab: BrowserTab, session: EngineSession, ready: () -> Unit) {
+        reserve(session)
         val profile = tab.networkProfile
-        if (profile == null && tab.burnerId == null) { ready(); return }
         val burner = tab.burnerId
         val proxied = profile != null && profile.type != "direct"
-        if (proxied && (burner == null || !applyBurnerRoute(burner, profile))) {
-            pending.remove(session)
-            failed[session] = true
+        val routeReady = when {
+            burner == null -> !proxied
+            profile?.type == "invalid" -> false
+            else -> applyBurnerRoute(burner, profile ?: TabNetworkProfile())
+        }
+        if (!routeReady) {
+            states[session] = State.BLOCKED
             tab.networkState = "Ruta bloqueada"
             tab.isLoading = false
             notify(
@@ -58,11 +53,6 @@ object TabRouting {
             )
             return
         }
-        // Burner sin proxy: su perfil vuelve a conexión directa (por si antes tuvo uno).
-        if (burner != null && !proxied) applyBurnerRoute(burner, TabNetworkProfile())
-        // Sin página de arranque intermedia: no hay historial sintético que borrar.
-        pending.remove(session)
-        awaiting.remove(session)
         tab.networkState = when {
             proxied -> "Burner por ${if (profile.type == "socks") "SOCKS" else "HTTP"} ${profile.host}:${profile.port}"
             tab.burnerId != null -> "Burner aislado"
@@ -71,6 +61,7 @@ object TabRouting {
         if (profile != null && (profile.latency > 0 || profile.latitude != null)) {
             notify("El retardo y la ubicación simulada aún no están disponibles en esta versión de Nexo.")
         }
+        states.remove(session)
         ready()
     }
 }

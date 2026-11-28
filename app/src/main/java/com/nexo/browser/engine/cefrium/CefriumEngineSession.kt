@@ -113,6 +113,9 @@ class CefriumEngineSession internal constructor(
     private var storeDesktopOptOut = false
     private var appliedDesktop: Boolean? = null
     private var lastUpgradedHttpUrl: String? = null
+    internal var navigationIsGet: Boolean = true
+        private set
+    private val downloads = Downloads()
     private var mainFrameError = false
     private var sslNoticeFor: String? = null
     private var unresponsiveNotified = false
@@ -194,7 +197,7 @@ class CefriumEngineSession internal constructor(
      * historial) si su Activity se destruyó o el navegador se cerró. Devuelve el navegador vivo.
      */
     internal fun ensureBrowser(): CefriumBrowser? {
-        if (closed || !opened) return liveBrowser()
+        if (closed || !opened || (!isPrivate && UpgradeImport.pending)) return liveBrowser()
         val activity = CefriumEngine.activity() ?: return liveBrowser()
         val current = browser
         if (current != null) {
@@ -253,7 +256,7 @@ class CefriumEngineSession internal constructor(
         applyDarkBoot(target)
         target.setNavigationClient(Navigation())
         target.setChromeClient(Chrome())
-        target.setDownloadClient(Downloads())
+        target.setDownloadClient(downloads)
         runCatching { target.setPrintHandler { handlePrintRequest(target) } }
         runCatching { target.setTextSelectionActionModeCallback(createTextSelectionCallback(target)) }
         cookieFiltering = PhantomShield.filtersCookies()
@@ -329,6 +332,7 @@ class CefriumEngineSession internal constructor(
                 target.close()
             }
         }
+        downloads.discardAll()
         // Chromium puede dejar vivo el proceso del navegador cerrado: liberarlo (nunca toca uno en uso).
         runCatching { CefriumBrowser.reapUnusedRenderers() }
     }
@@ -343,7 +347,7 @@ class CefriumEngineSession internal constructor(
             target.setPullToRefreshEnabled(BrowserPrefs.pullToRefresh(context))
             target.setPinchToZoomEnabled(true)
             applyZoomFor(target, currentUrl)
-            com.nexo.browser.SitePermissionStore.applyAllToBrowser(context, target, currentUrl)
+            if (!isPrivate) com.nexo.browser.SitePermissionStore.applyAllToBrowser(context, target, currentUrl)
             lastDark = null
             applyCanvasBackground(target)
             applyDarkBoot(target)
@@ -401,7 +405,10 @@ class CefriumEngineSession internal constructor(
     }
 
     fun setSiteContentSetting(origin: String, permission: CefriumPermission, decision: com.nexo.browser.SitePermissionStore.Decision) {
-        com.nexo.browser.SitePermissionStore.set(appContext, origin, permission, decision, liveBrowser())
+        com.nexo.browser.SitePermissionStore.set(
+            appContext, origin, permission, decision, liveBrowser(),
+            com.nexo.browser.SitePermissionStore.scope(isPrivate, params.contextId)
+        )
     }
 
     /** Cuenta las cookies reales almacenadas en el perfil de Cefrium para [url]. */
@@ -537,17 +544,24 @@ class CefriumEngineSession internal constructor(
         }
 
     /** Elimina cookies y datos locales (storage, caché de origen) de [url] en el perfil de Cefrium. */
-    fun clearSiteDataAndCookies(url: String, onDone: () -> Unit) {
+    fun clearSiteDataAndCookies(url: String, onDone: (Boolean) -> Unit) {
         val origin = com.nexo.browser.SiteControlModel.originOf(url)
-        if (origin == null) { onDone(); return }
-        val run = runCatching {
-            profile.cookieManager.removeCookies(url, null) { _ ->
-                runCatching {
-                    profile.clearSiteData(origin) { main.post(onDone) }
-                }.onFailure { main.post(onDone) }
-            }
+        if (origin == null || closed) { onDone(false); return }
+        val finished = java.util.concurrent.atomic.AtomicBoolean()
+        val timeout = Runnable { if (finished.compareAndSet(false, true)) onDone(false) }
+        fun complete(ok: Boolean) {
+            if (!finished.compareAndSet(false, true)) return
+            main.removeCallbacks(timeout)
+            main.post { onDone(ok) }
         }
-        if (run.isFailure) main.post(onDone)
+        main.postDelayed(timeout, 10_000)
+        runCatching {
+            profile.cookieManager.removeCookies(url, null) { count ->
+                if (!finished.get()) runCatching {
+                    profile.clearSiteData(origin) { complete(count != null && count >= 0) }
+                }.onFailure { complete(false) }
+            }
+        }.onFailure { complete(false) }
     }
 
     internal fun lastBlockedSslHost(): String? = sslNoticeFor
@@ -574,7 +588,11 @@ class CefriumEngineSession internal constructor(
     // --- EngineSession ---
 
     override fun loadUrl(url: String) {
-        val target = upgrade(PhantomShield.cleanNavigation(url))
+        if (TabRouting.preparing(this)) return
+        navigationIsGet = true
+        val cleaned = PhantomShield.cleanNavigation(url)
+        val target = upgrade(cleaned)
+        lastUpgradedHttpUrl = cleaned.takeIf { it != target }
         currentUrl = target
         if (!ExtensionStoreResolver.usesStoreDesktopProfile(target)) storeDesktopOptOut = false
         val live = ensureBrowser()?.takeIf { !it.isClosed }
@@ -589,6 +607,7 @@ class CefriumEngineSession internal constructor(
     }
 
     override fun reload(bypassCache: Boolean) {
+        if (TabRouting.preparing(this)) return
         val target = liveBrowser() ?: return
         if (bypassCache) runCatching { target.clearCache() }
         runCatching { target.reload() }
@@ -598,8 +617,13 @@ class CefriumEngineSession internal constructor(
         runCatching { liveBrowser()?.stopLoading() }
     }
 
-    override fun goBack() { runCatching { liveBrowser()?.goBack() } }
-    override fun goForward() { runCatching { liveBrowser()?.goForward() } }
+    override fun goBack() {
+        if (!TabRouting.preparing(this)) runCatching { liveBrowser()?.goBack() }
+    }
+
+    override fun goForward() {
+        if (!TabRouting.preparing(this)) runCatching { liveBrowser()?.goForward() }
+    }
 
     override fun setActive(active: Boolean) {
         this.active = active
@@ -683,6 +707,7 @@ class CefriumEngineSession internal constructor(
     }
 
     override fun restoreState(state: EngineSessionState) {
+        if (TabRouting.preparing(this)) return
         val cefrium = state as? CefriumState ?: return
         currentUrl = cefrium.currentUri
         val live = liveBrowser()
@@ -697,7 +722,7 @@ class CefriumEngineSession internal constructor(
 
     /** El historial solo se restaura en un navegador sin navegar; si no, se carga la dirección. */
     private fun applyState(target: CefriumBrowser, state: CefriumState) {
-        if (target.isClosed) return
+        if (target.isClosed || TabRouting.preparing(this)) return
         applyUserAgent(target, state.currentUri)
         val navigation = state.navigation
         val fresh = runCatching { !target.canGoBack() && !target.canGoForward() && target.url.isNullOrEmpty() }.getOrDefault(false)
@@ -809,9 +834,8 @@ class CefriumEngineSession internal constructor(
         }
     }
 
-    internal fun clearCache() {
-        runCatching { liveBrowser()?.clearCache() }
-    }
+    internal fun clearCache(): Boolean =
+        runCatching { liveBrowser()?.clearCache() }.isSuccess
 
     internal fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean =
         runCatching { liveBrowser()?.onActivityResult(requestCode, resultCode, data) == true }.getOrDefault(false)
@@ -898,6 +922,7 @@ class CefriumEngineSession internal constructor(
     private inner class Navigation : CefriumNavigationClient {
         /** Navegación de la página principal: solo HTTPS, decisión de Nexo y URL sin rastreo. True la cancela. */
         override fun onBeforeNavigate(browser: CefriumBrowser, request: CefriumNavigationRequest): Boolean {
+            if (TabRouting.preparing(this@CefriumEngineSession)) return true
             if (!request.isForMainFrame) return false
             val url = request.url ?: return false
             // Esquema oscuro del sitio de destino antes de que llegue su documento (también tras redirecciones).
@@ -906,19 +931,23 @@ class CefriumEngineSession internal constructor(
             applyDarkFor(browser, url)
             val observer = observer ?: return true
 
-            // Incluso en redirecciones HTTP 3xx: evitar degradaciones HTTPS-Only (con guardia anti-bucle).
+            val isGet = request.method.equals("GET", ignoreCase = true)
+            navigationIsGet = isGet
             val upgraded = upgrade(url)
-            if (upgraded != url && lastUpgradedHttpUrl != url) {
-                lastUpgradedHttpUrl = url
-                main.post { if (!closed && !browser.isClosed) runCatching { browser.loadUrl(upgraded) } }
+            if (upgraded != url) {
+                if (isGet && (lastUpgradedHttpUrl == null || request.hasGesture())) {
+                    lastUpgradedHttpUrl = url
+                    main.post { if (!closed && !browser.isClosed) runCatching { browser.loadUrl(upgraded) } }
+                } else {
+                    main.post { if (!closed) TabManager.notifyMessage("El modo Solo HTTPS bloqueó una navegación por HTTP.") }
+                }
                 return true
             }
-            if (url.startsWith("https://", ignoreCase = true)) lastUpgradedHttpUrl = null
 
             val engineRequest = EngineLoadRequest(url, request.hasGesture(), isDirectNavigation = false, opensNewWindow = false)
-            val cleaned = PhantomShield.cleanNavigation(url)
+            val cleaned = if (isGet) PhantomShield.cleanNavigation(url) else url
             val decision = observer.onLoadRequest(this@CefriumEngineSession, engineRequest) { allow ->
-                if (allow && !closed && !browser.isClosed) runCatching { browser.loadUrl(cleaned) }
+                if (allow && isGet && !closed && !browser.isClosed) runCatching { browser.loadUrl(cleaned) }
             }
             return when (decision) {
                 // Sin parámetros de rastreo (utm_*, gclid, fbclid…): se carga la dirección limpia.
@@ -935,7 +964,7 @@ class CefriumEngineSession internal constructor(
             currentUrl = value
             applyDarkFor(browser, value)
             applyZoomFor(browser, value)
-            com.nexo.browser.SitePermissionStore.applyAllToBrowser(appContext, browser, value)
+            if (!isPrivate) com.nexo.browser.SitePermissionStore.applyAllToBrowser(appContext, browser, value)
             shield.onLocation(value)
             if (!browser.isClosed) {
                 com.nexo.browser.extensions.nxr.NxrRuntime.onUrlChanged(this@CefriumEngineSession, value)
@@ -993,6 +1022,7 @@ class CefriumEngineSession internal constructor(
         }
 
         override fun onDocumentAvailable(browser: CefriumBrowser) {
+            lastUpgradedHttpUrl = null
             host?.onDocumentAvailable(browser)
             observer?.onFirstContentfulPaint(this@CefriumEngineSession)
             if (!browser.isClosed) {
@@ -1128,50 +1158,83 @@ class CefriumEngineSession internal constructor(
         override fun shouldOverrideKeyEvent(browser: CefriumBrowser, event: KeyEvent): Boolean = false
     }
 
-    /**
-     * Las descargas las hace el gestor de Nexo: Chromium la cancela y Nexo la
-     * pide de nuevo con las cookies del perfil. Lo que genera la propia página
-     * (`blob:`, `data:`) no se puede volver a pedir: Chromium lo guarda en la
-     * caché de la app y, al terminar, pasa al gestor de Nexo como un archivo.
-     */
+    internal fun startDownload(url: String): Boolean {
+        if (TabRouting.preparing(this) || !com.nexo.browser.UrlSafety.isWebUrl(url)) return false
+        val target = liveBrowser() ?: return false
+        return runCatching { target.startDownload(upgrade(url)) }.isSuccess
+    }
+
+    /** Chromium conserva método, credenciales y proxy al guardar la petición original. */
+    private data class NativeDownload(
+        val file: CefriumFileDownload,
+        val progress: com.nexo.browser.ActiveDownload
+    )
+
     private inner class Downloads : CefriumDownloadClient {
-        private val pageFiles = HashMap<Int, PageGeneratedDownload>()
+        private val files = HashMap<Int, NativeDownload>()
 
         override fun onBeforeDownload(
             browser: CefriumBrowser, item: CefriumBrowser.DownloadItem, callback: CefriumBrowser.BeforeDownloadCallback
         ) {
             val url = item.url.orEmpty()
-            if (url.startsWith("blob:") || url.startsWith("data:")) {
-                val target = runCatching { PageGeneratedDownload.reserve(appContext, item.id) }.getOrNull()
-                if (target == null || observer == null) { callback.cancel(); return }
-                pageFiles[item.id] = PageGeneratedDownload(url, target, item.suggestedName, item.mimeType)
-                callback.allow(target.path)
+            val session = this@CefriumEngineSession
+            if (closed || TabRouting.preparing(session) ||
+                observer?.allowDownload(session, url, item.suggestedName, item.mimeType) != true
+            ) {
+                callback.cancel()
                 return
             }
-            callback.cancel()
-            val observer = observer ?: return
-            observer.onDownload(
-                this@CefriumEngineSession,
-                CefriumDownload(
-                    item.url.orEmpty(), item.suggestedName, item.mimeType,
-                    currentUrl, profile, if (desktopMode) UserAgents.desktop() else null
-                )
-            )
+            val target = runCatching { CefriumFileDownload.reserve(appContext, item.id) }.getOrElse {
+                callback.cancel()
+                TabManager.notifyMessage("No se pudo preparar el archivo de descarga.")
+                return
+            }
+            val file = CefriumFileDownload(url, target, item.suggestedName, item.mimeType)
+            val scope = com.nexo.browser.SitePermissionStore.scope(isPrivate, params.contextId)
+            val progress = com.nexo.browser.DownloadStore.startNative(appContext, item.suggestedName, item.totalBytes, scope) {
+                if (!browser.isClosed) browser.cancelDownload(item.id)
+            }
+            files[item.id] = NativeDownload(file, progress)
+            try {
+                callback.allow(target.path)
+            } catch (error: Exception) {
+                files.remove(item.id)
+                com.nexo.browser.DownloadStore.finishNative(progress)
+                file.discard()
+                EngineDiagnostics.log("No se pudo iniciar la descarga de Chromium", error)
+                TabManager.notifyMessage("No se pudo iniciar la descarga.")
+                return
+            }
+            TabManager.notifyMessage("Descarga iniciada")
         }
 
         override fun onDownloadUpdated(browser: CefriumBrowser, item: CefriumBrowser.DownloadItem) {
-            val pending = pageFiles[item.id] ?: return
+            if (browser !== this@CefriumEngineSession.browser) return
+            val pending = files[item.id] ?: return
+            pending.progress.received.set(item.receivedBytes.coerceAtLeast(0))
             when {
                 item.isComplete -> {
-                    pageFiles.remove(item.id)
+                    files.remove(item.id)
+                    com.nexo.browser.DownloadStore.finishNative(pending.progress)
                     val observer = observer
-                    if (observer == null || closed) pending.discard() else observer.onDownload(this@CefriumEngineSession, pending)
+                    if (observer == null || closed || pending.progress.cancelled) pending.file.discard()
+                    else observer.onDownload(this@CefriumEngineSession, pending.file)
                 }
                 item.isCanceled || item.isInterrupted -> {
-                    pageFiles.remove(item.id)
-                    pending.discard()
+                    files.remove(item.id)
+                    com.nexo.browser.DownloadStore.finishNative(pending.progress)
+                    pending.file.discard()
+                    TabManager.notifyMessage(if (item.isCanceled) "Descarga cancelada" else "Se interrumpió la descarga.")
                 }
             }
+        }
+
+        fun discardAll() {
+            files.values.forEach { pending ->
+                com.nexo.browser.DownloadStore.finishNative(pending.progress)
+                pending.file.discard()
+            }
+            files.clear()
         }
     }
 

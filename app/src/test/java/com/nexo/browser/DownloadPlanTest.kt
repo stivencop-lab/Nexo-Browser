@@ -49,9 +49,15 @@ class DownloadPlanTest {
         assertEquals(6 * mb, limit)
     }
 
-    @Test fun rejectsPartsOfAnotherVersion() {
-        assertTrue(DownloadPlan.sameEntity(mapOf("ETag" to "\"a\""), mapOf("etag" to "W/\"a\"")))
-        assertFalse(DownloadPlan.sameEntity(mapOf("ETag" to "\"a\""), mapOf("ETag" to "\"b\"")))
-        assertTrue(DownloadPlan.sameEntity(emptyMap(), mapOf("ETag" to "\"b\"")))
+    @Test fun verifiesExactRangeAndStrongVersion() {
+        val original = mapOf("ETag" to "\"a\"")
+        val part = mapOf("etag" to "\"a\"", "Content-Range" to "bytes 100-199/1000")
+        assertTrue(DownloadPlan.matchesRange(original, part, 100, 200, 1000))
+        assertFalse(DownloadPlan.matchesRange(original, part, 100, 300, 1000))
+        assertFalse(DownloadPlan.matchesRange(original, part, 100, 200, 2000))
+        assertFalse(DownloadPlan.matchesRange(original, part + ("etag" to "W/\"a\""), 100, 200, 1000))
+        assertFalse(DownloadPlan.matchesRange(original, part + ("etag" to "\"b\""), 100, 200, 1000))
+        assertFalse(DownloadPlan.matchesRange(original, part - "etag", 100, 200, 1000))
+        assertFalse(DownloadPlan.matchesRange(emptyMap(), part, 100, 200, 1000))
     }
 }

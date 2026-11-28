@@ -64,14 +64,7 @@ class NexoAiStore(private val storageFile: File) {
                 bounded.forEach { put(serializeConversation(it)) }
             })
 
-        val tmp = File(storageFile.parentFile ?: File("."), "${storageFile.name}.tmp")
-        runCatching {
-            tmp.writeText(root.toString(), Charsets.UTF_8)
-            if (!tmp.renameTo(storageFile)) {
-                storageFile.writeText(root.toString(), Charsets.UTF_8)
-                tmp.delete()
-            }
-        }
+        com.nexo.browser.writeAtomicFile(storageFile, root.toString().toByteArray(Charsets.UTF_8))
     }
 
     private fun serializeConversation(conv: NexoAiModels.AiConversation): JSONObject =

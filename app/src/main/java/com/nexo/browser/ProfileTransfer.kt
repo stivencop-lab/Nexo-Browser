@@ -28,13 +28,15 @@ object ProfileTransfer {
         require(!stage.exists()); stage.mkdirs()
         val native = JSONObject().put("version", VERSION).put("source", context.packageName)
         val prefs = JSONObject()
-        for (name in listOf("nexo_browser_settings", "nexo_history", "nexo_quick_access")) {
+        for ((name, allowed) in TransferSchema.typesByFile) {
             val values = JSONObject()
             context.getSharedPreferences(name, Context.MODE_PRIVATE).all.forEach { (key,value) ->
-                if (value != null && (name != "nexo_browser_settings" || key in TransferSchema.settingsKeys)) values.put(key, typed(value))
+                if (value != null && key in allowed) values.put(key, typed(value))
             }
             prefs.put(name, values)
         }
+        validatePreferences(prefs)
+        prefs.keySet().forEach { preferences(prefs.getJSONObject(it)) }
         native.put("prefs", prefs)
         native.put("tabs", JSONArray(TransferSchema.tabs(File(context.filesDir,"tabs.json").takeIf { it.isFile }?.readText() ?: BrowserPrefs.tabsJson(context) ?: "[]")))
         val secrets = JSONObject()
@@ -43,9 +45,14 @@ object ProfileTransfer {
             if (SecretStore.has(context,name)) SecretStore.get(context,name).also { require(it.isNotEmpty()) { "No se puede descifrar una clave del origen" } }
             else context.getSharedPreferences("nexo_browser_settings", Context.MODE_PRIVATE).getString(name, "").orEmpty()
         }
-        serviceKeys.forEach { (k,v) -> if (v.isNotEmpty()) secrets.put(k,v) }
+        serviceKeys.forEach { (key, value) ->
+            require(value.length <= TransferSchema.MAX_SECRET_CHARS) { "Una clave supera el límite de la copia." }
+            if (value.isNotEmpty()) secrets.put(key, value)
+        }
         native.put("secrets", secrets)
-        File(stage, "native.json").writeText(native.toString())
+        val bytes = native.toString().toByteArray(Charsets.UTF_8)
+        require(bytes.size <= TransferSchema.MAX_NATIVE_BYTES) { "El perfil supera el tamaño permitido para la copia." }
+        File(stage, "native.json").writeBytes(bytes)
     }
 
     private fun xmlEscape(v: String): String {
@@ -58,7 +65,7 @@ object ProfileTransfer {
             require(key.length <= 128)
             val o = values.getJSONObject(key); val type = o.getString("type"); val name = xmlEscape(key)
             when(type) {
-                "string" -> { val v = o.getString("value"); require(v.length <= 2*1024*1024); append("<string name=\"$name\">${xmlEscape(v)}</string>") }
+                "string" -> { val v = o.getString("value"); require(v.length <= TransferSchema.MAX_PREFERENCE_CHARS); append("<string name=\"$name\">${xmlEscape(v)}</string>") }
                 "boolean" -> append("<boolean name=\"$name\" value=\"${o.getBoolean("value")}\" />")
                 "int" -> append("<int name=\"$name\" value=\"${o.getInt("value")}\" />")
                 "long" -> append("<long name=\"$name\" value=\"${o.getLong("value")}\" />")
@@ -69,9 +76,42 @@ object ProfileTransfer {
         }
         append("</map>")
     }
+    private fun validatePreferences(prefs: JSONObject) {
+        require(prefs.keySet() == TransferSchema.typesByFile.keys)
+        for ((name, types) in TransferSchema.typesByFile) {
+            val values = prefs.getJSONObject(name)
+            require(values.keySet().all { key ->
+                values.getJSONObject(key).getString("type") == types[key]
+            }) { "Ajuste incompatible en $name" }
+        }
+        val history = prefs.getJSONObject("nexo_history")
+        if(history.has("entries")) {
+            val item=history.getJSONObject("entries"); require(item.getString("type")=="string")
+            val entries=JSONArray(item.getString("value")); require(entries.length()<=TransferSchema.MAX_ITEMS)
+            for(i in 0 until entries.length()) {
+                val h=entries.getJSONObject(i); require(UrlSafety.isWebUrl(h.getString("url")) && h.getString("url").length<=8192 && h.getString("title").length<=8192)
+                h.getLong("timestamp")
+            }
+        }
+        val quick = prefs.getJSONObject("nexo_quick_access")
+        if(quick.has("custom")) {
+            val item=quick.getJSONObject("custom"); require(item.getString("type")=="string")
+            val links=JSONArray(item.getString("value")); require(links.length()<=TransferSchema.MAX_ITEMS)
+            for(i in 0 until links.length()) { val l=links.getJSONObject(i); require(UrlSafety.isWebUrl(l.getString("url")) && l.getString("url").length<=8192) }
+        }
+    }
+
+    private fun preserveDestination(
+        context: Context, name: String, incoming: JSONObject, replaceableKeys: Set<String>
+    ): JSONObject = incoming.apply {
+        context.getSharedPreferences(name, Context.MODE_PRIVATE).all.forEach { (key, value) ->
+            if (key !in replaceableKeys && value != null) put(key, typed(value))
+        }
+    }
+
     fun prepare(context: Context, stage: File): Map<String, File?> {
         check(MigrationMode.cold && !MigrationMode.dataChanged && MigrationMode.ready(context) && !com.nexo.browser.engine.Engines.current.isStarted())
-        require(File(stage,"native.json").length() <= 8*1024*1024)
+        require(File(stage,"native.json").length() in 1..TransferSchema.MAX_NATIVE_BYTES.toLong())
         // Formato 1: validar lo que trae del motor antiguo (que nada escape del esquema) y no aplicarlo.
         val legacy = File(stage,"addons.json").takeIf { it.isFile }?.let {
             require(it.length() <= 1024*1024)
@@ -89,34 +129,17 @@ object ProfileTransfer {
         val files = linkedMapOf<String,File?>()
         fun put(path: String, text: String) { val f = File(output,path); f.parentFile?.mkdirs(); f.writeText(text); files[path] = f }
         val prefs = native.getJSONObject("prefs")
-        require(prefs.keySet() == setOf("nexo_browser_settings","nexo_history","nexo_quick_access"))
-        val settings = prefs.getJSONObject("nexo_browser_settings")
-        require(settings.keySet().all { it in TransferSchema.settingsKeys })
-        settings.keySet().forEach { require(settings.getJSONObject(it).getString("type") == TransferSchema.settingsTypes[it]) }
-        val history = prefs.getJSONObject("nexo_history")
-        require(history.keySet().all { it == "entries" })
-        if(history.has("entries")) {
-            val item=history.getJSONObject("entries"); require(item.getString("type")=="string")
-            val entries=JSONArray(item.getString("value")); require(entries.length()<=500)
-            for(i in 0 until entries.length()) {
-                val h=entries.getJSONObject(i); require(UrlSafety.isWebUrl(h.getString("url")) && h.getString("url").length<=8192 && h.getString("title").length<=8192)
-                h.getLong("timestamp")
-            }
+        validatePreferences(prefs)
+        for ((name, types) in TransferSchema.typesByFile) {
+            val merged = preserveDestination(context, name, prefs.getJSONObject(name), types.keys)
+            put("shared_prefs/$name.xml", preferences(merged))
         }
-        val quick = prefs.getJSONObject("nexo_quick_access")
-        require(quick.keySet().all { it in setOf("custom","hidden") })
-        if(quick.has("custom")) {
-            val item=quick.getJSONObject("custom"); require(item.getString("type")=="string")
-            val links=JSONArray(item.getString("value")); require(links.length()<=500)
-            for(i in 0 until links.length()) { val l=links.getJSONObject(i); require(UrlSafety.isWebUrl(l.getString("url")) && l.getString("url").length<=8192) }
-        }
-        if(quick.has("hidden")) require(quick.getJSONObject("hidden").getString("type")=="set")
-        prefs.keySet().forEach { name -> put("shared_prefs/$name.xml", preferences(prefs.getJSONObject(name))) }
         put("files/tabs.json", TransferSchema.tabs(native.getJSONArray("tabs").toString()))
         val keys = native.getJSONObject("secrets"); require(keys.keySet().all { it in TransferSchema.secretNames })
         val encrypted = JSONObject()
-        keys.keySet().forEach { key -> val v=keys.getString(key); require(v.length <= 16384); encrypted.put(key,typed(SecretStore.encrypt(v))) }
-        put("shared_prefs/nexo_secrets.xml", preferences(encrypted))
+        keys.keySet().forEach { key -> val v=keys.getString(key); require(v.length <= TransferSchema.MAX_SECRET_CHARS); encrypted.put(key,typed(SecretStore.encrypt(v))) }
+        val mergedSecrets = preserveDestination(context, "nexo_secrets", encrypted, keys.keySet())
+        put("shared_prefs/nexo_secrets.xml", preferences(mergedSecrets))
         // Android AtomicFile and SharedPreferences prefer backup sidecars over the
         // primary file after a crash. Journal and remove them in the same commit.
         files.keys.toList().filter { it.startsWith("shared_prefs/") || it == "files/tabs.json" }.forEach { path ->

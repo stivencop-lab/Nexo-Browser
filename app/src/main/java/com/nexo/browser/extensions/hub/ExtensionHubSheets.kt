@@ -42,8 +42,9 @@ object ExtensionHubSheets {
             "Descargando y verificando firma CRX para ${target.extensionId}…"
         )
         io.execute {
-            val temp = File.createTempFile("nxr-store-", ".crx", activity.cacheDir)
+            var pending: File? = null
             try {
+                val temp = File.createTempFile("nxr-store-", ".crx", activity.cacheDir).also { pending = it }
                 val listing = ExtensionStoreClient.fetchListing(target)
                 ExtensionStoreClient.downloadAndVerifyPackage(listing, temp)
                 val inspection = NxrPackageInstaller.inspect(temp, expectedId = target.extensionId)
@@ -65,7 +66,7 @@ object ExtensionHubSheets {
                     showInstallReviewSheet(activity, temp, inspection, sourceInfo, listing, onInstalled)
                 }
             } catch (err: Throwable) {
-                temp.delete()
+                pending?.delete()
                 main.post {
                     runCatching { progress.dismiss() }
                     if (!activity.isFinishing && !activity.isDestroyed) {
@@ -93,8 +94,9 @@ object ExtensionHubSheets {
         )
         io.execute {
             val ext = url.substringBefore('?').substringBefore('#').substringAfterLast('.', "pkg")
-            val temp = File.createTempFile("nxr-direct-", ".$ext", activity.cacheDir)
+            var pending: File? = null
             try {
+                val temp = File.createTempFile("nxr-direct-", ".$ext", activity.cacheDir).also { pending = it }
                 ExtensionStoreClient.downloadDirectHttpsPackage(url, temp)
                 val inspection = NxrPackageInstaller.inspect(temp)
                 val sourceInfo = NxrPackageInstaller.SourceInfo(
@@ -115,7 +117,7 @@ object ExtensionHubSheets {
                     showInstallReviewSheet(activity, temp, inspection, sourceInfo, null, onInstalled)
                 }
             } catch (err: Throwable) {
-                temp.delete()
+                pending?.delete()
                 main.post {
                     runCatching { progress.dismiss() }
                     if (!activity.isFinishing && !activity.isDestroyed) {
@@ -162,8 +164,9 @@ object ExtensionHubSheets {
                 }
                 return@execute
             }
-            val temp = File.createTempFile("nxr-upd-", ".crx", activity.cacheDir)
+            var pending: File? = null
             try {
+                val temp = File.createTempFile("nxr-upd-", ".crx", activity.cacheDir).also { pending = it }
                 ExtensionStoreClient.downloadAndVerifyPackage(listing, temp)
                 val inspection = NxrPackageInstaller.inspect(temp, expectedId = installed.id)
                 val diff = ExtensionUpdateManager.computePermissionDiff(installed, inspection)
@@ -176,7 +179,7 @@ object ExtensionHubSheets {
                     showUpdateConsentSheet(activity, installed, listing, inspection, diff, temp, onUpdated)
                 }
             } catch (err: Throwable) {
-                temp.delete()
+                pending?.delete()
                 main.post {
                     runCatching { progress.dismiss() }
                     if (!activity.isFinishing && !activity.isDestroyed) {

@@ -26,7 +26,6 @@ import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -220,13 +219,19 @@ object NexoAiPageAgent {
             documentGeneration = startDocGen
         )
         val settled = AtomicBoolean(false)
+        fun stillAllowed(): Boolean =
+            TabManager.activeTab() === tab && tab.session === session &&
+                isBindingMatchingCurrent(binding, currentActiveBinding()) &&
+                (!tab.isPrivate || (allowPrivate && NexoAiConfig.read(context).allowPrivateTabs)) &&
+                (activeHost.isBlank() || NexoAiConfig.isHostAllowed(context, activeHost))
+
+        fun fallback() =
+            PageSnapshot(binding.title, binding.url, "", emptyList(), emptyList(), emptyList(), emptyList(), "", binding)
+
         val timeout = Runnable {
-            if (settled.compareAndSet(false, true)) {
-                onDone(
-                    PageSnapshot(tab.title, tab.url, "", emptyList(), emptyList(), emptyList(), emptyList(), "", binding),
-                    null
-                )
-            }
+            if (!settled.compareAndSet(false, true)) return@Runnable
+            if (stillAllowed()) onDone(fallback(), null)
+            else onDone(null, "La página cambió durante la extracción de contexto.")
         }
         main.postDelayed(timeout, SNAPSHOT_TIMEOUT_MS)
 
@@ -236,12 +241,12 @@ object NexoAiPageAgent {
             main.post {
                 if (!settled.compareAndSet(false, true)) return@post
                 main.removeCallbacks(timeout)
-                if (session.documentGeneration() != startDocGen) {
+                if (!stillAllowed()) {
                     onDone(null, "La página cambió durante la extracción de contexto. Inténtalo de nuevo.")
                     return@post
                 }
                 val snap = (parseSnapshot(unwrapJsonObject(raw))
-                    ?: PageSnapshot(tab.title, tab.url, "", emptyList(), emptyList(), emptyList(), emptyList(), ""))
+                    ?: fallback())
                     .copy(binding = binding)
                 onDone(snap, null)
             }
@@ -319,101 +324,81 @@ object NexoAiPageAgent {
         )
     }
 
-    /** Resume títulos y hosts de pestañas abiertas no privadas (respaldo rápido síncrono). */
-    fun buildOpenTabsContext(allowPrivate: Boolean): String {
-        val tabs = TabManager.allTabs()
-            .filter { !BrowserPrefs.isNexoHome(it.url) && (allowPrivate || !it.isPrivate) }
-            .take(12)
-        if (tabs.isEmpty()) return "No hay pestañas web abiertas para comparar."
-        return buildString {
-            appendLine("Pestañas abiertas (${tabs.size}):")
-            tabs.forEachIndexed { idx, tab ->
-                val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull().orEmpty()
-                appendLine("${idx + 1}. ${tab.title.ifBlank { host }} — $host")
-            }
-        }
-    }
-
-    /**
-     * Captura contexto real saneado de hasta [MAX_LIVE_COMPARE_TABS] pestañas vivas dentro
-     * del presupuesto total de caracteres, respetando las exclusiones por sitio de Nexo Site Control.
-     */
+    /** Captura hasta cuatro documentos y conserva metadatos de pestañas permitidas. */
     fun captureOpenTabsContext(
         context: Context,
         maxChars: Int,
         allowPrivate: Boolean,
         onDone: (String) -> Unit
     ) {
-        val tabs = TabManager.allTabs()
-            .filter { tab ->
-                if (BrowserPrefs.isNexoHome(tab.url)) return@filter false
-                if (!allowPrivate && tab.isPrivate) return@filter false
-                val host = SiteControlModel.hostOf(tab.url)
-                host.isEmpty() || NexoAiConfig.isHostAllowed(context, host)
-            }
-            .take(12)
-        if (tabs.isEmpty()) {
-            onDone("No hay pestañas web permitidas abiertas para comparar.")
-            return
-        }
-        val source = loadAgentScript(context)
+        data class Target(
+            val tab: com.nexo.browser.BrowserTab,
+            val session: CefriumEngineSession?,
+            val generation: Long?,
+            val url: String,
+            val host: String,
+            val title: String,
+            var page: PageSnapshot? = null
+        )
         val activeId = TabManager.activeTab()?.id
-        val ordered = tabs.sortedByDescending { it.id == activeId }
-        val liveTargets = ordered
-            .mapNotNull { t -> (t.session as? CefriumEngineSession)?.let { s -> t to s } }
-            .take(MAX_LIVE_COMPARE_TABS)
-        if (source == null || liveTargets.isEmpty()) {
-            onDone(buildOpenTabsContext(allowPrivate))
-            return
-        }
-
+        val targets = TabManager.allTabs().sortedByDescending { it.id == activeId }
+            .mapNotNull { tab ->
+                if (BrowserPrefs.isNexoHome(tab.url) || (!allowPrivate && tab.isPrivate)) return@mapNotNull null
+                val host = SiteControlModel.hostOf(tab.url)
+                if (host.isEmpty() || !NexoAiConfig.isHostAllowed(context, host)) return@mapNotNull null
+                val session = tab.session as? CefriumEngineSession
+                Target(tab, session, session?.documentGeneration(), tab.url, host, tab.title.ifBlank { host })
+            }.take(12)
+        val source = loadAgentScript(context)
+        val liveTargets = if (source == null) emptyList() else targets.filter { it.session != null }.take(MAX_LIVE_COMPARE_TABS)
         val totalBudget = NexoAiConfig.clampContextChars(maxChars)
-        val perTabBudget = (totalBudget / liveTargets.size).coerceIn(1000, 2200)
-        val script = buildExtractScript(source, perTabBudget)
-        val snapshots = arrayOfNulls<PageSnapshot>(liveTargets.size)
-        val remaining = AtomicInteger(liveTargets.size)
-        val settled = AtomicBoolean(false)
-
+        val perTabBudget = (totalBudget / maxOf(1, liveTargets.size)).coerceIn(1000, 2200)
+        var remaining = liveTargets.size
+        var finished = false
         fun finish() {
-            if (!settled.compareAndSet(false, true)) return
-            val liveMap = HashMap<String, PageSnapshot>()
-            liveTargets.forEachIndexed { idx, (tab, _) ->
-                snapshots[idx]?.let { liveMap[tab.id] = it }
+            if (finished) return
+            finished = true
+            val tabs = TabManager.allTabs()
+            val privateAllowed = allowPrivate && NexoAiConfig.read(context).allowPrivateTabs
+            val current = targets.filter { target ->
+                tabs.any { it === target.tab } && target.tab.url == target.url &&
+                    target.tab.session === target.session && target.session?.documentGeneration() == target.generation &&
+                    (privateAllowed || !target.tab.isPrivate) && NexoAiConfig.isHostAllowed(context, target.host)
             }
-            val result = buildString {
-                appendLine("Comparación de pestañas abiertas (${ordered.size}; extracto saneado de ${liveMap.size}):")
-                ordered.forEachIndexed { idx, tab ->
-                    val host = runCatching { android.net.Uri.parse(tab.url).host }.getOrNull().orEmpty()
-                    val title = tab.title.ifBlank { host }
-                    appendLine("\n--- Pestaña ${idx + 1}: $title ($host) ---")
-                    val snap = liveMap[tab.id]
-                    if (snap != null) {
-                        if (snap.headings.isNotEmpty()) {
-                            appendLine("Encabezados: ${snap.headings.take(5).joinToString(" | ")}")
-                        }
-                        if (snap.text.isNotBlank()) {
-                            appendLine(snap.text.take(perTabBudget - 300))
-                        }
-                    } else {
-                        appendLine("(solo metadatos disponibles: pestaña inactiva o en espera)")
+            val result = if (current.isEmpty()) "No hay pestañas web permitidas abiertas para comparar." else buildString {
+                appendLine("Pestañas abiertas permitidas (${current.size}):")
+                current.forEachIndexed { index, target ->
+                    appendLine("\n--- Pestaña ${index + 1}: ${target.title} (${target.host}) ---")
+                    val page = target.page
+                    if (page == null) appendLine("(solo metadatos disponibles)")
+                    else {
+                        if (page.headings.isNotEmpty()) appendLine("Encabezados: ${page.headings.take(5).joinToString(" | ")}")
+                        if (page.text.isNotBlank()) appendLine(page.text.take(perTabBudget - 300))
                     }
                 }
             }.take(totalBudget)
-            main.post { onDone(result) }
+            onDone(result)
         }
 
+        if (source == null || liveTargets.isEmpty()) {
+            finish()
+            return
+        }
+        val script = buildExtractScript(source, perTabBudget)
         val timeout = Runnable { finish() }
         main.postDelayed(timeout, SNAPSHOT_TIMEOUT_MS)
-
-        liveTargets.forEachIndexed { idx, (_, session) ->
-            val startGen = session.documentGeneration()
+        liveTargets.forEach { target ->
+            val session = target.session ?: return@forEach
             session.evaluateJsonInMainFrame(script) { raw ->
-                if (session.documentGeneration() == startGen) {
-                    snapshots[idx] = parseSnapshot(unwrapJsonObject(raw))
-                }
-                if (remaining.decrementAndGet() == 0) {
-                    main.removeCallbacks(timeout)
-                    finish()
+                main.post {
+                    if (finished) return@post
+                    if (session.documentGeneration() == target.generation) {
+                        target.page = parseSnapshot(unwrapJsonObject(raw))
+                    }
+                    if (--remaining == 0) {
+                        main.removeCallbacks(timeout)
+                        finish()
+                    }
                 }
             }
         }

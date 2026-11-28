@@ -47,7 +47,9 @@ data class DownloadEntry(
 )
 
 /** Descarga en curso: progreso para la pantalla Descargas y la notificación. */
-class ActiveDownload internal constructor(val id: String, val fileName: String, val total: Long) {
+class ActiveDownload internal constructor(
+    val id: String, val fileName: String, val total: Long, internal val privateScope: String? = null
+) {
     val received = AtomicLong(0)
     val startedAt: Long = SystemClock.elapsedRealtime()
     @Volatile var connections = 1
@@ -60,6 +62,7 @@ class ActiveDownload internal constructor(val id: String, val fileName: String, 
     internal val activeResponses = CopyOnWriteArrayList<DownloadResponse>()
     internal val workerFutures = CopyOnWriteArrayList<Future<*>>()
     internal val terminal = AtomicBoolean(false)
+    internal var cancelNative: (() -> Unit)? = null
     internal var sampleBytes = 0L
     internal var sampleAt = startedAt
 
@@ -108,17 +111,45 @@ object DownloadStore {
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private val channelReady = AtomicBoolean(false)
     private var appContext: Context? = null
+    private const val PART_PREFIX = ".nexo-incomplete-"
+    private val processPrefix = PART_PREFIX + UUID.randomUUID() + "-"
+    private val privateLists = mutableMapOf<String, MutableList<DownloadEntry>>()
+
+    @Synchronized
+    private fun privateList(scope: String?): MutableList<DownloadEntry>? =
+        scope?.let { privateLists.getOrPut(it) { mutableListOf() } }
+
+    @Synchronized
+    internal fun closePrivateScope(scope: String) {
+        privateLists.remove(scope)?.clear()
+    }
+
+    @Synchronized
+    private fun rememberPrivate(scope: String, list: MutableList<DownloadEntry>, entry: DownloadEntry) {
+        if (privateLists[scope] !== list) return
+        list.add(0, entry)
+        if (list.size > MAX_ENTRIES) list.removeAt(list.lastIndex)
+    }
 
     // ---------------------------------------------------------------
     // Descargas en curso
     // ---------------------------------------------------------------
 
-    fun activeDownloads(): List<ActiveDownload> = running.values.sortedBy { it.startedAt }
+    fun activeDownloads(scope: String? = null): List<ActiveDownload> =
+        running.values.filter { it.privateScope == scope }.sortedBy { it.startedAt }
 
     /** Al arrancar: el progreso de una descarga de un proceso que murió no debe quedarse en la barra. */
     fun clearStaleProgress(context: Context) {
         if (running.isNotEmpty()) return
         runCatching { context.getSystemService(NotificationManager::class.java)?.cancel(NOTIFY_PROGRESS) }
+        val app = context.applicationContext
+        io.execute {
+            com.nexo.browser.engine.cefrium.CefriumFileDownload.clearOrphaned(app)
+            downloadsFolder(app).listFiles()?.forEach { file ->
+                if (file.name.startsWith(PART_PREFIX) && !file.name.startsWith(processPrefix) &&
+                    file.name.endsWith(".part")) file.delete()
+            }
+        }
     }
 
     fun cancel(id: String) {
@@ -127,8 +158,28 @@ object DownloadStore {
             if (job.terminal.get()) return
             job.cancelled = true
         }
-        job.activeResponses.forEach { response -> runCatching { response.close() } }
+        job.cancelNative?.let { cancel -> main.post(cancel) }
+        job.activeResponses.forEach { response -> response.close() }
         job.workerFutures.forEach { future -> future.cancel(true) }
+    }
+
+    internal fun startNative(
+        context: Context, fileName: String?, total: Long, scope: String?, cancel: () -> Unit
+    ): ActiveDownload = ActiveDownload(
+        UUID.randomUUID().toString(), FileNames.sanitize(fileName.orEmpty()), total, scope
+    ).also { job ->
+        job.cancelNative = cancel
+        running[job.id] = job
+        startTicker(context)
+    }
+
+    internal fun finishNative(job: ActiveDownload) {
+        job.terminal.set(true)
+        running.remove(job.id, job)
+        main.post {
+            appContext?.let(::showProgress)
+            listeners.forEach { runCatching { it() } }
+        }
     }
 
     /** Aviso periódico (hilo principal) mientras hay descargas en curso. */
@@ -196,6 +247,8 @@ object DownloadStore {
 
         val app = context.applicationContext
         val source = if (parallel) DownloadSource(isPrivate, referrer, split, burnerId) else null
+        val scope = SitePermissionStore.scope(isPrivate, burnerId)
+        val privateEntries = privateList(scope)
         io.execute {
             val response = try {
                 Engines.current.downloadFetcher.fetch(url, emptyMap(), referrer?.takeIf { UrlSafety.isWebUrl(it) }, isPrivate, burnerId)
@@ -207,7 +260,7 @@ object DownloadStore {
                 response.close()
                 main.post { callback(false, "Descarga fallida: HTTP ${response.statusCode}") }
             } else {
-                receive(app, response, source, isPrivate, callback)
+                receive(app, response, source, scope, privateEntries, callback)
             }
         }
     }
@@ -216,10 +269,11 @@ object DownloadStore {
     fun saveDownload(
         context: Context,
         download: EngineDownload,
-        source: DownloadSource?,
+        scope: String?,
         callback: (Boolean, String) -> Unit
     ) {
         val app = context.applicationContext
+        val privateEntries = privateList(scope)
         io.execute {
             val response = try {
                 download.open()
@@ -232,22 +286,29 @@ object DownloadStore {
                 response.close()
                 main.post { callback(false, "Descarga fallida: HTTP ${response.statusCode}") }
             } else {
-                receive(app, response, source, source?.isPrivate == true, callback)
+                receive(app, response, null, scope, privateEntries, callback)
             }
         }
     }
 
     /** Captura de la página como PNG en Descargas. */
-    fun saveBitmap(context: Context, bitmap: Bitmap, title: String, callback: (Boolean, String) -> Unit) {
+    fun saveBitmap(
+        context: Context, bitmap: Bitmap, title: String, scope: String?, callback: (Boolean, String) -> Unit
+    ) {
         val app = context.applicationContext
+        val privateEntries = privateList(scope)
         io.execute {
             var file: File? = null
             try {
-                val target = reserveFile(downloadsFolder(app), FileNames.sanitize("$title.png", "captura.png"))
-                file = target
-                target.outputStream().buffered().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                add(app, DownloadEntry(UUID.randomUUID().toString(), target.name, target.absolutePath, "", "image/png", target.length(), System.currentTimeMillis()))
-                main.post { callback(true, "Captura guardada en Descargas: ${target.name}") }
+                val partial = createPartial(downloadsFolder(app))
+                file = partial
+                partial.outputStream().buffered().use {
+                    check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) { "La captura no se pudo codificar" }
+                }
+                val target = publishFile(partial, FileNames.sanitize("$title.png", "captura.png"))
+                record(app, target, "", "image/png", scope, privateEntries)
+                main.post { callback(true, if (scope == null) "Captura guardada en Descargas: ${target.name}"
+                    else "Captura guardada en Descargas privadas") }
             } catch (error: Throwable) {
                 file?.let { partial -> runCatching { partial.delete() } }
                 main.post { callback(false, "No se pudo guardar la captura: ${error.message}") }
@@ -264,21 +325,25 @@ object DownloadStore {
         fileName: String,
         mime: String,
         sourceUrl: String,
+        scope: String?,
         callback: (Boolean, String) -> Unit
     ) {
         val app = context.applicationContext
+        val privateEntries = privateList(scope)
         io.execute {
             var file: File? = null
             runCatching {
                 val folder = downloadsFolder(app)
-                val target = reserveFile(folder, FileNames.sanitize(fileName))
-                file = target
-                val job = ActiveDownload(UUID.randomUUID().toString(), target.name, -1)
                 input.use { stream ->
-                    RandomAccessFile(target, "rw").use { raf -> copy(stream, raf.channel, 0, { Long.MAX_VALUE }, job, folder) }
+                    val partial = createPartial(folder)
+                    file = partial
+                    val job = ActiveDownload(UUID.randomUUID().toString(), fileName, -1, scope)
+                    RandomAccessFile(partial, "rw").use { raf -> copy(stream, raf.channel, 0, { Long.MAX_VALUE }, job, folder) }
                 }
-                add(app, DownloadEntry(UUID.randomUUID().toString(), target.name, target.absolutePath, redactSourceUrl(sourceUrl), mime, target.length(), System.currentTimeMillis()))
-                main.post { callback(true, "Guardado en Descargas: ${target.name}") }
+                val target = publishFile(requireNotNull(file), fileName)
+                record(app, target, sourceUrl, mime, scope, privateEntries)
+                main.post { callback(true, if (scope == null) "Guardado en Descargas: ${target.name}"
+                    else "Archivo guardado en Descargas privadas") }
             }.onFailure {
                 file?.let { partial -> runCatching { partial.delete() } }
                 main.post { callback(false, "No se pudo guardar: ${it.message}") }
@@ -294,7 +359,8 @@ object DownloadStore {
         app: Context,
         response: DownloadResponse,
         source: DownloadSource?,
-        isPrivate: Boolean,
+        scope: String?,
+        privateEntries: MutableList<DownloadEntry>?,
         callback: (Boolean, String) -> Unit
     ) {
         var file: File? = null
@@ -320,19 +386,19 @@ object DownloadStore {
                 error("No hay espacio suficiente para este archivo")
             }
 
-            val target = reserveFile(folder, requested)
-            file = target
-            val displayName = if (isPrivate) "Descarga privada" else target.name
-            val active = ActiveDownload(UUID.randomUUID().toString(), displayName, total)
+            val partial = createPartial(folder)
+            file = partial
+            val active = ActiveDownload(UUID.randomUUID().toString(), requested, total, scope)
             job = active
             active.activeResponses += response
             running[active.id] = active
             startTicker(app)
 
-            RandomAccessFile(target, "rw").use { raf ->
+            RandomAccessFile(partial, "rw").use { raf ->
                 if (total > 0) preallocate(raf, total)
                 val channel = raf.channel
                 val rangeable = source != null && total > 0 && UrlSafety.isWebUrl(response.uri) &&
+                    DownloadPlan.strongEtag(headers) != null &&
                     header(headers, "Accept-Ranges")?.trim()?.equals("bytes", ignoreCase = true) == true
                 if (source != null && rangeable && source.split && DownloadPlan.canSplit(headers, total)) {
                     receiveSplit(app, active, response, body, channel, folder, source)
@@ -342,27 +408,14 @@ object DownloadStore {
                 if (total > 0 && raf.length() != total) raf.setLength(total)
             }
 
-            synchronized(active) {
+            val target = synchronized(active) {
                 if (active.terminal.get() || active.cancelled) throw CancellationException("cancelada")
-                active.terminal.set(true)
-                // En modo privado no se persiste el nombre ni el origen de la descarga en disco.
-                if (!isPrivate) {
-                    add(
-                        app,
-                        DownloadEntry(
-                            UUID.randomUUID().toString(),
-                            target.name,
-                            target.absolutePath,
-                            redactSourceUrl(response.uri),
-                            mime,
-                            target.length(),
-                            System.currentTimeMillis()
-                        )
-                    )
-                }
+                publishFile(partial, requested).also { active.terminal.set(true) }
             }
-            showDone(app, if (isPrivate) "Archivo privado guardado" else target.name)
-            main.post { callback(true, "Descargado: ${target.name}") }
+            record(app, target, response.uri, mime, scope, privateEntries)
+            if (scope == null) showDone(app, target.name)
+            main.post { callback(true, if (scope == null) "Descargado: ${target.name}"
+                else "Archivo guardado en Descargas privadas") }
         } catch (error: Throwable) {
             // No dejar archivos a medio descargar.
             job?.cancelled = true
@@ -370,6 +423,7 @@ object DownloadStore {
             val cancelled = error is CancellationException
             main.post { callback(false, if (cancelled) "Descarga cancelada" else "Descarga fallida: ${error.message ?: "error de red"}") }
         } finally {
+            runCatching { response.close() }
             job?.let { running.remove(it.id) }
             main.post {
                 appContext?.let { showProgress(it) }
@@ -430,16 +484,15 @@ object DownloadStore {
 
         val probe = parts.submit {
             val first = runCatching { openRange(app, job, response, source, tail, total) }.getOrNull() ?: return@submit
-            if (job.cancelled) { runCatching { first.body?.close() }; return@submit }
+            if (job.cancelled) { first.close(); return@submit }
             val plan = synchronized(lock) {
                 if (job.cancelled) null else DownloadPlan.split(position, tail, connections - 2)?.also { limit = it.first }
             }
             if (plan == null) {
-                runCatching { first.body?.close() }
+                first.close()
                 return@submit
             }
             job.connections = 2 + plan.second.size
-            job.activeResponses += first
             plan.second.forEach { range ->
                 parts.submit {
                     fetchPart(app, job, response, channel, folder, source, range.first, range.last + 1, null)
@@ -494,15 +547,22 @@ object DownloadStore {
         var attempt = 0
         var pending = first
         while (position < end) {
-            if (job.cancelled) throw CancellationException("cancelada")
+            if (job.cancelled) {
+                pending?.close()
+                throw CancellationException("cancelada")
+            }
             try {
                 val response = pending ?: openRange(app, job, original, source, position, end)
                 pending = null
                 job.activeResponses += response
-                val input = response.body ?: throw IOException("sin cuerpo")
-                input.use { position = copy(it, channel, position, { end }, job, folder) }
-                job.activeResponses -= response
-                if (position < end) throw IOException("tramo incompleto")
+                try {
+                    val input = response.body ?: throw IOException("sin cuerpo")
+                    copy(input, channel, position, { end }, job, folder) { position = it }
+                    if (position < end) throw IOException("tramo incompleto")
+                } finally {
+                    response.close()
+                    job.activeResponses -= response
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -520,16 +580,16 @@ object DownloadStore {
 
     /** Pide [start, end) y comprueba que es el tramo correcto del mismo archivo. */
     private fun openRange(app: Context, job: ActiveDownload, original: DownloadResponse, source: DownloadSource, start: Long, end: Long): DownloadResponse {
+        val validator = DownloadPlan.strongEtag(original.headers) ?: throw IOException("sin ETag fuerte")
         val response = Engines.current.downloadFetcher.fetch(
             original.uri,
-            mapOf("Range" to "bytes=$start-${end - 1}"),
+            mapOf("Range" to "bytes=$start-${end - 1}", "If-Range" to validator),
             source.referrer?.takeIf { UrlSafety.isWebUrl(it) },
             source.isPrivate,
             source.burnerId
         )
-        val range = DownloadPlan.parseContentRange(header(response.headers, "Content-Range"))
-        val valid = response.statusCode == 206 && range != null && range.start == start &&
-            (range.total < 0 || range.total == job.total) && DownloadPlan.sameEntity(original.headers, response.headers)
+        val valid = response.statusCode == 206 && response.uri == original.uri &&
+            DownloadPlan.matchesRange(original.headers, response.headers, start, end, job.total)
         if (!valid) {
             response.close()
             throw IOException("el servidor no entregó el tramo pedido")
@@ -570,11 +630,13 @@ object DownloadStore {
             }
             if (filled == 0) continue
             val chunk = ByteBuffer.wrap(buffer, 0, filled)
-            var offset = position
-            while (chunk.hasRemaining()) offset += channel.write(chunk, offset)
-            position += filled
-            job.received.addAndGet(filled.toLong())
-            onAdvance?.invoke(position)
+            while (chunk.hasRemaining()) {
+                val written = channel.write(chunk, position).toLong()
+                if (written == 0L) throw IOException("No se pudo escribir el archivo")
+                position += written
+                job.received.addAndGet(written)
+                onAdvance?.invoke(position)
+            }
 
             // Comprobar espacio libre cada ~32 MB (sin reserva previa del archivo).
             sinceCheck += filled
@@ -687,7 +749,8 @@ object DownloadStore {
     // ---------------------------------------------------------------
 
     @Synchronized
-    fun list(context: Context): List<DownloadEntry> {
+    fun list(context: Context, scope: String? = null): List<DownloadEntry> {
+        if (scope != null) return privateLists[scope]?.toList().orEmpty()
         val raw = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .getString(KEY, "[]") ?: "[]"
 
@@ -721,20 +784,35 @@ object DownloadStore {
         }.getOrNull()
 
     @Synchronized
-    fun remove(context: Context, id: String) {
-        val items = list(context).toMutableList()
+    fun remove(context: Context, id: String, scope: String? = null) {
+        val items = list(context, scope).toMutableList()
         val item = items.firstOrNull { it.id == id } ?: return
 
         fileFor(context, item)?.let { runCatching { it.delete() } }
 
         items.remove(item)
-        save(context, items)
+        if (scope == null) save(context, items) else privateLists[scope]?.remove(item)
     }
 
     @Synchronized
-    fun clearList(context: Context) {
+    fun clearList(context: Context, scope: String? = null) {
+        if (scope != null) {
+            privateLists[scope]?.clear()
+            return
+        }
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             .edit().putString(KEY, "[]").apply()
+    }
+
+    private fun record(
+        app: Context, target: File, url: String, mime: String, scope: String?, privateEntries: MutableList<DownloadEntry>?
+    ) {
+        val entry = DownloadEntry(
+            UUID.randomUUID().toString(), target.name, target.absolutePath,
+            if (scope == null) redactSourceUrl(url) else "", mime, target.length(), System.currentTimeMillis()
+        )
+        if (scope == null) add(app, entry)
+        else if (privateEntries != null) rememberPrivate(scope, privateEntries, entry)
     }
 
     @Synchronized
@@ -780,13 +858,13 @@ object DownloadStore {
         )
     }
 
-    /**
-     * Crea el archivo de destino de forma atómica (createNewFile) para que
-     * dos descargas simultáneas con el mismo nombre no se sobrescriban.
-     */
-    private fun reserveFile(folder: File, requested: String): File {
-        val root = folder.canonicalFile
-        val safeRequested = FileNames.sanitize(requested)
+    private fun createPartial(folder: File): File = File.createTempFile(processPrefix, ".part", folder)
+
+    private fun publishFile(partial: File, requested: String): File {
+        val root = requireNotNull(partial.parentFile).canonicalFile
+        val safeRequested = FileNames.sanitize(requested).let { name ->
+            if (name.startsWith(PART_PREFIX)) "archivo-$name" else name
+        }
         val dot = safeRequested.lastIndexOf('.')
         val base = if (dot > 0) safeRequested.substring(0, dot) else safeRequested
         val ext = if (dot > 0) safeRequested.substring(dot) else ""
@@ -800,11 +878,12 @@ object DownloadStore {
         synchronized(fileLock) {
             var file = candidate(safeRequested)
             var n = 1
-            while (!file.createNewFile()) {
+            while (java.nio.file.Files.exists(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 if (n > 999) error("Demasiados archivos con el mismo nombre")
                 file = candidate("$base ($n)$ext")
                 n++
             }
+            java.nio.file.Files.move(partial.toPath(), file.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
             return file
         }
     }

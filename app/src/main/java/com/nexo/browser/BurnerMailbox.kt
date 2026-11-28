@@ -22,6 +22,7 @@ object BurnerMailbox {
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val accounts = java.util.concurrent.ConcurrentHashMap<String, MailTmClient.Account>()
+    private val registrations = java.util.concurrent.ConcurrentHashMap<String, MailTmClient.Registration>()
     private val active = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val pending = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val errors = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -68,12 +69,11 @@ object BurnerMailbox {
         renderers[id]?.invoke()
         io.execute {
             try {
-                val account = createWithRetry()
-                val retain = synchronized(this) { if(active.contains(id)) { accounts[id]=account; true } else false }
-                if(!retain) runCatching { client.delete(account) }
+                val account = createWithRetry(id)
+                synchronized(this) { if (active.contains(id)) accounts[id] = account }
                 errors.remove(id)
             } catch (error: Exception) {
-                errors[id] = when ((error as? MailTmClient.ApiException)?.status) {
+                if (active.contains(id)) errors[id] = when ((error as? MailTmClient.ApiException)?.status) {
                     429 -> "mail.tm pidió esperar. Vuelve a intentarlo en un minuto."
                     else -> "No se pudo crear el buzón. Comprueba la conexión o inténtalo de nuevo."
                 }
@@ -90,18 +90,21 @@ object BurnerMailbox {
     }
 
     /** Un fallo de red puntual no deja la identidad sin buzón: dos reintentos con espera. */
-    private fun createWithRetry(): MailTmClient.Account {
+    private fun createWithRetry(id: String): MailTmClient.Account {
         var last: Exception? = null
         for (attempt in 0 until 3) {
+            check(active.contains(id)) { "La identidad se cerró." }
             try {
-                return client.create()
+                val registration = registrations[id] ?: client.newRegistration().also { registrations[id] = it }
+                check(active.contains(id)) { "La identidad se cerró." }
+                return client.completeRegistration(registration)
             } catch (error: MailTmClient.ApiException) {
                 if (error.status == 429 || error.status in 400..499) throw error
                 last = error
             } catch (error: Exception) {
                 last = error
             }
-            Thread.sleep(800L * (attempt + 1))
+            if (attempt < 2 && active.contains(id)) Thread.sleep(800L * (attempt + 1))
         }
         throw last ?: IllegalStateException("No se pudo crear el buzón.")
     }
@@ -111,8 +114,44 @@ object BurnerMailbox {
             renderers.remove(id)
             dialogs.remove(id)?.toList()?.forEach { it.dismiss() }
         }
-        val account = synchronized(this) { active.remove(id); errors.remove(id); accounts.remove(id) } ?: return
-        io.execute { runCatching { client.delete(account) } }
+        val account = synchronized(this) {
+            active.remove(id)
+            errors.remove(id)
+            accounts.remove(id)
+        }
+        io.execute {
+            val registration = registrations.remove(id)
+            if (account != null || registration?.attempted == true) {
+                runCatching {
+                    if (account != null) {
+                        try {
+                            client.delete(account)
+                            return@runCatching
+                        } catch (error: MailTmClient.ApiException) {
+                            if (error.status != 401) throw error
+                        }
+                    }
+                    registration?.let { client.delete(client.authorize(it)) }
+                }
+            }
+        }
+    }
+
+    private fun <T> withAccount(id: String, action: (MailTmClient.Account) -> T): T {
+        check(active.contains(id)) { "La identidad se cerró." }
+        val account = accounts[id] ?: error("El buzón todavía no está listo.")
+        try {
+            return action(account)
+        } catch (error: MailTmClient.ApiException) {
+            if (error.status != 401) throw error
+        }
+        val registration = registrations[id] ?: error("El buzón no se puede volver a autenticar.")
+        val renewed = client.authorize(registration)
+        synchronized(this) {
+            check(active.contains(id)) { "La identidad se cerró." }
+            accounts[id] = renewed
+        }
+        return action(renewed)
     }
 
     private fun copy(activity: Activity, label: String, value: String, toast: String) {
@@ -160,7 +199,9 @@ object BurnerMailbox {
         fun openMessage(account: MailTmClient.Account, message: MailTmClient.Message, row: View) {
             row.isEnabled = false
             io.execute {
-                val text = runCatching { client.text(account, message.id) }.getOrDefault("No se pudo cargar el mensaje.")
+                val text = runCatching { withAccount(id) { client.text(it, message.id) } }.getOrElse {
+                    it.message ?: "No se pudo cargar el mensaje."
+                }
                 main.post {
                     row.isEnabled = true
                     if (!dialog.isShowing || !active.contains(id)) return@post
@@ -204,7 +245,7 @@ object BurnerMailbox {
             refresh.isEnabled = false
             if (!quiet) status.text = "Cargando mensajes…"
             io.execute {
-                val messages = runCatching { client.list(account) }
+                val messages = runCatching { withAccount(id, client::list) }
                 main.post {
                     loading = false
                     if (!dialog.isShowing || !active.contains(id)) return@post

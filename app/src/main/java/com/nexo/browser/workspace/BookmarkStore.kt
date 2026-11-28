@@ -71,8 +71,11 @@ object BookmarkStore {
 
     fun isBookmarked(context: Context, url: String?): Boolean = findByUrl(file(context), url) != null
 
-    fun search(file: File, query: String, folder: String? = null): List<Bookmark> {
-        val items = list(file).let { all ->
+    fun search(file: File, query: String, folder: String? = null): List<Bookmark> =
+        search(list(file), query, folder)
+
+    fun search(bookmarks: List<Bookmark>, query: String, folder: String? = null): List<Bookmark> {
+        val items = bookmarks.let { all ->
             if (folder.isNullOrBlank()) all else all.filter { it.folder.equals(folder, ignoreCase = true) }
         }
         val terms = normalizeSearch(query).split(' ').filter { it.isNotBlank() }
@@ -277,19 +280,13 @@ object BookmarkStore {
                 .put("folder", bm.folder)
                 .put("createdAtMs", bm.createdAtMs))
         }
-        val tmp = File(file.parentFile, "${file.name}.tmp")
-        tmp.writeText(arr.toString(), Charsets.UTF_8)
-        if (file.exists()) file.delete()
-        if (!tmp.renameTo(file)) {
-            file.writeText(arr.toString(), Charsets.UTF_8)
-            tmp.delete()
-        }
+        com.nexo.browser.writeAtomicFile(file, arr.toString().toByteArray(Charsets.UTF_8))
     }
 
     private fun normalizeUrl(url: String?): String? {
         val trimmed = url?.trim().orEmpty()
         if (trimmed.isEmpty()) return null
-        return trimmed.trimEnd('/').lowercase(Locale.ROOT)
+        return UrlSafety.navigationKey(trimmed)
     }
 
     private fun sanitize(raw: String?, maxLen: Int): String =

@@ -244,6 +244,26 @@ test("hybrid loads Dark Reader only when light blocks or dark text would stay un
   assert.equal(ctrl.state.activeEngine, "dark_reader");
 });
 
+test("a late Dark Reader load cannot override a newer CSS policy", async () => {
+  const dom = loadingDom();
+  let resolveLoad;
+  const load = new Promise(resolve => { resolveLoad = resolve; });
+  let activations = 0;
+  let reader = null;
+  const ctrl = darkEngine.createController({
+    document: dom.doc, window: dom.win,
+    loadDarkReader: () => load, getDarkReader: () => reader
+  });
+  ctrl.applyConfig({ enabled: true, strategy: "dark_reader" });
+  dom.fire("DOMContentLoaded");
+  ctrl.applyConfig({ enabled: true, strategy: "css" });
+  reader = { enable() { activations++; }, disable() {} };
+  resolveLoad(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(activations, 0);
+  assert.equal(ctrl.state.activeEngine, "css");
+});
+
 test("Dark Reader's own colours are never mistaken for a native dark page (no dark→light→dark flicker)", async () => {
   const dom = loadingDom();
   let disabled = 0;

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<verification-metadata xmlns="https://schema.gradle.org/dependency-verification">
+   <configuration>
+      <verify-metadata>true</verify-metadata>
+      <verify-signatures>false</verify-signatures>
+      <trusted-artifacts>
+         <trust group="^(?!com\.cefrium(?:\.|$)).*$" regex="true" reason="This verification policy covers the Cefrium SDK and plugin"/>
+      </trusted-artifacts>
+   </configuration>
+   <components>
+      <component group="com.cefrium" name="cefrium-gradle-plugin" version="0.22.0">
+         <!-- The Android plugin classpath can identify the resolved JAR as an AAR. -->
+         <artifact name="cefrium-gradle-plugin-0.22.0.aar">
+            <sha256 value="8249f1d2fa6005a9d36f043331685f839c66c5d3383c59fa68169cab45d5fab3"/>
+         </artifact>
+         <artifact name="cefrium-gradle-plugin-0.22.0.jar">
+            <sha256 value="8249f1d2fa6005a9d36f043331685f839c66c5d3383c59fa68169cab45d5fab3"/>
+         </artifact>
+         <artifact name="cefrium-gradle-plugin-0.22.0.pom">
+            <sha256 value="e73349baa27ab3781edda716bbec0d1191d9a5b9220716037b3490f1f361ae22"/>
+         </artifact>
+      </component>
+      <component group="com.cefrium" name="cefrium-native-codecs-arm64-v8a" version="0.22.0">
+         <artifact name="cefrium-native-codecs-arm64-v8a-0.22.0.aar">
+            <sha256 value="82bebc755c5d6dbaed0448fc8a3bf14a71509154dde5969e4086099820840e86"/>
+         </artifact>
+         <artifact name="cefrium-native-codecs-arm64-v8a-0.22.0.pom">
+            <sha256 value="93cbb953cfa8e5d917e16311e993db40e982c1a3bcd1211d030b5515e78a0c8f"/>
+         </artifact>
+      </component>
+      <component group="com.cefrium" name="cefrium-native-codecs-armeabi-v7a" version="0.22.0">
+         <artifact name="cefrium-native-codecs-armeabi-v7a-0.22.0.aar">
+            <sha256 value="9d337a1fedc57870df23010f763037a925315954dfb92a7ac6f547c9b491f677"/>
+         </artifact>
+         <artifact name="cefrium-native-codecs-armeabi-v7a-0.22.0.pom">
+            <sha256 value="95fe211ecbd59fb5b504aecdb73fe1e3d5cd3fd9dfaffad542e5b2b7f1a0b602"/>
+         </artifact>
+      </component>
+      <component group="com.cefrium" name="cefrium-sdk-core" version="0.22.0">
+         <artifact name="cefrium-sdk-core-0.22.0.aar">
+            <sha256 value="3e3b27d404f604204048bb38b3d340d414d538a3688009ed9386e1ef276cb5e0"/>
+         </artifact>
+         <artifact name="cefrium-sdk-core-0.22.0.pom">
+            <sha256 value="a7279bd712de6cc3a33d46cba397d27e10c2b70f5ee57e01a302dc37c41aa412"/>
+         </artifact>
+      </component>
+      <component group="com.cefrium" name="com.cefrium.gradle.plugin" version="0.22.0">
+         <artifact name="com.cefrium.gradle.plugin-0.22.0.pom">
+            <sha256 value="575c5bdcba5cc0c840b437a50d62e9dcbdf2642ad31be2b903b5f1fcc6145510"/>
+         </artifact>
+      </component>
+   </components>
+</verification-metadata>

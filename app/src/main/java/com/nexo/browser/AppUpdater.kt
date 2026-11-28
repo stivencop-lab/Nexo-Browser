@@ -93,6 +93,7 @@ object AppUpdater {
             .proxyAuthenticator(okhttp3.Authenticator.NONE)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(45, TimeUnit.SECONDS)
+            .callTimeout(180, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(false)
             .addNetworkInterceptor { chain ->
@@ -322,6 +323,10 @@ object AppUpdater {
                 http.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) error("HTTP ${response.code}")
                     val body = String(readBoundedBytes(response.body, 512 * 1024), Charsets.UTF_8)
+                    val release = JSONObject(body)
+                    require(listOf(release.optString("tag_name"), release.optString("name")).any {
+                        Regex("""(?i)^v?\d+(?:\.\d+)*(?:[-+][\w.+-]+)?$""").matches(it.trim())
+                    } && release.optJSONArray("assets") != null) { "GitHub devolvió una versión con formato inválido." }
                     parseRelease(body, current, abis, app.packageName)
                 }
             }
@@ -466,6 +471,21 @@ object AppUpdater {
         val p = ThemeManager.palette(activity)
         val app = activity.applicationContext
         val cancelled = AtomicBoolean(false)
+        val activeCall = java.util.concurrent.atomic.AtomicReference<okhttp3.Call?>()
+        fun cancelTransfer() {
+            cancelled.set(true)
+            activeCall.get()?.cancel()
+        }
+        fun <T> get(request: Request, read: (okhttp3.Response) -> T): T {
+            val call = http.newCall(request)
+            activeCall.set(call)
+            if (cancelled.get()) call.cancel()
+            return try {
+                call.execute().use(read)
+            } finally {
+                activeCall.compareAndSet(call, null)
+            }
+        }
 
         lateinit var progressSheet: Dialog
         val statusText = TextView(activity).apply {
@@ -489,7 +509,7 @@ object AppUpdater {
                 addView(detailText)
             })
             addView(NexoUi.button(activity, "Cancelar") {
-                cancelled.set(true)
+                cancelTransfer()
                 progressSheet.dismiss()
             }, NexoUi.buttonParams(activity, 12f))
         }
@@ -502,18 +522,21 @@ object AppUpdater {
             )
         ).apply {
             setCanceledOnTouchOutside(false)
-            setOnCancelListener { cancelled.set(true) }
+            setOnCancelListener { cancelTransfer() }
         }
 
         io.execute {
+            var staged: File? = null
             val result = runCatching {
                 val updatesDir = File(app.cacheDir, "updates").apply {
                     mkdirs()
-                    listFiles()?.forEach { it.delete() }
+                    val cutoff = System.currentTimeMillis() - 24L * 60 * 60 * 1000
+                    listFiles()?.filter { it.name.startsWith("nexo-update-") && it.lastModified() < cutoff }
+                        ?.forEach { it.delete() }
                 }
                 val expectedSha256 = info.sha256SumsUrl?.let { sumsUrl ->
                     val req = Request.Builder().url(sumsUrl).header("User-Agent", "NexoBrowser").build()
-                    http.newCall(req).execute().use { resp ->
+                    get(req) { resp ->
                         if (!resp.isSuccessful) error("No se pudo descargar SHA256SUMS.txt (HTTP ${resp.code})")
                         val bytes = readBoundedBytes(resp.body, MAX_SUMS_BYTES)
                         parseSha256Sums(String(bytes, Charsets.UTF_8))[asset.name]
@@ -521,10 +544,10 @@ object AppUpdater {
                     }
                 }
 
-                val targetFile = File(updatesDir, "nexo-update-${info.version}.apk")
+                val targetFile = File.createTempFile("nexo-update-${info.version}-", ".apk", updatesDir).also { staged = it }
                 val digest = MessageDigest.getInstance("SHA-256")
                 val req = Request.Builder().url(asset.downloadUrl).header("User-Agent", "NexoBrowser").build()
-                http.newCall(req).execute().use { resp ->
+                get(req) { resp ->
                     if (!resp.isSuccessful) error("Error al descargar APK (HTTP ${resp.code})")
                     val body = resp.body ?: error("Respuesta vacía")
                     val total = body.contentLength().takeIf { it > 0 } ?: asset.sizeBytes
@@ -576,13 +599,17 @@ object AppUpdater {
                         progressBar.isIndeterminate = true
                     }
                 }
+                if (cancelled.get()) throw java.io.InterruptedIOException("Descarga cancelada")
                 verifyApkSignature(app, targetFile)
                 targetFile
-            }
+            }.onFailure { staged?.delete() }
 
             main.post {
                 if (progressSheet.isShowing) runCatching { progressSheet.dismiss() }
-                if (cancelled.get() || activity.isFinishing || activity.isDestroyed) return@post
+                if (cancelled.get() || activity.isFinishing || activity.isDestroyed) {
+                    staged?.let { file -> io.execute { file.delete() } }
+                    return@post
+                }
                 result.fold(
                     onSuccess = { apkFile ->
                         promptInstall(activity, apkFile)

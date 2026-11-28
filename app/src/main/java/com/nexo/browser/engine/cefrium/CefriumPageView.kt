@@ -48,6 +48,7 @@ class CefriumPageView(context: Context) : FrameLayout(context), EngineView, Pull
             activeTab != null && BrowserMediaController.shouldKeepAlive(activeTab.id, 10_000L)
         },
         onRecoveryChanged = { recovering -> onRecoveryStateChanged?.invoke(recovering) },
+        onRecoveryFailed = { TabManager.notifyMessage("No se pudo recuperar la vista. Puedes recargar la página.") },
         recreateBrowser = { browser -> current?.recreateSurface(browser) == true }
     )
 

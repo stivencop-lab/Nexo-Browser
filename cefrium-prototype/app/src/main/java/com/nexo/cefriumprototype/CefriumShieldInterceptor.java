@@ -11,7 +11,18 @@ import java.util.Locale;
 final class CefriumShieldInterceptor implements CefriumResourceInterceptor {
     private static final String[] TRACKING_HOSTS = {"doubleclick.net", "googlesyndication.com", "adservice.google.com"};
 
+    private final String smokeTarget;
+    private volatile boolean blockedSmokeTarget;
+
+    CefriumShieldInterceptor(String smokeTarget) { this.smokeTarget = smokeTarget; }
+
+    boolean blockedSmokeTarget() { return blockedSmokeTarget; }
+
     @Override public boolean shouldBlockRequest(CefriumBrowser.ResourceRequest request) {
+        if (smokeTarget.equals(request.url)) {
+            blockedSmokeTarget = true;
+            return true;
+        }
         String host = hostOf(request.url);
         if (host == null) return false;
         for (String blocked : TRACKING_HOSTS) {

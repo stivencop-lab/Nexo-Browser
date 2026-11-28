@@ -3,7 +3,6 @@ package com.nexo.browser.extensions.nxr
 import com.google.re2j.Pattern
 import com.nexo.browser.extensions.ExtensionManifest
 import com.nexo.browser.shield.UrlParts
-import okhttp3.HttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -120,22 +119,13 @@ internal object DnrBridge {
         }
 
         companion object {
-            private val siteCache = object : LinkedHashMap<String, String>(64, 0.75f, true) {
-                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 512
-            }
-
             fun from(url: String, initiator: String, top: String, type: String, method: String): Request? {
                 val host = UrlParts.host(url)?.trimEnd('.') ?: return null
                 return Request(url, host, UrlParts.host(initiator)?.trimEnd('.'), NxrPermissions.extractHost(top),
                     type, method.lowercase(Locale.ROOT))
             }
 
-            private fun registrableHost(host: String): String = synchronized(siteCache) {
-                siteCache.getOrPut(host) {
-                    runCatching { HttpUrl.Builder().scheme("https").host(host).build().topPrivateDomain() }
-                        .getOrNull() ?: host
-                }
-            }
+            private fun registrableHost(host: String): String = UrlParts.siteOf(host)
         }
     }
 

@@ -85,7 +85,7 @@ object TabTools {
         })
 
         // --- Ruta de red ---------------------------------------------------
-        body.addView(NexoUi.section(activity, "Ruta de red de esta pestaña"))
+        body.addView(NexoUi.section(activity, if (tab.burnerId != null) "Ruta de red de la identidad" else "Ruta de red"))
         var route = when {
             current.type == "socks" && current.host == "127.0.0.1" && current.port == 9050 -> "tor"
             current.type == "socks" -> "socks"
@@ -114,7 +114,7 @@ object TabTools {
             routeHint.text = when (route) {
                 "tor" -> "Orbot debe estar iniciado con su puerto SOCKS en 9050. El DNS se resuelve en Tor."
                 "socks" -> "SOCKS5 con DNS remoto: el servidor resuelve los nombres."
-                "http" -> "Proxy HTTP para el tráfico web de esta pestaña."
+                "http" -> "Proxy HTTP para el tráfico web de la identidad Burner."
                 else -> ""
             }
         }
@@ -216,8 +216,11 @@ object TabTools {
             })
         }
         body.addView(NexoUi.note(activity,
-            "La ruta solo afecta al tráfico web de esta pestaña; no es una VPN." +
-                if (tab.burnerId != null) " Burner aísla cookies y datos; no garantiza anonimato." else ""
+            if (tab.burnerId != null) {
+                "El proxy se aplica al tráfico web de todas las pestañas de esta identidad Burner."
+            } else {
+                "Para usar un proxy, abre una identidad Burner."
+            }
         ))
 
         val subtitle = listOfNotNull(host.ifBlank { null }, tab.networkState.takeIf { it.isNotBlank() }).joinToString(" · ")

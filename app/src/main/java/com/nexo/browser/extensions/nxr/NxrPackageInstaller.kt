@@ -28,6 +28,9 @@ import java.util.zip.ZipInputStream
  * Puro sobre [File]: probado en la JVM.
  */
 object NxrPackageInstaller {
+    internal val mutationLock = Any()
+    private val activeStages = HashSet<File>()
+    internal val catalogRevision = java.util.concurrent.atomic.AtomicLong()
     const val MAX_UNCOMPRESSED_BYTES = 512L * 1024L * 1024L
     const val MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024
     const val MAX_FILES = 20_000
@@ -280,8 +283,10 @@ object NxrPackageInstaller {
         enableAfterInstall: Boolean? = null,
         expectedId: String? = null
     ): InstalledExtension {
-        rootDir.mkdirs()
-        val staging = File(rootDir, "nxr.staging-${System.nanoTime()}")
+        val staging = synchronized(mutationLock) {
+            rootDir.mkdirs()
+            File(rootDir, "nxr.staging-${System.nanoTime()}").also { activeStages.add(it.absoluteFile) }
+        }
         val filesDir = File(staging, FILES_DIR)
         filesDir.mkdirs()
 
@@ -308,100 +313,97 @@ object NxrPackageInstaller {
             val missingFiles = requiredScriptFiles.filterNot { it in archive.entryPaths }
             val (recommendedEnabled, _) = evaluateRisk(capabilities, archive.signatureVerified, missingFiles)
 
-            val extDir = File(rootDir, id)
-            val existingMeta = readInstalledMeta(extDir)
+            return synchronized(mutationLock) {
+                val extDir = File(rootDir, id)
+                if (!recoverBackup(rootDir, id)) throw InstallException("No se pudo recuperar la extensión existente.")
+                val existingMeta = readInstalledMeta(extDir)
 
-            // Continuidad de clave criptográfica: nunca permitir degradación sin firma o cambio de clave.
-            if (existingMeta != null && !existingMeta.publicKeySha256.isNullOrBlank()) {
-                if (!archive.signatureVerified || archive.publicKeySha256.isNullOrBlank()) {
-                    throw InstallException(
-                        "Actualización bloqueada por seguridad: un paquete sin firma no puede sobrescribir la extensión firmada «${existingMeta.name}»."
-                    )
-                }
-                if (archive.publicKeySha256 != existingMeta.publicKeySha256) {
-                    throw InstallException(
-                        "Actualización bloqueada por seguridad: la huella de la clave pública no coincide con la extensión instalada «${existingMeta.name}»."
-                    )
-                }
-            }
-
-            val bestIcon = manifest.icons.entries.maxByOrNull { it.key }?.value
-                ?.let { ExtensionManifest.normalizePath(it) }
-                ?.takeIf { it in archive.entryPaths }
-
-            val mergedSource = sourceInfo ?: existingMeta?.sourceInfo() ?: SourceInfo()
-            val installed = InstalledExtension(
-                id = id,
-                name = messages.localize(manifest.name),
-                version = manifest.version,
-                description = messages.localize(manifest.description),
-                manifestVersion = manifest.manifestVersion,
-                sourceType = archive.sourceType,
-                installedAt = System.currentTimeMillis(),
-                iconPath = bestIcon,
-                permissions = manifest.permissions.sorted(),
-                hostPermissions = requestedHosts,
-                unsupportedApis = capabilities.unsupportedApis,
-                limitedApis = capabilities.limitedApis,
-                compatibilityLevel = capabilities.level.name,
-                sourceOrigin = mergedSource.sourceOrigin,
-                storeId = mergedSource.storeId ?: archive.crxId,
-                sourceUrl = mergedSource.sourceUrl,
-                updateUrl = mergedSource.updateUrl,
-                publicKeySha256 = archive.publicKeySha256 ?: mergedSource.publicKeySha256,
-                developer = mergedSource.developer,
-                signatureVerified = archive.signatureVerified
-            )
-            File(staging, META_FILE).writeText(installed.toJson().toString(), Charsets.UTF_8)
-
-            // Conservar almacenamiento existente (global y particionado por origen) si es una actualización.
-            val existingPolicy = if (extDir.isDirectory) NxrPermissions.readPolicy(extDir) else null
-            val initialEnabled = enableAfterInstall ?: existingPolicy?.enabled ?: recommendedEnabled
-            val policy = (existingPolicy ?: NxrPermissions.Policy(enabled = initialEnabled, allowInPrivate = false))
-                .copy(
-                    enabled = initialEnabled,
-                    grantedHostPatterns = effectiveHosts
-                )
-            NxrPermissions.writePolicy(staging, policy)
-
-            val existingStorage = File(extDir, NxrStorage.STORAGE_FILE)
-            if (existingStorage.isFile) {
-                existingStorage.copyTo(File(staging, NxrStorage.STORAGE_FILE), overwrite = true)
-            }
-            val existingOrigins = File(extDir, NxrStorage.ORIGINS_DIR)
-            if (existingOrigins.isDirectory) {
-                existingOrigins.copyRecursively(File(staging, NxrStorage.ORIGINS_DIR), overwrite = true)
-            }
-
-            // Intercambio transaccional con respaldo y reversión automática si falla el cambio.
-            val backup = if (extDir.exists()) File(rootDir, "$id.backup-${System.nanoTime()}") else null
-            if (backup != null) {
-                if (!extDir.renameTo(backup)) {
-                    throw InstallException("No se pudo preparar la actualización atómica de la extensión.")
-                }
-            }
-            try {
-                if (!staging.renameTo(extDir)) {
-                    staging.copyRecursively(extDir, overwrite = true)
-                    if (!File(extDir, META_FILE).isFile || !File(File(extDir, FILES_DIR), "manifest.json").isFile) {
-                        throw InstallException("La copia de la extensión quedó incompleta.")
+                // Continuidad de clave criptográfica: nunca permitir degradación sin firma o cambio de clave.
+                if (existingMeta != null && !existingMeta.publicKeySha256.isNullOrBlank()) {
+                    if (!archive.signatureVerified || archive.publicKeySha256.isNullOrBlank()) {
+                        throw InstallException(
+                            "Actualización bloqueada por seguridad: un paquete sin firma no puede sobrescribir la extensión firmada «${existingMeta.name}»."
+                        )
                     }
-                    staging.deleteRecursively()
+                    if (archive.publicKeySha256 != existingMeta.publicKeySha256) {
+                        throw InstallException(
+                            "Actualización bloqueada por seguridad: la huella de la clave pública no coincide con la extensión instalada «${existingMeta.name}»."
+                        )
+                    }
+                }
+
+                val bestIcon = manifest.icons.entries.maxByOrNull { it.key }?.value
+                    ?.let { ExtensionManifest.normalizePath(it) }
+                    ?.takeIf { it in archive.entryPaths }
+
+                val mergedSource = sourceInfo ?: existingMeta?.sourceInfo() ?: SourceInfo()
+                val installed = InstalledExtension(
+                    id = id,
+                    name = messages.localize(manifest.name),
+                    version = manifest.version,
+                    description = messages.localize(manifest.description),
+                    manifestVersion = manifest.manifestVersion,
+                    sourceType = archive.sourceType,
+                    installedAt = System.currentTimeMillis(),
+                    iconPath = bestIcon,
+                    permissions = manifest.permissions.sorted(),
+                    hostPermissions = requestedHosts,
+                    unsupportedApis = capabilities.unsupportedApis,
+                    limitedApis = capabilities.limitedApis,
+                    compatibilityLevel = capabilities.level.name,
+                    sourceOrigin = mergedSource.sourceOrigin,
+                    storeId = mergedSource.storeId ?: archive.crxId,
+                    sourceUrl = mergedSource.sourceUrl,
+                    updateUrl = mergedSource.updateUrl,
+                    publicKeySha256 = archive.publicKeySha256 ?: mergedSource.publicKeySha256,
+                    developer = mergedSource.developer,
+                    signatureVerified = archive.signatureVerified
+                )
+                File(staging, META_FILE).writeText(installed.toJson().toString(), Charsets.UTF_8)
+
+                // Conservar almacenamiento existente (global y particionado por origen) si es una actualización.
+                val existingPolicy = if (extDir.isDirectory) NxrPermissions.readPolicy(extDir) else null
+                val initialEnabled = enableAfterInstall ?: existingPolicy?.enabled ?: recommendedEnabled
+                val policy = (existingPolicy ?: NxrPermissions.Policy(enabled = initialEnabled, allowInPrivate = false))
+                    .copy(
+                        enabled = initialEnabled,
+                        grantedHostPatterns = effectiveHosts
+                    )
+                NxrPermissions.writePolicy(staging, policy)
+
+                val existingStorage = File(extDir, NxrStorage.STORAGE_FILE)
+                if (existingStorage.isFile) {
+                    existingStorage.copyTo(File(staging, NxrStorage.STORAGE_FILE), overwrite = true)
+                }
+                val existingOrigins = File(extDir, NxrStorage.ORIGINS_DIR)
+                if (existingOrigins.isDirectory) {
+                    existingOrigins.copyRecursively(File(staging, NxrStorage.ORIGINS_DIR), overwrite = true)
+                }
+
+                // Intercambio transaccional con respaldo y reversión automática si falla el cambio.
+                val backup = if (extDir.exists()) File(rootDir, "$id.backup-${System.nanoTime()}") else null
+                if (backup != null) {
+                    if (!extDir.renameTo(backup)) {
+                        throw InstallException("No se pudo preparar la actualización atómica de la extensión.")
+                    }
+                }
+                if (!staging.renameTo(extDir)) {
+                    if (backup != null && !backup.renameTo(extDir)) {
+                        throw InstallException("La copia válida quedó respaldada para su recuperación.")
+                    }
+                    throw InstallException("No se pudo publicar la extensión.")
                 }
                 backup?.deleteRecursively()
-            } catch (swapErr: Throwable) {
-                if (extDir.exists()) extDir.deleteRecursively()
-                if (backup != null && backup.exists()) {
-                    backup.renameTo(extDir)
-                }
-                throw swapErr
+                catalogRevision.incrementAndGet()
+                DnrBridge.refresh(rootDir, id)
+                installed
             }
-            DnrBridge.refresh(rootDir, id)
-            return installed
         } catch (t: Throwable) {
             staging.deleteRecursively()
             if (t is InstallException) throw t
             throw InstallException(t.message ?: "Error al instalar la extensión.")
+        } finally {
+            synchronized(mutationLock) { activeStages.remove(staging.absoluteFile) }
         }
     }
 
@@ -411,23 +413,51 @@ object NxrPackageInstaller {
         return runCatching { InstalledExtension.fromJson(JSONObject(meta.readText(Charsets.UTF_8))) }.getOrNull()
     }
 
-    /** Elimina directorios temporales huérfanos `.staging-*` o `.backup-*` tras cierres bruscos. */
-    fun cleanupOrphanDirs(rootDir: File) {
-        if (!rootDir.isDirectory) return
-        rootDir.listFiles()?.forEach { dir ->
-            if (dir.isDirectory && (dir.name.contains(".staging-") || dir.name.contains(".backup-"))) {
-                runCatching { dir.deleteRecursively() }
+    private val backupName = Regex("(.+)\\.backup--?\\d+")
+
+    private fun validVersion(file: File, id: String): Boolean =
+        readInstalledMeta(file)?.id == id && File(File(file, FILES_DIR), "manifest.json").isFile
+
+    private fun recoverBackup(rootDir: File, id: String): Boolean {
+        val active = File(rootDir, id)
+        val backups = rootDir.listFiles()?.filter { dir ->
+            dir.isDirectory && backupName.matchEntire(dir.name)?.groupValues?.get(1) == id
+        }.orEmpty()
+        if (backups.isEmpty()) return true
+        if (!validVersion(active, id)) {
+            val previous = backups.filter { validVersion(it, id) }.maxByOrNull(File::lastModified)
+                ?: return false
+            val displaced = File(rootDir, "nxr.staging-${System.nanoTime()}")
+            if (active.exists() && !active.renameTo(displaced)) return false
+            if (!previous.renameTo(active)) {
+                if (displaced.exists()) displaced.renameTo(active)
+                return false
             }
+            displaced.deleteRecursively()
+            catalogRevision.incrementAndGet()
         }
+        backups.forEach { if (it.exists()) it.deleteRecursively() }
+        return true
     }
 
-    /** Elimina por completo la extensión: archivos extraídos, almacenamiento local y permisos. */
-    fun uninstall(rootDir: File, extId: String): Boolean {
+    fun cleanupOrphanDirs(rootDir: File) = synchronized(mutationLock) {
+        val dirs = rootDir.listFiles()?.filter { it.isDirectory }.orEmpty()
+        dirs.mapNotNull { backupName.matchEntire(it.name)?.groupValues?.get(1) }
+            .distinct().forEach { recoverBackup(rootDir, it) }
+        dirs.filter { it.name.startsWith("nxr.staging-") && it.absoluteFile !in activeStages }
+            .forEach { it.deleteRecursively() }
+    }
+
+    /** Elimina los archivos y el almacenamiento de la extensión seleccionada por el usuario. */
+    fun uninstall(rootDir: File, extId: String): Boolean = synchronized(mutationLock) {
         val safe = runCatching { NxrStorage.sanitizeId(extId) }.getOrNull() ?: return false
         val dir = File(rootDir, safe)
         val canonicalBase = rootDir.canonicalPath + File.separator
         if (!dir.canonicalPath.startsWith(canonicalBase)) return false
-        return if (dir.exists()) dir.deleteRecursively() else false
+        if (!recoverBackup(rootDir, safe)) return false
+        val removed = dir.exists() && dir.deleteRecursively()
+        if (removed) catalogRevision.incrementAndGet()
+        removed
     }
 
     fun listInstalled(rootDir: File): List<InstalledExtension> {

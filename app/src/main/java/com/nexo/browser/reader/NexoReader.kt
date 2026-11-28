@@ -133,6 +133,8 @@ object NexoReader {
             })();
         """.trimIndent()
 
+        val sourceUrl = tab.url
+        val sourceGeneration = session.documentGeneration()
         val completed = AtomicBoolean(false)
         val timeout = Runnable {
             if (completed.compareAndSet(false, true) && !activity.isFinishing && !activity.isDestroyed) {
@@ -145,7 +147,9 @@ object NexoReader {
             main.removeCallbacks(timeout)
             if (!completed.compareAndSet(false, true)) return@evaluateJsonInMainFrame
             main.post {
-                if (activity.isFinishing || activity.isDestroyed) return@post
+                if (activity.isFinishing || activity.isDestroyed || TabManager.activeTab() !== tab ||
+                    tab.session !== session || tab.url != sourceUrl || session.documentGeneration() != sourceGeneration
+                ) return@post
                 val obj = NexoAiPageAgent.unwrapJsonObject(raw)
                 if (obj == null) {
                     Toastish.show(activity, "No se pudo analizar el contenido de esta página.")
@@ -158,14 +162,34 @@ object NexoReader {
                     Toastish.show(activity, reason)
                     return@post
                 }
-                val article = OfflineArticleStore.parseFromExtractorJson(obj, tab.url)
+                val article = OfflineArticleStore.parseFromExtractorJson(obj, sourceUrl)
                 if (article == null) {
                     Toastish.show(activity, "No se encontró texto legible suficiente en esta página.")
                     return@post
                 }
-                showArticleDialog(activity, article, openedOffline = false) { url ->
-                    TabManager.navigate(url)
+                showArticleDialog(activity, article, openedOffline = false, privateSource = tab.isPrivate) { url ->
+                    if (TabManager.activeTab() === tab) TabManager.navigate(url)
                 }
+            }
+        }
+    }
+
+    internal fun loadSavedArticles(context: Context, onReady: (OfflineArticleStore.SavedArticles) -> Unit) {
+        val dir = OfflineArticleStore.directory(context)
+        io.execute {
+            val snapshot = OfflineArticleStore.metadata(dir)
+            main.post { onReady(snapshot) }
+        }
+    }
+
+    internal fun openSavedArticle(activity: Activity, id: String, onOpenUrl: (String) -> Unit) {
+        val dir = OfflineArticleStore.directory(activity)
+        io.execute {
+            val article = OfflineArticleStore.get(dir, id)
+            main.post {
+                if (activity.isFinishing || activity.isDestroyed) return@post
+                if (article == null) Toastish.show(activity, "Este artículo ya no está disponible.")
+                else showArticleDialog(activity, article, openedOffline = true, onOpenUrl = onOpenUrl)
             }
         }
     }
@@ -173,12 +197,11 @@ object NexoReader {
     /** Hoja con todos los artículos guardados para lectura sin conexión. */
     fun openSavedArticlesSheet(activity: Activity, onOpenUrl: (String) -> Unit) {
         val dir = OfflineArticleStore.directory(activity)
-        val p = ThemeManager.palette(activity)
         lateinit var sheet: Dialog
 
-        fun buildContent(): View {
-            val saved = OfflineArticleStore.list(dir)
-            val totalKb = (OfflineArticleStore.totalBytes(dir) / 1024L).coerceAtLeast(0L)
+        fun buildContent(snapshot: OfflineArticleStore.SavedArticles): View {
+            val saved = snapshot.articles
+            val totalKb = snapshot.totalBytes / 1024L
             val body = NexoUi.column(activity)
             if (saved.isEmpty()) {
                 body.addView(NexoUi.emptyState(
@@ -202,7 +225,7 @@ object NexoReader {
                 }
                 body.addView(NexoUi.actionRow(activity, R.drawable.ic_menu_reader, art.title, sub) {
                     sheet.dismiss()
-                    showArticleDialog(activity, art, openedOffline = true, onOpenUrl = onOpenUrl)
+                    openSavedArticle(activity, art.id, onOpenUrl)
                 }, NexoUi.buttonParams(activity, 6f))
             }
             body.addView(NexoUi.button(activity, "Vaciar artículos guardados", danger = true) {
@@ -211,9 +234,14 @@ object NexoReader {
                     .setMessage("Se borrarán los ${saved.size} artículos guardados localmente.")
                     .setNegativeButton("Cancelar", null)
                     .setPositiveButton("Vaciar") { _, _ ->
-                        OfflineArticleStore.clear(dir)
                         sheet.dismiss()
-                        Toastish.show(activity, "Artículos sin conexión eliminados.")
+                        io.execute {
+                            val removed = runCatching { OfflineArticleStore.clear(dir) }.getOrDefault(false)
+                            main.post {
+                                if (!activity.isDestroyed) Toastish.show(activity, if (removed)
+                                    "Artículos sin conexión eliminados." else "Quedan artículos sin eliminar.")
+                            }
+                        }
                     }.show()
             }, NexoUi.buttonParams(activity, 12f))
             return NexoSheets.column(
@@ -223,7 +251,9 @@ object NexoReader {
             )
         }
 
-        sheet = NexoSheets.show(activity, buildContent())
+        loadSavedArticles(activity) { snapshot ->
+            if (!activity.isFinishing && !activity.isDestroyed) sheet = NexoSheets.show(activity, buildContent(snapshot))
+        }
     }
 
     /**
@@ -235,26 +265,33 @@ object NexoReader {
         activity: Activity,
         article: OfflineArticleStore.ReaderArticle,
         openedOffline: Boolean,
+        privateSource: Boolean = false,
         onOpenUrl: (String) -> Unit
     ) {
         if (activity.isFinishing || activity.isDestroyed) return
         val p = ThemeManager.palette(activity)
         val dir = OfflineArticleStore.directory(activity)
         var prefs = readPrefs(activity)
-        var isSaved = OfflineArticleStore.get(dir, article.id) != null ||
-            OfflineArticleStore.findByUrl(dir, article.url) != null
+        var savedId: String? = null
 
         // Estado real de TextToSpeech (inicializado solo cuando el usuario pulsa Escuchar).
         var tts: TextToSpeech? = null
         var ttsReady = false
         var ttsPlaying = false
         var ttsIndex = 0
+        var ttsOffset = 0
+        var ttsChunkEnd = 0
+        var ttsGeneration = 0L
+        var ttsUtterance: String? = null
+        var ttsRequested = false
         val readableBlocks = article.blocks.map { it.text }.filter { it.isNotBlank() }
         val blockViews = ArrayList<TextView>()
         var activeAiCancel: NexoAiClient.CancelHandle? = null
 
         val dialog = Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        if (privateSource) com.nexo.browser.WindowPrivacy.protect(dialog.window, true)
+        else com.nexo.browser.WindowPrivacy.inherit(dialog.window, activity.window)
         dialog.window?.apply {
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
@@ -303,8 +340,9 @@ object NexoReader {
         }
         val saveBtn = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_menu_bookmark)
-            contentDescription = if (isSaved) "Quitar de sin conexión" else "Guardar sin conexión"
-            ThemeManager.styleIconButton(activity, this, isSaved)
+            contentDescription = "Guardar sin conexión"
+            ThemeManager.styleIconButton(activity, this, false)
+            isEnabled = false
         }
         val ttsBtn = ImageButton(activity).apply {
             setImageResource(R.drawable.ic_menu_volume_on)
@@ -445,17 +483,18 @@ object NexoReader {
             }
             val aiSettings = NexoAiConfig.read(activity)
             val articleHost = runCatching { URI(article.url).host }.getOrNull()
-            val aiPermitted = aiSettings.enabled && (articleHost.isNullOrBlank() || NexoAiConfig.isHostAllowed(activity, articleHost))
+            val aiPermitted = aiSettings.enabled && (!privateSource || aiSettings.allowPrivateTabs) &&
+                (articleHost.isNullOrBlank() || NexoAiConfig.isHostAllowed(activity, articleHost))
             if (aiPermitted) {
                 actionChips += NexoUi.chip(activity, "Resumir con Nexo AI", false) {
-                    runReaderAiTask(activity, article, "Resume este artículo en 4-6 puntos clave claros y concisos.", aiBox) { handle ->
+                    runReaderAiTask(activity, article, privateSource, "Resume este artículo en 4-6 puntos clave claros y concisos.", aiBox) { handle ->
                         activeAiCancel?.cancel()
                         activeAiCancel = handle
                     }
                 }
                 actionChips += NexoUi.chip(activity, "Traducir resumen (IA)", false) {
                     val targetLang = BrowserPrefs.translatorTarget(activity)
-                    runReaderAiTask(activity, article, "Traduce los puntos principales de este artículo al idioma '$targetLang'.", aiBox) { handle ->
+                    runReaderAiTask(activity, article, privateSource, "Traduce los puntos principales de este artículo al idioma '$targetLang'.", aiBox) { handle ->
                         activeAiCancel?.cancel()
                         activeAiCancel = handle
                     }
@@ -552,6 +591,8 @@ object NexoReader {
 
         // --- Control real de TextToSpeech ---
         fun stopTtsPlayback(hideBar: Boolean = false) {
+            ttsUtterance = null
+            ttsRequested = false
             ttsPlaying = false
             runCatching { tts?.stop() }
             playPauseBtn.text = "Reproducir"
@@ -565,6 +606,8 @@ object NexoReader {
         }
 
         fun shutdownTts() {
+            ttsUtterance = null
+            ttsRequested = false
             ttsPlaying = false
             ttsReady = false
             runCatching {
@@ -579,6 +622,7 @@ object NexoReader {
             if (!ttsReady || readableBlocks.isEmpty()) return
             if (ttsIndex !in readableBlocks.indices) {
                 ttsIndex = 0
+                ttsOffset = 0
                 stopTtsPlayback(hideBar = false)
                 ttsStatus.text = "Lectura completada."
                 return
@@ -588,9 +632,21 @@ object NexoReader {
             ThemeManager.styleIconButton(activity, ttsBtn, true)
             ttsStatus.text = "Leyendo párrafo ${ttsIndex + 1} de ${readableBlocks.size} · %.2gx".format(Locale.US, prefs.ttsRate)
             highlightSpeakingBlock(ttsIndex)
+            val text = readableBlocks[ttsIndex]
+            val limit = TextToSpeech.getMaxSpeechInputLength().coerceAtLeast(2)
+            var end = minOf(ttsOffset + limit, text.length)
+            if (end < text.length && text[end - 1].isHighSurrogate()) end--
+            if (end < text.length) {
+                val space = text.lastIndexOf(' ', end - 1)
+                if (space > ttsOffset + limit / 2) end = space + 1
+            }
+            ttsChunkEnd = end
+            val utterance = "nexo-reader-${++ttsGeneration}"
+            ttsUtterance = utterance
             runCatching {
                 engine.setSpeechRate(prefs.ttsRate)
-                engine.speak(readableBlocks[ttsIndex], TextToSpeech.QUEUE_FLUSH, null, "nexo-reader-$ttsIndex")
+                check(engine.speak(text.substring(ttsOffset, end), TextToSpeech.QUEUE_FLUSH, null, utterance) ==
+                    TextToSpeech.SUCCESS)
             }.onFailure {
                 stopTtsPlayback(hideBar = false)
                 ttsStatus.text = "No se pudo reproducir el audio TTS en este dispositivo."
@@ -603,8 +659,9 @@ object NexoReader {
                 return
             }
             ttsBar.visibility = View.VISIBLE
-            if (tts != null && ttsReady) {
-                speakCurrentBlock()
+            ttsRequested = true
+            if (tts != null) {
+                if (ttsReady) speakCurrentBlock()
                 return
             }
             ttsStatus.text = "Inicializando motor de voz de Android…"
@@ -615,6 +672,7 @@ object NexoReader {
                         return@post
                     }
                     if (status != TextToSpeech.SUCCESS) {
+                        shutdownTts()
                         ttsStatus.text = "Motor de síntesis de voz no disponible en este dispositivo."
                         Toastish.show(activity, "Android TextToSpeech no está disponible.")
                         return@post
@@ -635,11 +693,14 @@ object NexoReader {
                         override fun onStart(utteranceId: String?) = Unit
                         override fun onDone(utteranceId: String?) {
                             main.post {
-                                if (!ttsPlaying || !dialog.isShowing) return@post
-                                ttsIndex++
-                                if (ttsIndex < readableBlocks.size) {
-                                    speakCurrentBlock()
-                                } else {
+                                if (!ttsPlaying || !dialog.isShowing || utteranceId != ttsUtterance) return@post
+                                ttsOffset = ttsChunkEnd
+                                if (ttsOffset >= readableBlocks[ttsIndex].length) {
+                                    ttsIndex++
+                                    ttsOffset = 0
+                                }
+                                if (ttsIndex < readableBlocks.size) speakCurrentBlock()
+                                else {
                                     ttsIndex = 0
                                     stopTtsPlayback(hideBar = false)
                                     ttsStatus.text = "Fin del artículo."
@@ -648,37 +709,54 @@ object NexoReader {
                         }
                         @Deprecated("Deprecated in Android API")
                         override fun onError(utteranceId: String?) {
-                            main.post { stopTtsPlayback(hideBar = false) }
+                            main.post {
+                                if (utteranceId != null && utteranceId == ttsUtterance && dialog.isShowing) {
+                                    stopTtsPlayback(hideBar = false)
+                                    ttsStatus.text = "No se pudo reproducir el audio TTS en este dispositivo."
+                                }
+                            }
                         }
                     })
-                    speakCurrentBlock()
+                    if (ttsRequested) speakCurrentBlock()
                 }
             }
         }
 
         // --- Eventos de controles ---
+        fun updateSavedState(id: String?) {
+            savedId = id
+            ThemeManager.styleIconButton(activity, saveBtn, id != null)
+            saveBtn.contentDescription = if (id == null) "Guardar sin conexión" else "Quitar de sin conexión"
+            saveBtn.isEnabled = true
+        }
+
+        if (!privateSource) loadSavedArticles(activity) { snapshot ->
+            if (dialog.isShowing) updateSavedState(snapshot.articles.firstOrNull {
+                it.id == article.id || (article.url.isNotBlank() && it.url == article.url)
+            }?.id)
+        }
+
         saveBtn.setOnClickListener {
-            if (isSaved) {
-                OfflineArticleStore.delete(dir, article.id)
-                isSaved = false
-                ThemeManager.styleIconButton(activity, saveBtn, false)
-                saveBtn.contentDescription = "Guardar sin conexión"
-                Toastish.show(activity, "Quitado de artículos sin conexión.")
-            } else {
-                val ok = OfflineArticleStore.save(dir, article)
-                if (ok) {
-                    isSaved = true
-                    ThemeManager.styleIconButton(activity, saveBtn, true)
-                    saveBtn.contentDescription = "Quitar de sin conexión"
-                    Toastish.show(activity, "Guardado para lectura sin conexión.")
-                } else {
-                    Toastish.show(activity, "No se pudo guardar el artículo (supera el límite por archivo).")
+            val id = savedId
+            saveBtn.isEnabled = false
+            io.execute {
+                val ok = runCatching {
+                    if (id != null) OfflineArticleStore.delete(dir, id) else OfflineArticleStore.save(dir, article)
+                }.getOrDefault(false)
+                main.post {
+                    if (!dialog.isShowing) return@post
+                    updateSavedState(if (ok) article.id.takeIf { id == null } else id)
+                    Toastish.show(activity, when {
+                        !ok -> "No se pudo actualizar el artículo sin conexión."
+                        id != null -> "Quitado de artículos sin conexión."
+                        else -> "Guardado para lectura sin conexión."
+                    })
                 }
             }
         }
 
         ttsBtn.setOnClickListener {
-            if (ttsBar.visibility == View.VISIBLE && ttsPlaying) {
+            if (ttsBar.visibility == View.VISIBLE && (ttsPlaying || ttsRequested)) {
                 stopTtsPlayback(hideBar = false)
             } else {
                 ensureTtsAndStart()
@@ -686,11 +764,12 @@ object NexoReader {
         }
 
         playPauseBtn.setOnClickListener {
-            if (ttsPlaying) stopTtsPlayback(hideBar = false) else ensureTtsAndStart()
+            if (ttsPlaying || ttsRequested) stopTtsPlayback(hideBar = false) else ensureTtsAndStart()
         }
 
         stopBtn.setOnClickListener {
             ttsIndex = 0
+            ttsOffset = 0
             stopTtsPlayback(hideBar = true)
         }
 
@@ -859,6 +938,7 @@ object NexoReader {
     private fun runReaderAiTask(
         activity: Activity,
         article: OfflineArticleStore.ReaderArticle,
+        privateSource: Boolean,
         prompt: String,
         aiBox: LinearLayout,
         onHandle: (NexoAiClient.CancelHandle) -> Unit
@@ -867,6 +947,13 @@ object NexoReader {
         val apiKey = NexoAiConfig.apiKey(activity)
         if (!settings.enabled || !settings.consentAccepted) {
             Toastish.show(activity, "Activa y autoriza Nexo AI en su panel primero.")
+            return
+        }
+        val host = runCatching { URI(article.url).host }.getOrNull()
+        if ((privateSource && !settings.allowPrivateTabs) ||
+            (!host.isNullOrBlank() && !NexoAiConfig.isHostAllowed(activity, host))
+        ) {
+            Toastish.show(activity, "Nexo AI está desactivado para este artículo.")
             return
         }
         val err = NexoAiConfig.validate(settings, apiKey)

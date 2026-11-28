@@ -97,6 +97,7 @@ object LiveCaptions {
         var bulkQueued = HashSet<Int>()
         // Traducción.
         lateinit var batcher: TranslationBatcher
+        var batchWake: Runnable? = null
         val pendingCueIds = ArrayDeque<Int>()
         // Traducción anticipada del texto provisional.
         var lastSpeculation = 0L
@@ -414,8 +415,7 @@ object LiveCaptions {
         val app = context.applicationContext
         stream.appliedTarget = BrowserPrefs.captionTranslateTo(app)
         stream.appliedProvider = effectiveProvider(app)
-        synchronized(stream) { stream.translationGeneration++; stream.calls.forEach { it.cancel() }; stream.calls.clear() }
-        stream.batcher.clear()
+        invalidateTranslations(stream)
         stream.batcher = newBatcher(app)
         warmUp(app)
         if (stream.trackMode) {
@@ -446,13 +446,18 @@ object LiveCaptions {
 
     private fun invalidateTranslations(stream: Stream) {
         synchronized(stream) { stream.translationGeneration++; stream.calls.forEach { it.cancel() }; stream.calls.clear() }
+        stream.batchWake?.let { main.removeCallbacks(it) }
+        stream.batchWake = null
         stream.batcher.clear()
         stream.bulkQueued.clear()
         stream.speculating = false
+        stream.lastSpeculation = 0L
+        stream.speculateBackoffUntil = 0L
     }
 
     fun onRecordingStarted(context: Context, session: EngineSession, mime: String) {
         val stream = active[session] ?: return
+        if (stream.deviceAudio || !audioAllowed(stream)) return
         val app = context.applicationContext
         stream.delivered = true
         stream.videoFound = true
@@ -608,7 +613,9 @@ object LiveCaptions {
 
     fun onAudio(session: EngineSession, base64: String) {
         val stream = active[session] ?: return
-        if (stream.state == State.ERROR || stream.startedAt == 0L || base64.length > 350000) return
+        if (stream.deviceAudio || !audioAllowed(stream) || stream.state == State.ERROR ||
+            stream.startedAt == 0L || base64.length > 350000
+        ) return
         val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return
         if (bytes.isEmpty() || bytes.size > 256 * 1024) return
         if (!stream.headerChecked) {
@@ -942,6 +949,10 @@ object LiveCaptions {
                 }
             }
 
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+            }
+
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 main.post {
                     if (active[stream.session] === stream && stream.generation == generation && stream.socket === webSocket) {
@@ -1169,7 +1180,7 @@ object LiveCaptions {
         val ordered = stream.cues.entries
             .filter { it.value.translated == null && it.key !in stream.bulkQueued && it.value.end >= current - 1 }
             .sortedBy { it.value.start }
-            .take(120)
+            .take(stream.batcher.capacity)
         val provider = effectiveProvider(context)
         for ((id, cue) in ordered) {
             cache[cacheKey(provider, target, cue.text)]?.let { cue.translated = it } ?: run {
@@ -1182,12 +1193,21 @@ object LiveCaptions {
 
     private fun pump(context: Context, stream: Stream) {
         val now = SystemClock.uptimeMillis()
-        val due = stream.batcher.dueAt() ?: return
-        if (due > now) {
-            main.postDelayed({ if (active[stream.session] === stream) pump(context, stream) }, due - now)
+        val batch = stream.batcher.take(now)
+        if (batch == null) {
+            val due = stream.batcher.dueAt() ?: return
+            if (stream.batchWake == null) {
+                val wake = Runnable {
+                    stream.batchWake = null
+                    if (active[stream.session] === stream) pump(context, stream)
+                }
+                stream.batchWake = wake
+                main.postDelayed(wake, (due - now).coerceAtLeast(1L))
+            }
             return
         }
-        val batch = stream.batcher.take(now) ?: return
+        stream.batchWake?.let { main.removeCallbacks(it) }
+        stream.batchWake = null
         val target = BrowserPrefs.captionTranslateTo(context)
         val provider = effectiveProvider(context)
         val textContext = if (stream.trackMode) emptyList() else stream.text.context()

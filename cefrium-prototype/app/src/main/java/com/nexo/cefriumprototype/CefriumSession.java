@@ -28,41 +28,54 @@ final class CefriumSession {
             Consumer<Boolean> fullscreen,
             Consumer<CefriumMediaController.MediaAccess> media) {}
 
-    interface StateListener { void onLoaded(String url, boolean canGoBack, boolean canGoForward); }
-
-    static final String BRIDGE_ORIGIN = "https://example.com";
+    interface StateListener {
+        void onLoaded(String url, boolean canGoBack, boolean canGoForward, String failure);
+    }
 
     private final CefriumBrowser browser;
     private final CefriumProfile profile;
     private final CefriumCookieStore cookies;
     private final CefriumDownloadManager downloads;
     private final CefriumMediaController media;
+    private final CefriumPermissionHandler permissions;
+    private final CefriumShieldInterceptor shield;
+    private String navigationError;
     private String currentUrl = "";
     private StateListener stateListener;
 
-    private CefriumSession(CefriumBrowser browser, CefriumProfile profile, Hooks hooks) {
+    private CefriumSession(CefriumBrowser browser, CefriumProfile profile, String testOrigin, Hooks hooks) {
         this.browser = browser;
         this.profile = profile;
         this.cookies = new CefriumCookieStore(profile.getCookieManager());
         this.downloads = new CefriumDownloadManager(profile);
         this.media = new CefriumMediaController(browser, hooks.media());
+        this.permissions = new CefriumPermissionHandler(hooks.permissions());
+        this.shield = new CefriumShieldInterceptor(testOrigin + "/filtered");
 
         browser.setNavigationClient(new CefriumNavigationClient() {
             @Override public void onUrlChanged(CefriumBrowser b, String url) { currentUrl = url == null ? "" : url; }
+            @Override public void onLoadStart(CefriumBrowser b, String url) {
+                currentUrl = url == null ? "" : url;
+                navigationError = null;
+            }
             @Override public void onLoadingStateChanged(CefriumBrowser b, boolean loading, boolean back, boolean fwd) {
                 Log.i(Nexo.TAG, "nav loading=" + loading + " back=" + back + " fwd=" + fwd + " url=" + currentUrl);
-                if (!loading && stateListener != null) stateListener.onLoaded(currentUrl, back, fwd);
+                if (!loading && stateListener != null) stateListener.onLoaded(currentUrl, back, fwd, navigationError);
             }
             @Override public void onLoadError(CefriumBrowser b, CefriumLoadError error) {
+                if (error.getErrorCode() == -3) return;
                 Log.w(Nexo.TAG, "load error " + error);
+                navigationError = error.getErrorCode() + " " + error.getDescription();
+                if (stateListener != null) stateListener.onLoaded(error.getFailedUrl(), false, false, navigationError);
             }
             @Override public void onRenderProcessTerminated(CefriumBrowser b, CefriumRendererTerminationStatus status, int code) {
-                Log.e(Nexo.TAG, "renderer terminated " + status + " code=" + code);
+                navigationError = "renderer " + status + " (" + code + ")";
+                if (stateListener != null) stateListener.onLoaded(currentUrl, false, false, navigationError);
             }
         });
-        browser.setResourceInterceptor(new CefriumShieldInterceptor());
+        browser.setResourceInterceptor(shield);
         browser.setQueryHandler(
-                CefriumBrowser.QueryOriginPolicy.exactly(BRIDGE_ORIGIN),
+                CefriumBrowser.QueryOriginPolicy.exactly(testOrigin),
                 new CefriumPageBridge(hooks.bridge()));
 
         CefriumChromeClient console = new CefriumChromeClient() {
@@ -71,7 +84,7 @@ final class CefriumSession {
             }
         };
         browser.setChromeClient(new CefriumCompositeChromeClient(
-                new CefriumPermissionHandler(hooks.permissions()),
+                permissions,
                 new CefriumWindowHandler(hooks.windows()),
                 new CefriumFullscreenHandler(hooks.fullscreen()),
                 media,
@@ -80,17 +93,18 @@ final class CefriumSession {
         downloads.attachObserver();
     }
 
-    static CefriumSession create(Activity activity, boolean incognito, Hooks hooks) {
+    static CefriumSession create(Activity activity, boolean incognito, String testOrigin, Hooks hooks) {
         CefriumProfile profile = incognito ? CefriumProfile.incognito() : CefriumProfile.getDefault();
         CefriumBrowser browser = CefriumBrowser.createWithSurface(activity, profile);
         Log.i(Nexo.TAG, "session created incognito=" + profile.isIncognito() + " profile=" + profile.getName());
-        return new CefriumSession(browser, profile, hooks);
+        return new CefriumSession(browser, profile, testOrigin, hooks);
     }
 
     FrameLayout view() { return browser.getSurfaceContainer(); }
     CefriumBrowser browser() { return browser; }
     boolean isIncognito() { return profile.isIncognito(); }
     CefriumCookieStore cookies() { return cookies; }
+    boolean blockedSmokeTarget() { return shield.blockedSmokeTarget(); }
     CefriumDownloadManager downloads() { return downloads; }
     CefriumMediaController media() { return media; }
     void setStateListener(StateListener l) { stateListener = l; }
@@ -109,6 +123,8 @@ final class CefriumSession {
     void onPause() { browser.onPause(); }
 
     void close() {
+        stateListener = null;
+        permissions.close();
         downloads.detachObserver();
         browser.close();
     }

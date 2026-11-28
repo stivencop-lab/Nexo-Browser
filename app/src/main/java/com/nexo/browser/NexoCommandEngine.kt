@@ -248,8 +248,9 @@ object NexoCommandEngine {
         val results = mutableListOf<Pair<Int, Result>>()
 
         if (parsed.scope == Scope.ALL || parsed.scope == Scope.TABS) {
+            val searchableTabs = tabs.filterNot { it.isPrivate }
             val tabLimit = if (parsed.scope == Scope.TABS) maxResults else 2
-            val matchedTabs = tabs
+            val matchedTabs = searchableTabs
                 .filterNot { it.active && !parsed.isPrefixed }
                 .mapNotNull { tab ->
                     val s = matchScore(tab.title, tab.url, tab.group.orEmpty())
@@ -260,7 +261,7 @@ object NexoCommandEngine {
             results.addAll(matchedTabs)
 
             val groupLimit = if (parsed.scope == Scope.TABS) 3 else 1
-            val matchedGroups = tabs
+            val matchedGroups = searchableTabs
                 .filter { !it.group.isNullOrBlank() }
                 .groupBy { it.group!! }
                 .mapNotNull { (groupName, members) ->

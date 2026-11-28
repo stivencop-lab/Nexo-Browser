@@ -41,10 +41,14 @@ object PageBridge {
         /** Marcos con el puente conectado (token). */
         val frames = LinkedHashSet<String>()
         var topConnected = false
+        var mainFrame: String? = null
         var owner: String? = null
+        var ownerSeenAt = 0L
+        var ownerTimeout: Runnable? = null
         var offers: MutableMap<String, Int>? = null
         var pip: PipState? = null
         var mediaFrame: String? = null
+        var mediaPlaying = false
         val audioLimiter = AudioChunkRateLimiter(AUDIO_BURST_CAPACITY, AUDIO_REFILL_INTERVAL_MS)
     }
 
@@ -57,14 +61,15 @@ object PageBridge {
     private fun state(session: EngineSession) = states.getOrPut(session) { State() }
 
     private fun registerFrame(state: State, frame: String, isMainFrame: Boolean): Boolean {
-        if (frame in state.frames) return false
+        val known = state.frames.remove(frame)
         if (state.frames.size >= MAX_FRAMES) {
-            if (!isMainFrame) return false
-            // Preservar siempre el marco principal desplazando el marco secundario más antiguo.
-            val oldest = state.frames.firstOrNull { it != state.owner && it != state.mediaFrame }
-            if (oldest != null) state.frames.remove(oldest) else return false
+            val oldest = state.frames.firstOrNull { it != state.mainFrame && it != state.owner && it != state.mediaFrame }
+                ?: return false
+            state.frames.remove(oldest)
         }
-        return state.frames.add(frame)
+        if (isMainFrame) state.mainFrame = frame
+        state.frames.add(frame)
+        return !known
     }
 
     // --- Desde la página ---
@@ -80,6 +85,17 @@ object PageBridge {
         if (!accepted) return
         val state = state(session)
         val type = json.optString("type")
+        if (type == "content_script_gone") {
+            state.frames.remove(frame)
+            state.offers?.remove(frame)
+            if (state.mainFrame == frame) {
+                state.mainFrame = null
+                state.topConnected = false
+            }
+            if (state.owner == frame) releaseOwner(session, state)
+            if (state.mediaFrame == frame) mediaState(session, state, frame, JSONObject())
+            return
+        }
         if (type == "content_script_ready") {
             onConnect(session, state, frame, isMainFrame)
             return
@@ -172,9 +188,11 @@ object PageBridge {
     private fun mediaState(session: CefriumEngineSession, state: State, frame: String, json: JSONObject) {
         val active = json.optBoolean("active")
         val owner = state.mediaFrame
-        if (!active && owner != null && owner != frame) return
+        val playing = active && json.optBoolean("playing")
+        if (owner != null && owner != frame && (!active || (state.mediaPlaying && !playing))) return
         state.mediaFrame = if (active) frame else null
-        session.onMediaState(active, json.optBoolean("playing"), json.optString("title").take(200))
+        state.mediaPlaying = playing
+        session.onMediaState(active, playing, json.optString("title").take(200))
         TabManager.tabForSession(session)?.let { tab ->
             BrowserMediaController.updateDetails(
                 tab.id,
@@ -190,7 +208,8 @@ object PageBridge {
     fun sendMediaSessionCommand(session: EngineSession?, action: String, extra: JSONObject? = null): Boolean {
         val cefrium = cefrium(session) ?: return false
         val msg = JSONObject(extra?.toString() ?: "{}").put("type", "media_session_command").put("action", action)
-        return send(cefrium, msg, states[cefrium]?.mediaFrame)
+        val frame = states[cefrium]?.mediaFrame ?: return false
+        return send(cefrium, msg, frame)
     }
 
     private fun captions(session: EngineSession, state: State, frame: String, json: JSONObject) {
@@ -216,13 +235,11 @@ object PageBridge {
             return
         }
         if (state.owner != frame) return
+        state.ownerSeenAt = android.os.SystemClock.elapsedRealtime()
+        if (type == "captions_heartbeat") return
         val context = AppContext.get()
         when (type) {
-            "captions_release" -> {
-                state.owner = null
-                state.audioLimiter.reset()
-                LiveCaptions.onRecordingStopped(session)
-            }
+            "captions_release" -> releaseOwner(session, state)
             "captions_start" -> {
                 state.audioLimiter.reset()
                 LiveCaptions.onRecordingStarted(context, session, json.optString("mime"))
@@ -250,8 +267,23 @@ object PageBridge {
         state.offers = null
         if (!LiveCaptions.isActive(session) || state.owner != null) return
         val selected = offers.filterKeys { it in state.frames }.maxByOrNull { it.value }?.key ?: return
+        val cefrium = session as? CefriumEngineSession ?: return
         state.owner = selected
-        if (send(session as? CefriumEngineSession ?: return, JSONObject().put("type", "captions_grant"), selected)) {
+        if (send(cefrium, JSONObject().put("type", "captions_grant"), selected)) {
+            state.ownerSeenAt = android.os.SystemClock.elapsedRealtime()
+            val checkOwner = object : Runnable {
+                override fun run() {
+                    if (states[session] !== state || state.ownerTimeout !== this || state.owner != selected) return
+                    val remaining = state.ownerSeenAt + 25_000L - android.os.SystemClock.elapsedRealtime()
+                    if (remaining > 0) main.postDelayed(this, remaining)
+                    else {
+                        state.frames.remove(selected)
+                        releaseOwner(session, state)
+                    }
+                }
+            }
+            state.ownerTimeout = checkOwner
+            main.postDelayed(checkOwner, 25_000L)
             LiveCaptions.onVideoGranted(session)
         } else {
             state.owner = null
@@ -267,6 +299,15 @@ object PageBridge {
         "silent" -> "El video suena pero la página solo recibe silencio (otro origen o contenido protegido)."
         "need_key" -> "Este video no trae subtítulos de texto."
         else -> "No se pudo captar el audio del video."
+    }
+
+    private fun releaseOwner(session: EngineSession, state: State) {
+        if (state.owner == null) return
+        state.owner = null
+        state.ownerTimeout?.let(main::removeCallbacks)
+        state.ownerTimeout = null
+        state.audioLimiter.reset()
+        LiveCaptions.onRecordingStopped(session)
     }
 
     // --- Hacia la página ---
@@ -289,7 +330,10 @@ object PageBridge {
 
     fun setCaptions(session: EngineSession?, active: Boolean, live: Boolean, language: String, target: String): Boolean {
         val cefrium = cefrium(session) ?: return false
-        if (!active) states[cefrium]?.let { it.owner = null; it.offers = null }
+        if (!active) states[cefrium]?.let { state ->
+            releaseOwner(cefrium, state)
+            state.offers = null
+        }
         return send(cefrium, JSONObject().apply {
             put("type", "captions")
             put("active", active)
@@ -397,18 +441,17 @@ object PageBridge {
     fun onNewDocument(session: EngineSession) {
         TabManager.tabForSession(session)?.id?.let { com.nexo.browser.media.NexoMediaEngine.resetTab(it) }
         val state = states[session] ?: return
-        val hadOwner = state.owner != null
+        releaseOwner(session, state)
         state.frames.clear()
+        state.mainFrame = null
         state.topConnected = false
-        state.owner = null
         state.offers = null
         state.mediaFrame = null
-        state.audioLimiter.reset()
-        if (hadOwner) LiveCaptions.onRecordingStopped(session)
+        state.mediaPlaying = false
     }
 
     fun forget(session: EngineSession) {
-        states.remove(session)
+        states.remove(session)?.ownerTimeout?.let(main::removeCallbacks)
     }
 
     private val LANGUAGE = Regex("[a-zA-Z]{2,3}(-[A-Za-z]{2,4})?")

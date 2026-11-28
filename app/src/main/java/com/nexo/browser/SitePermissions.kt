@@ -27,7 +27,8 @@ object SitePermissions {
         val appContext = AppContext.getOrNull()
         val origin = request.origin
         if (appContext != null && !origin.isNullOrBlank()) {
-            val decisions = wanted.map { SitePermissionStore.get(appContext, origin, it) }
+            val scope = SitePermissionStore.scope(TabManager.tabForSession(session))
+            val decisions = wanted.map { SitePermissionStore.get(appContext, origin, it, scope) }
             if (decisions.any { it == SitePermissionStore.Decision.BLOCK }) {
                 runCatching { request.deny() }
                 return
